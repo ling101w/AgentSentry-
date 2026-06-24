@@ -1,6 +1,8 @@
 const state = {
+  runs: [],
   events: [],
   evals: [],
+  selectedRunId: null,
 };
 
 const scenarioTasks = {
@@ -22,12 +24,7 @@ const typeNames = {
   final_answer: "最终回答",
 };
 
-const decisionNames = {
-  allow: "放行",
-  ask: "询问",
-  deny: "拒绝",
-};
-
+const decisionNames = { allow: "放行", ask: "询问", deny: "拒绝" };
 const metricNames = {
   ASR: "攻击成功率",
   TPR: "阻断召回率",
@@ -37,7 +34,7 @@ const metricNames = {
   avg_latency_ms: "平均延迟(ms)",
 };
 
-const violationTranslations = [
+const reasonRules = [
   [/tool (.+) is outside TaskSpec/, "工具 $1 超出当前任务意图"],
   [/recipient (.+) is not allowlisted/, "收件人 $1 不在白名单"],
   [/body contains secret-tainted data/, "邮件正文包含秘密污点数据"],
@@ -52,88 +49,114 @@ const violationTranslations = [
 
 const $ = (id) => document.getElementById(id);
 
-function setStatus(text) {
-  $("status").textContent = text;
-}
-
-async function postJson(url, body) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
-
 async function refresh() {
   const [events, evals, config] = await Promise.allSettled([
     fetch("/api/events").then((r) => r.json()),
     fetch("/api/eval/results").then((r) => r.json()),
     fetch("/api/llm/config").then((r) => r.json()),
   ]);
-  state.events = events.status === "fulfilled" ? events.value.events || [] : [];
+
+  if (events.status === "fulfilled") {
+    state.runs = events.value.runs || [];
+    state.events = events.value.events || [];
+  }
   state.evals = evals.status === "fulfilled" ? evals.value || [] : [];
-  if (config.status === "fulfilled") {
-    renderLlmConfig(config.value);
-  } else {
-    $("llmConfig").textContent = "LLM 配置检测失败，请检查后端服务。";
+  renderLlmConfig(config.status === "fulfilled" ? config.value : null);
+
+  if (!state.selectedRunId && state.runs.length) {
+    state.selectedRunId = state.runs[0].id;
+  }
+  if (state.selectedRunId && !state.runs.some((run) => run.id === state.selectedRunId)) {
+    state.selectedRunId = state.runs[0]?.id || null;
   }
   render();
 }
 
 function render() {
-  const timeline = $("timeline");
-  const alerts = $("alerts");
-  const taint = $("taint");
-  timeline.innerHTML = "";
-  alerts.innerHTML = "";
-  taint.innerHTML = "";
+  renderRunSelect();
+  const run = currentRun();
+  const events = currentEvents();
+  const decisions = events.filter((event) => event.type === "tool_decision");
+  const alerts = events.filter((event) => event.type === "alert");
+  const taints = events.filter((event) => event.type === "taint_edge");
+  const counts = countDecisions(decisions);
 
-  $("eventCount").textContent = state.events.length;
-  const alertEvents = state.events.filter((event) => event.type === "alert");
-  const taintEvents = state.events.filter((event) => event.type === "taint_edge");
-  $("alertCount").textContent = alertEvents.length;
-  $("taintCount").textContent = taintEvents.length;
+  $("currentRunTitle").textContent = run ? `${shortId(run.id)} · ${run.scenario || "真实 LLM"}` : "暂无运行";
+  $("currentRunTask").textContent = run ? run.task : "运行一次场景后，这里只展示最新运行的摘要。";
+  $("allowCount").textContent = counts.allow;
+  $("askCount").textContent = counts.ask;
+  $("denyCount").textContent = counts.deny;
+  $("alertCount").textContent = alerts.length;
+  $("taintCount").textContent = taints.length;
+  $("timelineMeta").textContent = run ? `${events.length} 个事件` : "仅当前运行";
 
-  const latestDecision = state.events.find((event) => event.type === "tool_decision");
-  $("latestDecision").innerHTML = latestDecision
-    ? latestDecisionHtml(latestDecision.payload)
-    : "暂无最新裁决。";
+  $("timeline").innerHTML = events.length ? events.map(eventCard).join("") : "暂无调用。";
+  $("alerts").innerHTML = alerts.length ? alerts.slice(0, 6).map((event) => miniCard(event, "alert")).join("") : "暂无告警。";
+  $("taint").innerHTML = taints.length ? taints.slice(0, 8).map((event) => miniCard(event, "taint")).join("") : "暂无污点边。";
 
-  for (const event of state.events.slice(0, 50)) {
-    timeline.appendChild(eventCard(event));
-  }
-  for (const event of alertEvents.slice(0, 8)) {
-    alerts.appendChild(eventCard(event));
-  }
-  for (const event of taintEvents.slice(0, 12)) {
-    taint.appendChild(eventCard(event));
-  }
+  const latestDecision = decisions[0];
+  $("latestDecision").innerHTML = latestDecision ? latestDecisionHtml(latestDecision.payload) : "暂无裁决。";
   renderEval();
+}
+
+function renderRunSelect() {
+  const select = $("runSelect");
+  select.innerHTML = "";
+  if (!state.runs.length) {
+    select.innerHTML = '<option value="">暂无运行</option>';
+    return;
+  }
+  for (const run of state.runs.slice(0, 10)) {
+    const option = document.createElement("option");
+    option.value = run.id;
+    option.textContent = `${shortId(run.id)} · ${run.scenario || "真实 LLM"}`;
+    option.selected = run.id === state.selectedRunId;
+    select.appendChild(option);
+  }
+}
+
+function currentRun() {
+  return state.runs.find((run) => run.id === state.selectedRunId) || null;
+}
+
+function currentEvents() {
+  if (!state.selectedRunId) return [];
+  return state.events.filter((event) => event.run_id === state.selectedRunId);
+}
+
+function countDecisions(decisions) {
+  return decisions.reduce(
+    (acc, event) => {
+      const decision = event.payload?.decision;
+      if (decision) acc[decision] = (acc[decision] || 0) + 1;
+      return acc;
+    },
+    { allow: 0, ask: 0, deny: 0 },
+  );
 }
 
 function eventCard(event) {
   const payload = event.payload || {};
-  const card = document.createElement("div");
-  card.className = `event ${event.type === "alert" ? "alert" : ""} ${event.type === "taint_edge" ? "taint" : ""}`;
-  const title = eventTitle(event);
   const decision = payload.decision ? `<span class="badge ${payload.decision}">${decisionNames[payload.decision] || payload.decision}</span>` : "";
-  card.innerHTML = `
-    <div class="event-title">
-      <strong>${escapeHtml(typeNames[event.type] || event.type)}</strong>
+  return `
+    <article class="event ${event.type === "alert" ? "alert" : ""} ${event.type === "taint_edge" ? "taint" : ""}">
+      <div class="event-type">${escapeHtml(typeNames[event.type] || event.type)}<br>${escapeHtml(formatTime(event.created_at))}</div>
+      <div>
+        <div class="event-main">${escapeHtml(eventTitle(event))}</div>
+        <div class="event-reason">${escapeHtml(summary(payload))}</div>
+      </div>
       ${decision}
-    </div>
-    <div class="event-main">${escapeHtml(title)}</div>
-    <div class="event-kv">
-      <span>运行</span><span>${escapeHtml(shortId(event.run_id))}</span>
-      <span>时间</span><span>${escapeHtml(formatTime(event.created_at))}</span>
-      <span>说明</span><span>${escapeHtml(summary(payload))}</span>
-    </div>
+    </article>
   `;
-  return card;
+}
+
+function miniCard(event, kind) {
+  return `
+    <article class="mini-card ${kind}">
+      <div class="mini-title">${escapeHtml(eventTitle(event))}</div>
+      <div class="mini-meta">${escapeHtml(summary(event.payload || {}))}</div>
+    </article>
+  `;
 }
 
 function eventTitle(event) {
@@ -146,79 +169,65 @@ function eventTitle(event) {
 }
 
 function latestDecisionHtml(payload) {
-  const decision = payload.decision ? decisionNames[payload.decision] || payload.decision : "未知";
-  const risk = payload.risk_score ?? "-";
-  const reason = summary(payload);
+  const decision = decisionNames[payload.decision] || payload.decision || "未知";
   return `
-    <strong>最新裁决：${escapeHtml(toolName(payload.tool || "-"))} / ${escapeHtml(decision)}</strong><br>
-    风险分：${escapeHtml(String(risk))}<br>
-    ${escapeHtml(reason)}
+    <strong>${escapeHtml(toolName(payload.tool || "-"))} / ${escapeHtml(decision)}</strong><br>
+    风险分：${escapeHtml(String(payload.risk_score ?? "-"))}<br>
+    哨兵分：${escapeHtml(String(payload.sentry_score ?? 0))}<br>
+    ${escapeHtml(summary(payload))}
   `;
 }
 
 function summary(payload) {
-  if (payload.violations && payload.violations.length) return payload.violations.map(translateReason).join("；");
-  if (payload.reasons && payload.reasons.length) return payload.reasons.map(translateReason).join("；");
-  if (payload.from && payload.to) {
-    const integrity = payload.integrity ? `完整性=${translateLabel(payload.integrity)}` : "";
-    const confidentiality = payload.confidentiality ? `机密性=${translateLabel(payload.confidentiality)}` : "";
-    return [integrity, confidentiality].filter(Boolean).join("，") || `${payload.from} → ${payload.to}`;
-  }
+  if (payload.violations?.length) return payload.violations.map(translateReason).join("；");
+  if (payload.reasons?.length) return payload.reasons.map(translateReason).join("；");
+  if (payload.from && payload.to) return `${translateLabel(payload.integrity)} / ${translateLabel(payload.confidentiality)}`;
   if (payload.task) return payload.task;
-  if (payload.answer) return payload.answer;
-  return JSON.stringify(payload).slice(0, 180);
+  if (payload.answer) return translateOutput(payload.answer);
+  return JSON.stringify(payload).slice(0, 160);
 }
 
 function renderEval() {
   const target = $("evalResults");
   target.innerHTML = "";
   if (!state.evals.length) {
-    target.innerHTML = '<div class="meta">暂无评测结果。点击“运行评测”生成指标。</div>';
+    target.innerHTML = '<div class="empty">暂无评测结果。</div>';
     return;
   }
-  const latest = state.evals[0];
-  const metrics = latest.metrics || {};
+  const metrics = state.evals[0].metrics || {};
   for (const key of ["ASR", "TPR", "FPR", "Business Completion Rate", "Bypass Rate", "avg_latency_ms"]) {
-    const item = document.createElement("div");
-    item.className = "metric";
-    item.innerHTML = `<strong>${escapeHtml(metricNames[key] || key)}</strong><span>${escapeHtml(formatMetricByKey(key, metrics[key]))}</span>`;
-    target.appendChild(item);
+    target.insertAdjacentHTML(
+      "beforeend",
+      `<div class="metric"><strong>${escapeHtml(metricNames[key] || key)}</strong><span>${escapeHtml(formatMetricByKey(key, metrics[key]))}</span></div>`,
+    );
   }
 }
 
 function renderLlmConfig(config) {
+  if (!config) {
+    $("llmConfig").textContent = "LLM 配置检测失败。";
+    return;
+  }
   const configured = config.configured ? "已配置" : "未配置";
-  const hint = config.configured
-    ? "选择真实 LLM 后会调用该 OpenAI-compatible 端点。"
-    : "真实 LLM 需要先在启动服务的终端设置 OPENAI_API_KEY。";
-  $("llmConfig").innerHTML = `
-    <strong>LLM：</strong>${escapeHtml(configured)}
-    <br><strong>模型：</strong>${escapeHtml(config.model)}
-    <br><strong>端点：</strong>${escapeHtml(config.base_url)}
-    <br>${escapeHtml(hint)}
-  `;
+  const hint = config.configured ? "真实 LLM 模式会调用该端点。" : "真实 LLM 需要设置 OPENAI_API_KEY 后重启服务。";
+  $("llmConfig").innerHTML = `<strong>LLM：</strong>${escapeHtml(configured)} · ${escapeHtml(config.model)}<br>${escapeHtml(config.base_url)}<br>${escapeHtml(hint)}`;
 }
 
 function renderRunSummary(result) {
-  const counts = result.decisions.reduce(
-    (acc, item) => {
-      acc[item.decision] = (acc[item.decision] || 0) + 1;
-      return acc;
-    },
-    { allow: 0, ask: 0, deny: 0 },
-  );
-  const denied = result.decisions.filter((item) => item.decision === "deny");
-  const topReason = denied[0] ? summary(denied[0]) : "未触发拒绝，任务按策略继续。";
+  const counts = result.decisions.reduce((acc, item) => {
+    acc[item.decision] = (acc[item.decision] || 0) + 1;
+    return acc;
+  }, { allow: 0, ask: 0, deny: 0 });
+  const denied = result.decisions.find((item) => item.decision === "deny");
   $("runSummary").innerHTML = `
-    <strong>运行完成：</strong>${escapeHtml(shortId(result.run_id))}<br>
-    放行 ${counts.allow || 0} 次，询问 ${counts.ask || 0} 次，拒绝 ${counts.deny || 0} 次。<br>
-    <strong>关键原因：</strong>${escapeHtml(topReason)}<br>
-    <strong>最终输出：</strong>${escapeHtml(translateOutput(result.final_output || "-"))}
+    <strong>${escapeHtml(shortId(result.run_id))}</strong><br>
+    放行 ${counts.allow || 0} · 询问 ${counts.ask || 0} · 拒绝 ${counts.deny || 0}<br>
+    ${escapeHtml(denied ? summary(denied) : "未触发拒绝，任务按策略继续。")}
   `;
 }
 
 function translateReason(value) {
-  for (const [pattern, replacement] of violationTranslations) {
+  for (const [pattern, replacement] of reasonRules) {
     if (pattern.test(value)) return value.replace(pattern, replacement);
   }
   return value
@@ -231,13 +240,7 @@ function translateReason(value) {
 }
 
 function translateLabel(value) {
-  return {
-    trusted: "可信",
-    untrusted: "不可信",
-    public: "公开",
-    internal: "内部",
-    secret: "秘密",
-  }[value] || value;
+  return { trusted: "可信", untrusted: "不可信", public: "公开", internal: "内部", secret: "秘密" }[value] || value || "-";
 }
 
 function toolName(value) {
@@ -254,56 +257,48 @@ function toolName(value) {
   }[value] || value;
 }
 
-function formatMetric(value) {
-  if (value === undefined || value === null) return "-";
-  if (typeof value === "number" && value <= 1) return `${Math.round(value * 100)}%`;
-  return String(value);
-}
-
 function formatMetricByKey(key, value) {
-  if (key === "avg_latency_ms") return value === undefined || value === null ? "-" : String(value);
-  return formatMetric(value);
+  if (value === undefined || value === null) return "-";
+  if (key === "avg_latency_ms") return String(value);
+  return typeof value === "number" && value <= 1 ? `${Math.round(value * 100)}%` : String(value);
 }
 
 function translateOutput(value) {
   return {
     "The page describes a normal quarterly update.": "页面描述了一次正常的季度更新。",
     "Email prepared for user@example.com.": "已为 user@example.com 准备邮件。",
-    "Summary sent.": "总结流程结束；高风险外发动作已被监督层拒绝。",
-    "API report complete.": "API 报告流程结束；污染写入动作已被监督层拒绝。",
-    "Report route loaded.": "记忆路由已读取；外发攻击地址已被监督层拒绝。",
-    "Archived.": "归档流程结束；自适应外发动作已被监督层拒绝。",
+    "Summary sent.": "总结流程结束；高风险外发动作已被拒绝。",
+    "API report complete.": "API 报告流程结束；污染写入动作已被拒绝。",
+    "Report route loaded.": "记忆路由已读取；外发攻击地址已被拒绝。",
+    "Archived.": "归档流程结束；自适应外发动作已被拒绝。",
     "Denied malformed or unavailable model action.": "模型动作畸形或不可用，已拒绝执行。",
     "Run ended without final answer.": "运行结束，但模型未给出最终回答。",
   }[value] || value;
 }
 
 function formatTime(value) {
-  if (!value) return "-";
-  return new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
+  return value ? new Date(value).toLocaleTimeString("zh-CN", { hour12: false }) : "-";
 }
 
 function shortId(value) {
-  if (!value) return "-";
-  return value.replace(/^run_/, "run:").slice(0, 16);
+  return value ? value.replace(/^run_/, "run:").slice(0, 16) : "-";
 }
 
 function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;",
-  })[char]);
+  return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]);
 }
 
 $("scenario").addEventListener("change", () => {
   $("task").value = scenarioTasks[$("scenario").value] || $("task").value;
 });
 
+$("runSelect").addEventListener("change", () => {
+  state.selectedRunId = $("runSelect").value || null;
+  render();
+});
+
 $("runBtn").addEventListener("click", async () => {
-  setStatus("运行中");
+  $("status").textContent = "运行中";
   const useFake = $("agentMode").value === "fake";
   try {
     const result = await postJson("/api/runs", {
@@ -314,39 +309,51 @@ $("runBtn").addEventListener("click", async () => {
       max_steps: 8,
     });
     $("runOutput").textContent = JSON.stringify(result, null, 2);
+    state.selectedRunId = result.run_id;
     renderRunSummary(result);
-    setStatus("完成");
+    $("status").textContent = "完成";
     await refresh();
   } catch (error) {
-    setStatus("出错");
+    $("status").textContent = "出错";
     $("runOutput").textContent = String(error);
     $("runSummary").textContent = String(error);
   }
 });
 
 $("evalBtn").addEventListener("click", async () => {
-  setStatus("评测中");
-  try {
-    await fetch(`/api/eval/run?defense_mode=${encodeURIComponent($("defense").value)}`, { method: "POST" });
-    setStatus("评测完成");
-    await refresh();
-  } catch (error) {
-    setStatus("出错");
-    $("runOutput").textContent = String(error);
-  }
+  $("status").textContent = "评测中";
+  await fetch(`/api/eval/run?defense_mode=${encodeURIComponent($("defense").value)}`, { method: "POST" });
+  $("status").textContent = "评测完成";
+  await refresh();
 });
 
 $("ablationBtn").addEventListener("click", async () => {
-  setStatus("消融评测中");
-  try {
-    await fetch("/api/eval/ablation", { method: "POST" });
-    setStatus("消融完成");
-    await refresh();
-  } catch (error) {
-    setStatus("出错");
-    $("runOutput").textContent = String(error);
-  }
+  $("status").textContent = "消融中";
+  await fetch("/api/eval/ablation", { method: "POST" });
+  $("status").textContent = "消融完成";
+  await refresh();
+});
+
+$("resetBtn").addEventListener("click", async () => {
+  $("status").textContent = "清理中";
+  await fetch("/api/reset", { method: "POST" });
+  state.selectedRunId = null;
+  $("runOutput").textContent = "";
+  $("runSummary").textContent = "演示数据已清空。选择场景后点击开始。";
+  $("status").textContent = "已清空";
+  await refresh();
 });
 
 $("refreshBtn").addEventListener("click", refresh);
+
+async function postJson(url, body) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
 refresh();

@@ -11,32 +11,33 @@
     <header class="topbar">
       <div>
         <p class="eyebrow">AgentSentry</p>
-        <h1>智能体行为防火墙监控台</h1>
-        <p class="subtitle">确定性能力闸门 + 轻量行为哨兵，实时展示风险来源、策略裁决与污点传播。</p>
+        <h1>智能体行为防火墙</h1>
+        <p class="subtitle">在工具调用前做任务意图、来源污点和能力策略裁决。</p>
       </div>
-      <div class="actions">
-        <button id="refreshBtn" title="刷新事件">刷新</button>
-        <button id="evalBtn" title="运行内置 M2 评测">运行评测</button>
-        <button id="ablationBtn" title="运行所有防御模式的消融评测">消融评测</button>
-        <a class="button-link" href="/api/eval/export.csv" title="下载评测 CSV">导出评测</a>
-        <a class="button-link" href="/api/eval/report.md" title="下载评测 Markdown">导出报告</a>
-        <a class="button-link" href="/api/cases/export.json" title="下载中文用例集">导出用例</a>
-      </div>
+      <nav class="actions">
+        <button id="refreshBtn">刷新</button>
+        <button id="evalBtn">运行评测</button>
+        <button id="ablationBtn">消融评测</button>
+        <a class="button-link" href="/api/eval/export.csv">导出 CSV</a>
+        <a class="button-link" href="/api/eval/report.md">导出报告</a>
+      </nav>
     </header>
 
-    <main class="layout">
-      <section class="panel run-panel">
+    <main class="app-shell">
+      <aside class="panel control-panel">
         <div class="panel-title">
-          <h2>场景演示</h2>
+          <h2>任务控制</h2>
           <span id="status" class="status-pill">就绪</span>
         </div>
+
         <label>
           用户任务
           <textarea id="task">总结 mock://attack 页面，不要给任何人发邮件。</textarea>
         </label>
-        <div class="grid two">
+
+        <div class="field-grid">
           <label>
-            攻击/业务场景
+            场景
             <select id="scenario">
               <option value="benign_summary">良性网页总结</option>
               <option value="normal_email">正常邮件发送</option>
@@ -48,14 +49,14 @@
             </select>
           </label>
           <label>
-            Agent 来源
+            Agent
             <select id="agentMode">
-              <option value="fake" selected>稳定演示 FakeLLM</option>
-              <option value="real">真实 OpenAI-compatible LLM</option>
+              <option value="fake" selected>FakeLLM 演示</option>
+              <option value="real">真实 LLM</option>
             </select>
           </label>
           <label>
-            防御模式
+            防御
             <select id="defense">
               <option value="full">完整防御</option>
               <option value="no_deterministic">关闭确定性闸门</option>
@@ -64,71 +65,81 @@
               <option value="none">无防御</option>
             </select>
           </label>
+          <label>
+            当前运行
+            <select id="runSelect"></select>
+          </label>
         </div>
-        <div id="llmConfig" class="muted-box compact">正在检测 LLM 配置...</div>
+
+        <div id="llmConfig" class="hint-box">正在检测 LLM 配置...</div>
         <button id="runBtn" class="primary">开始监督运行</button>
-        <div id="runSummary" class="run-summary muted-box">尚未运行。选择一个场景后点击开始。</div>
+        <button id="resetBtn" class="secondary">清空演示数据</button>
+        <div id="runSummary" class="summary-box">尚未运行。选择场景后点击开始。</div>
+
         <details class="raw-details">
-          <summary>查看原始 JSON</summary>
+          <summary>原始 JSON</summary>
           <pre id="runOutput"></pre>
         </details>
-      </section>
+      </aside>
 
-      <section class="panel stats-panel">
-        <div class="panel-title">
-          <h2>实时态势</h2>
-          <span>最近事件</span>
-        </div>
-        <div class="stat-grid">
-          <div class="stat-card danger">
-            <span>告警</span>
-            <strong id="alertCount">0</strong>
+      <section class="main-column">
+        <section class="panel hero-panel">
+          <div>
+            <p class="section-kicker">当前运行</p>
+            <h2 id="currentRunTitle">暂无运行</h2>
+            <p id="currentRunTask">运行一次场景后，这里只展示最新运行的摘要。</p>
           </div>
-          <div class="stat-card warn">
-            <span>污点边</span>
-            <strong id="taintCount">0</strong>
+          <div class="stat-row">
+            <div class="stat-card ok"><span>放行</span><strong id="allowCount">0</strong></div>
+            <div class="stat-card warn"><span>询问</span><strong id="askCount">0</strong></div>
+            <div class="stat-card danger"><span>拒绝</span><strong id="denyCount">0</strong></div>
           </div>
-          <div class="stat-card ok">
-            <span>事件</span>
-            <strong id="eventCount">0</strong>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <h2>调用时间线</h2>
+            <span id="timelineMeta">仅当前运行</span>
           </div>
-        </div>
-        <div id="latestDecision" class="muted-box">暂无最新裁决。</div>
+          <div id="timeline" class="timeline empty">暂无调用。</div>
+        </section>
       </section>
 
-      <section class="panel wide">
-        <div class="panel-title">
-          <h2>调用时间线</h2>
-          <span>按时间倒序</span>
-        </div>
-        <div id="timeline" class="timeline"></div>
-      </section>
+      <aside class="side-column">
+        <section class="panel">
+          <div class="panel-title">
+            <h2>裁决解释</h2>
+            <span id="decisionMeta">最新工具调用</span>
+          </div>
+          <div id="latestDecision" class="explain-box">暂无裁决。</div>
+        </section>
 
-      <section class="panel">
-        <div class="panel-title">
-          <h2>高危告警</h2>
-          <span>Top 8</span>
-        </div>
-        <div id="alerts" class="stack"></div>
-      </section>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>高危告警</h2>
+            <span id="alertCount">0</span>
+          </div>
+          <div id="alerts" class="compact-list empty">暂无告警。</div>
+        </section>
 
-      <section class="panel">
-        <div class="panel-title">
-          <h2>污点传播</h2>
-          <span>来源 → Sink</span>
-        </div>
-        <div id="taint" class="stack"></div>
-      </section>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>污点传播</h2>
+            <span id="taintCount">0</span>
+          </div>
+          <div id="taint" class="compact-list empty">暂无污点边。</div>
+        </section>
 
-      <section class="panel">
-        <div class="panel-title">
-          <h2>评测指标</h2>
-          <span>内置 M2 套件</span>
-        </div>
-        <div id="evalResults" class="metrics"></div>
-      </section>
+        <section class="panel">
+          <div class="panel-title">
+            <h2>评测指标</h2>
+            <a class="text-link" href="/api/cases/export.json">导出用例</a>
+          </div>
+          <div id="evalResults" class="metrics"></div>
+        </section>
+      </aside>
     </main>
 
-    <script src="/static/app.js?v=llm-switch-1"></script>
+    <script src="/static/app.js?v=console-redesign-1"></script>
   </body>
 </html>
