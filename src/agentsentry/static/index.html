@@ -48,6 +48,13 @@
             </select>
           </label>
           <label>
+            Agent 来源
+            <select id="agentMode">
+              <option value="fake" selected>稳定演示 FakeLLM</option>
+              <option value="real">真实 OpenAI-compatible LLM</option>
+            </select>
+          </label>
+          <label>
             防御模式
             <select id="defense">
               <option value="full">完整防御</option>
@@ -58,6 +65,7 @@
             </select>
           </label>
         </div>
+        <div id="llmConfig" class="muted-box compact">正在检测 LLM 配置...</div>
         <button id="runBtn" class="primary">开始监督运行</button>
         <div id="runSummary" class="run-summary muted-box">尚未运行。选择一个场景后点击开始。</div>
         <details class="raw-details">
@@ -121,6 +129,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=llm-switch-1"></script>
   </body>
 </html>

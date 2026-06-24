@@ -27,6 +27,24 @@ $env:OPENAI_MODEL="gpt-4o-mini"
 
 Then call `POST /api/runs` with `use_fake_llm=false` and no fixed `scenario`.
 
+In the dashboard, switch `Agent 来源` from `稳定演示 FakeLLM` to `真实 OpenAI-compatible LLM`.
+When using the real LLM mode, `scenario` is intentionally sent as `null`; otherwise the deterministic demo script would be selected.
+
+PowerShell example:
+
+```powershell
+$env:OPENAI_API_KEY="sk-..."
+$env:OPENAI_BASE_URL="https://api.openai.com/v1"
+$env:OPENAI_MODEL="gpt-4o-mini"
+python -m uvicorn --app-dir src agentsentry.app:app --host 127.0.0.1 --port 8000
+```
+
+For compatible providers, keep the `/v1` style base URL if the provider follows the OpenAI chat-completions API. The model must return one JSON action per step, for example:
+
+```json
+{"tool":"read_webpage","args":{"url":"mock://benign"},"reason":"read the page"}
+```
+
 ## API
 
 - `POST /api/runs` starts a supervised agent run.

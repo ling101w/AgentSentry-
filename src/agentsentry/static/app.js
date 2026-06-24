@@ -69,12 +69,18 @@ async function postJson(url, body) {
 }
 
 async function refresh() {
-  const [events, evals] = await Promise.all([
+  const [events, evals, config] = await Promise.allSettled([
     fetch("/api/events").then((r) => r.json()),
     fetch("/api/eval/results").then((r) => r.json()),
+    fetch("/api/llm/config").then((r) => r.json()),
   ]);
-  state.events = events.events || [];
-  state.evals = evals || [];
+  state.events = events.status === "fulfilled" ? events.value.events || [] : [];
+  state.evals = evals.status === "fulfilled" ? evals.value || [] : [];
+  if (config.status === "fulfilled") {
+    renderLlmConfig(config.value);
+  } else {
+    $("llmConfig").textContent = "LLM 配置检测失败，请检查后端服务。";
+  }
   render();
 }
 
@@ -178,6 +184,19 @@ function renderEval() {
     item.innerHTML = `<strong>${escapeHtml(metricNames[key] || key)}</strong><span>${escapeHtml(formatMetricByKey(key, metrics[key]))}</span>`;
     target.appendChild(item);
   }
+}
+
+function renderLlmConfig(config) {
+  const configured = config.configured ? "已配置" : "未配置";
+  const hint = config.configured
+    ? "选择真实 LLM 后会调用该 OpenAI-compatible 端点。"
+    : "真实 LLM 需要先在启动服务的终端设置 OPENAI_API_KEY。";
+  $("llmConfig").innerHTML = `
+    <strong>LLM：</strong>${escapeHtml(configured)}
+    <br><strong>模型：</strong>${escapeHtml(config.model)}
+    <br><strong>端点：</strong>${escapeHtml(config.base_url)}
+    <br>${escapeHtml(hint)}
+  `;
 }
 
 function renderRunSummary(result) {
@@ -285,11 +304,12 @@ $("scenario").addEventListener("change", () => {
 
 $("runBtn").addEventListener("click", async () => {
   setStatus("运行中");
+  const useFake = $("agentMode").value === "fake";
   try {
     const result = await postJson("/api/runs", {
       task: $("task").value,
-      scenario: $("scenario").value,
-      use_fake_llm: true,
+      scenario: useFake ? $("scenario").value : null,
+      use_fake_llm: useFake,
       defense_mode: $("defense").value,
       max_steps: 8,
     });

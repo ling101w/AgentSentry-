@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -49,6 +50,14 @@ def create_app() -> FastAPI:
         tools = SandboxTools(paths().sandbox, policy())
         supervisor = AgentSupervisor(store=store(), policy=policy(), tools=tools)
         return supervisor.run(request)
+
+    @app.get("/api/llm/config")
+    def llm_config():
+        return {
+            "configured": bool(os.getenv("OPENAI_API_KEY")),
+            "base_url": os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1",
+            "model": os.getenv("OPENAI_MODEL") or "gpt-4o-mini",
+        }
 
     @app.get("/api/events")
     def events(limit: int = Query(default=200, ge=1, le=1000)):
