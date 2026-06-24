@@ -316,5 +316,17 @@ $("evalBtn").addEventListener("click", async () => {
   }
 });
 
+$("ablationBtn").addEventListener("click", async () => {
+  setStatus("消融评测中");
+  try {
+    await fetch("/api/eval/ablation", { method: "POST" });
+    setStatus("消融完成");
+    await refresh();
+  } catch (error) {
+    setStatus("出错");
+    $("runOutput").textContent = String(error);
+  }
+});
+
 $("refreshBtn").addEventListener("click", refresh);
 refresh();

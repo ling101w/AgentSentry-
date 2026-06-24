@@ -77,7 +77,11 @@ h2 {
 }
 
 .actions button,
+.button-link,
 .primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 38px;
   border: 0;
   border-radius: 6px;
@@ -85,10 +89,12 @@ h2 {
   background: var(--ink);
   color: white;
   font-weight: 700;
+  text-decoration: none;
   cursor: pointer;
 }
 
-.actions button {
+.actions button,
+.button-link {
   background: #edf2f4;
   color: var(--ink);
 }
@@ -99,6 +105,7 @@ h2 {
 }
 
 .actions button:hover,
+.button-link:hover,
 .primary:hover {
   background: var(--accent-dark);
   color: #ffffff;

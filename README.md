@@ -33,7 +33,22 @@ Then call `POST /api/runs` with `use_fake_llm=false` and no fixed `scenario`.
 - `GET /api/events` returns recent runs, alerts, decisions, and taint edges.
 - `POST /api/eval/run?defense_mode=full` runs the built-in M2 evaluation suite.
 - `GET /api/eval/results` returns saved metric summaries.
+- `GET /api/eval/export.csv` exports evaluation metrics.
+- `GET /api/cases` returns the Chinese security case suite.
+- `GET /api/cases/export.json` exports the case suite.
 - `POST /api/reset` clears local SQLite demo data.
+
+## One-Click Demo
+
+```powershell
+python scripts/demo_run.py
+```
+
+Competition materials:
+
+- Chinese case suite: `cases/agentsentry_cases.yaml`
+- Report outline: `docs/report_outline.md`
+- Demo script: `docs/demo_script.md`
 
 ## Tests
 
