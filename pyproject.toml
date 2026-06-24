@@ -1,0 +1,24 @@
+[project]
+name = "agentsentry"
+version = "0.1.0"
+description = "AgentSentry: supervised LLM agent behavior firewall prototype"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "httpx",
+    "pydantic",
+    "pyyaml",
+    "scikit-learn",
+    "uvicorn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+

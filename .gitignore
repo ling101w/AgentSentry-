@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.playwright-mcp/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+*.pyo
+*.db
+*.sqlite
+*.sqlite3
+runtime/
+dist/
+build/
+node_modules/
+.env

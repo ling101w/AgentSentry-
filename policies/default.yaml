@@ -1,0 +1,43 @@
+allowlist:
+  email_recipients:
+    - user@example.com
+    - security@example.com
+  api_hosts:
+    - mock.local
+  write_roots:
+    - reports
+    - notes
+
+sensitive_assets:
+  - secret.txt
+  - api_key
+  - token
+  - password
+
+risk_thresholds:
+  ask: 40
+  deny: 70
+
+rules:
+  - sink: send_email
+    on_violation: deny
+    require:
+      recipient_integrity: trusted
+      recipient_allowlisted: true
+      body_not_secret: true
+      intent_allows_tool: true
+
+  - sink: write_file
+    on_violation: deny
+    require:
+      path_in_sandbox: true
+      path_not_system: true
+      intent_allows_tool: true
+
+  - sink: call_api
+    on_violation: ask
+    require:
+      host_allowlisted: true
+      rate_lte_per_minute: 10
+      intent_allows_tool: true
+
