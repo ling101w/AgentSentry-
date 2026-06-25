@@ -5,9 +5,9 @@ from time import perf_counter
 from typing import Any
 
 from .llm import ActionParseError, FakeLLM, LLMClient, OpenAICompatibleClient, parse_action
-from .models import DataValue, Decision, Event, RunRequest, RunResponse, ToolAction, ToolResult, new_id
+from .guard import GuardContext, GuardPipeline, heuristic_score, most_severe_verdict
+from .models import DataValue, Decision, DetectionVerdict, Event, ExecutionStatus, FindingType, GuardFinding, RunRequest, RunResponse, ToolAction, ToolResult, new_id
 from .policy import Policy, PolicyEngine, combine_labels, derive_task_spec, unwrap_arg
-from .sentry import BehaviorSentry
 from .storage import Store
 from .tools import SandboxTools
 
@@ -37,31 +37,82 @@ class AgentSupervisor:
         self.llm = llm
 
     def run(self, request: RunRequest) -> RunResponse:
-        run_id = new_id("run")
+        run_id = request.run_id or new_id("run")
         toggles = toggles_for_mode(request.defense_mode)
         task_spec = derive_task_spec(request.task, self.policy.sensitive_assets)
         engine = PolicyEngine(self.policy, deterministic_enabled=toggles.deterministic)
-        sentry = BehaviorSentry(enabled=toggles.sentry, feedback_enabled=toggles.feedback)
-        llm = FakeLLM(request.scenario) if request.use_fake_llm or request.scenario else self.llm or OpenAICompatibleClient()
+        guard = GuardPipeline(self.policy, enabled=toggles.sentry, feedback_enabled=toggles.feedback)
+        llm = FakeLLM(request.scenario) if request.use_fake_llm else self.llm or OpenAICompatibleClient()
         history: list[dict[str, Any]] = []
         decisions: list[dict[str, Any]] = []
         last_result: ToolResult | None = None
         final_output = ""
+        context = GuardContext(task_spec=task_spec)
 
         self.store.create_run(run_id, request.task, request.scenario, request.defense_mode)
         self._event(run_id, "task_spec", task_spec.model_dump())
+        foundation_findings = guard.foundation_scan()
+        for finding in foundation_findings:
+            context.record(finding)
+            self._event(run_id, "foundation_scan", finding.model_dump(mode="json"))
+            if finding.verdict == DetectionVerdict.BLOCK:
+                self._event(run_id, "alert", finding.model_dump(mode="json"))
+
+        if toggles.deterministic and any(
+            finding.finding_type == FindingType.DETERMINISTIC and finding.verdict == DetectionVerdict.BLOCK
+            for finding in foundation_findings
+        ):
+            final_output = "Denied by foundation scan."
+            self.store.finish_run(run_id, final_output)
+            return RunResponse(run_id=run_id, task=request.task, scenario=request.scenario, decisions=decisions, final_output=final_output)
 
         for _ in range(request.max_steps):
             started = perf_counter()
+            raw_action = ""
             try:
                 raw_action = llm.next_action(request.task, history)
+                self._event(
+                    run_id,
+                    "llm_raw",
+                    {
+                        "raw": raw_action,
+                        "preview": _preview_text(raw_action),
+                        "step": len(history) + 1,
+                    },
+                )
                 action = parse_action(raw_action)
-            except (ActionParseError, RuntimeError) as exc:
+            except RuntimeError as exc:
+                self._event(
+                    run_id,
+                    "llm_raw",
+                    {
+                        "raw": "",
+                        "preview": "",
+                        "step": len(history) + 1,
+                        "error": str(exc),
+                    },
+                )
                 decision = {
                     "tool": "parse_error",
                     "decision": Decision.DENY.value,
                     "risk_score": 100,
                     "reasons": [str(exc)],
+                    "raw_llm_output": "",
+                    "raw_llm_preview": "",
+                    "latency_ms": 0,
+                }
+                decisions.append(decision)
+                self._event(run_id, "alert", decision)
+                final_output = "Denied malformed or unavailable model action."
+                break
+            except ActionParseError as exc:
+                decision = {
+                    "tool": "parse_error",
+                    "decision": Decision.DENY.value,
+                    "risk_score": 100,
+                    "reasons": [str(exc)],
+                    "raw_llm_output": raw_action,
+                    "raw_llm_preview": _preview_text(raw_action),
                     "latency_ms": 0,
                 }
                 decisions.append(decision)
@@ -69,6 +120,7 @@ class AgentSupervisor:
                 final_output = "Denied malformed or unavailable model action."
                 break
 
+            action = _normalize_action(action)
             action = self._resolve_last(action, last_result)
 
             if action.tool == "final_answer":
@@ -76,35 +128,56 @@ class AgentSupervisor:
                 self._event(run_id, "final_answer", {"answer": final_output})
                 break
 
-            sentry_score, sentry_reasons = sentry.score(action, task_spec, history)
-            policy_decision = engine.decide(action, task_spec, sentry_score=sentry_score)
-            policy_decision.reasons.extend(sentry_reasons)
+            step_findings = guard.before_action(action, context, history)
+            deterministic_findings = engine.deterministic_findings(action, task_spec)
+            for finding in deterministic_findings:
+                context.record(finding)
+            step_findings.extend(deterministic_findings)
+
+            h_score = heuristic_score(step_findings)
+            policy_decision = engine.decide(action, task_spec, sentry_score=h_score, findings=step_findings)
+            policy_decision.reasons.extend(finding.reason for finding in step_findings if finding.finding_type != FindingType.DETERMINISTIC)
 
             result: ToolResult | None = None
-            if policy_decision.decision in {Decision.ALLOW, Decision.ASK}:
-                # "ask" is recorded as human-in-the-loop, but demo mode executes safe sandbox tools so the trace is complete.
+            execution_status = ExecutionStatus.SKIPPED
+            if policy_decision.decision == Decision.ALLOW:
                 result = self.tools.execute(action.tool, action.args)
                 last_result = result
+                execution_status = ExecutionStatus.EXECUTED
+                result_findings = guard.after_result(action, result, context)
+                step_findings.extend(result_findings)
             else:
                 last_result = ToolResult(ok=False, error="blocked by AgentSentry", label=combine_labels(list(action.args.values())))
+                execution_status = ExecutionStatus.BLOCKED
 
             latency_ms = int((perf_counter() - started) * 1000)
+            findings_json = [finding.model_dump(mode="json") for finding in step_findings]
+            finding_type = _dominant_finding_type(step_findings)
             decision_record = {
                 "tool": action.tool,
                 "args": _serializable_args(action.args),
                 "reason": action.reason,
+                "raw_llm_output": raw_action,
+                "raw_llm_preview": _preview_text(raw_action),
                 "decision": policy_decision.decision.value,
                 "risk_score": policy_decision.risk_score,
-                "sentry_score": policy_decision.sentry_score,
+                "sentry_score": h_score,
+                "heuristic_score": h_score,
                 "reasons": policy_decision.reasons,
                 "violations": policy_decision.violations,
                 "deterministic_block": policy_decision.deterministic_block,
+                "findings": findings_json,
+                "finding_type": finding_type,
+                "verdict": most_severe_verdict(step_findings).value,
+                "execution_status": execution_status.value,
                 "result": result.model_dump() if result else None,
                 "latency_ms": latency_ms,
             }
             decisions.append(decision_record)
             history.append(decision_record)
             self._event(run_id, "tool_decision", decision_record)
+            for finding in step_findings:
+                self._event(run_id, "guard_finding", finding.model_dump(mode="json") | {"tool": action.tool})
             self._emit_taint_edges(run_id, action, result)
             if policy_decision.decision in {Decision.ASK, Decision.DENY}:
                 self._event(run_id, "alert", decision_record)
@@ -165,3 +238,35 @@ def _serializable_args(args: dict[str, Any]) -> dict[str, Any]:
             clean[key] = value
     return clean
 
+
+def _normalize_action(action: ToolAction) -> ToolAction:
+    aliases = {
+        "browser.open": "read_webpage",
+        "browser_open": "read_webpage",
+        "open_browser": "read_webpage",
+        "fetch_url": "read_webpage",
+        "web.open": "read_webpage",
+    }
+    tool = aliases.get(action.tool, action.tool)
+    args = dict(action.args)
+    if tool == "read_webpage" and "url" not in args:
+        for key in ("uri", "href", "target"):
+            if key in args:
+                args["url"] = args[key]
+                break
+    return ToolAction(tool=tool, args=args, reason=action.reason)
+
+
+def _dominant_finding_type(findings: list[GuardFinding]) -> str | None:
+    if any(finding.finding_type == FindingType.DETERMINISTIC for finding in findings):
+        return "deterministic"
+    if any(finding.finding_type == FindingType.LEARNED for finding in findings):
+        return "learned"
+    if any(finding.finding_type == FindingType.HEURISTIC for finding in findings):
+        return "heuristic"
+    return None
+
+
+def _preview_text(value: str, limit: int = 500) -> str:
+    text = value.replace("\r\n", "\n").strip()
+    return text if len(text) <= limit else f"{text[:limit]}..."

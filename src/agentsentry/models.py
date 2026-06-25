@@ -22,6 +22,24 @@ class Decision(StrEnum):
     DENY = "deny"
 
 
+class DetectionVerdict(StrEnum):
+    PASS = "pass"
+    REQUIRE_APPROVAL = "require_approval"
+    BLOCK = "block"
+
+
+class FindingType(StrEnum):
+    DETERMINISTIC = "deterministic"
+    HEURISTIC = "heuristic"
+    LEARNED = "learned"
+
+
+class ExecutionStatus(StrEnum):
+    EXECUTED = "executed"
+    BLOCKED = "blocked"
+    SKIPPED = "skipped"
+
+
 class Integrity(StrEnum):
     TRUSTED = "trusted"
     UNTRUSTED = "untrusted"
@@ -77,6 +95,15 @@ class PolicyDecision(BaseModel):
     deterministic_block: bool = False
 
 
+class GuardFinding(BaseModel):
+    layer: str
+    finding_type: FindingType
+    verdict: DetectionVerdict = DetectionVerdict.PASS
+    reason: str
+    score: int = 0
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
 class ToolResult(BaseModel):
     ok: bool
     output: Any = None
@@ -90,6 +117,7 @@ class RunRequest(BaseModel):
     use_fake_llm: bool = False
     max_steps: int = Field(default=6, ge=1, le=20)
     defense_mode: str = "full"
+    run_id: str | None = None
 
 
 class RunResponse(BaseModel):
@@ -114,4 +142,3 @@ class EvalResult(BaseModel):
     defense_mode: str
     metrics: dict[str, Any]
     created_at: str = Field(default_factory=utc_now)
-

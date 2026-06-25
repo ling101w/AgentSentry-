@@ -7,7 +7,19 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .models import Confidentiality, DataValue, Decision, Integrity, Label, PolicyDecision, TaskSpec, ToolAction
+from .models import (
+    Confidentiality,
+    DataValue,
+    Decision,
+    DetectionVerdict,
+    FindingType,
+    GuardFinding,
+    Integrity,
+    Label,
+    PolicyDecision,
+    TaskSpec,
+    ToolAction,
+)
 
 
 HIGH_RISK_TOOLS = {"send_email", "write_file", "call_api"}
@@ -140,19 +152,31 @@ def host_from_url(url: str) -> str:
     return parsed.hostname or ""
 
 
+def _unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
 class PolicyEngine:
     def __init__(self, policy: Policy, deterministic_enabled: bool = True):
         self.policy = policy
         self.deterministic_enabled = deterministic_enabled
         self.api_call_counts: dict[str, int] = {}
 
-    def decide(self, action: ToolAction, task_spec: TaskSpec, sentry_score: int = 0) -> PolicyDecision:
+    def decide(
+        self,
+        action: ToolAction,
+        task_spec: TaskSpec,
+        sentry_score: int = 0,
+        findings: list[GuardFinding] | None = None,
+    ) -> PolicyDecision:
+        findings = findings or []
         reasons: list[str] = []
         violations: list[str] = []
         risk = self._base_tool_risk(action.tool)
 
-        if action.tool in task_spec.forbidden_tools or action.tool not in task_spec.allowed_tools:
+        if self.deterministic_enabled and (action.tool in task_spec.forbidden_tools or action.tool not in task_spec.allowed_tools):
             violations.append(f"tool {action.tool} is outside TaskSpec")
+        elif action.tool in task_spec.forbidden_tools or action.tool not in task_spec.allowed_tools:
             risk += 50
         else:
             reasons.append("tool is allowed by TaskSpec")
@@ -160,20 +184,35 @@ class PolicyEngine:
         risk += self._taint_risk(action)
         risk += sentry_score
 
-        if self.deterministic_enabled:
+        deterministic_finding_reasons = [
+            finding.reason
+            for finding in findings
+            if finding.finding_type == FindingType.DETERMINISTIC and finding.layer == "Execution Control"
+        ]
+        if deterministic_finding_reasons:
+            violations = _unique(violations + deterministic_finding_reasons)
+        elif self.deterministic_enabled:
             violations.extend(self._deterministic_violations(action, task_spec))
 
         if violations:
             risk += 35
 
-        deterministic_block = bool(violations and self.policy.rule_for(action.tool))
+        deterministic_block = bool(violations)
         decision = Decision.ALLOW
         if deterministic_block:
             rule = self.policy.rule_for(action.tool)
             decision = Decision(rule.get("on_violation", "deny")) if rule else Decision.DENY
+            if decision == Decision.ASK:
+                decision = Decision.DENY
+        elif any(finding.verdict == DetectionVerdict.BLOCK for finding in findings if finding.finding_type != FindingType.DETERMINISTIC):
+            decision = Decision.DENY
         elif risk >= self.policy.deny_threshold:
             decision = Decision.DENY
-        elif risk >= self.policy.ask_threshold:
+        elif any(
+            finding.verdict == DetectionVerdict.REQUIRE_APPROVAL
+            for finding in findings
+            if finding.finding_type != FindingType.DETERMINISTIC
+        ) or risk >= self.policy.ask_threshold:
             decision = Decision.ASK
 
         return PolicyDecision(
@@ -184,6 +223,33 @@ class PolicyEngine:
             sentry_score=sentry_score,
             deterministic_block=deterministic_block,
         )
+
+    def deterministic_findings(self, action: ToolAction, task_spec: TaskSpec) -> list[GuardFinding]:
+        findings: list[GuardFinding] = []
+        if self.deterministic_enabled and (action.tool in task_spec.forbidden_tools or action.tool not in task_spec.allowed_tools):
+            findings.append(
+                GuardFinding(
+                    layer="Execution Control",
+                    finding_type=FindingType.DETERMINISTIC,
+                    verdict=DetectionVerdict.BLOCK,
+                    reason=f"tool {action.tool} is outside TaskSpec",
+                    score=100,
+                    evidence={"tool": action.tool},
+                )
+            )
+        if self.deterministic_enabled:
+            for violation in self._deterministic_violations(action, task_spec):
+                findings.append(
+                    GuardFinding(
+                        layer="Execution Control",
+                        finding_type=FindingType.DETERMINISTIC,
+                        verdict=DetectionVerdict.BLOCK,
+                        reason=violation,
+                        score=100,
+                        evidence={"tool": action.tool},
+                    )
+                )
+        return findings
 
     def _base_tool_risk(self, tool: str) -> int:
         return {
@@ -229,6 +295,8 @@ class PolicyEngine:
             violations.append(f"recipient {recipient} is not allowlisted")
         if body_label.confidentiality == Confidentiality.SECRET:
             violations.append("body contains secret-tainted data")
+        if body_label.integrity == Integrity.UNTRUSTED:
+            violations.append("untrusted data cannot flow to email sink")
         if "send_email" not in task_spec.allowed_tools:
             violations.append("task intent does not allow email")
         return violations
@@ -243,6 +311,11 @@ class PolicyEngine:
         root = path.split("/", 1)[0]
         if root not in self.policy.write_roots:
             violations.append(f"write root {root or '<empty>'} is not allowlisted")
+        content_label = arg_label(action.args.get("content", ""))
+        if content_label.integrity == Integrity.UNTRUSTED:
+            violations.append("untrusted data cannot flow to file sink")
+        if content_label.confidentiality == Confidentiality.SECRET:
+            violations.append("content contains secret-tainted data")
         if "write_file" not in task_spec.allowed_tools:
             violations.append("task intent does not allow file write")
         return violations
@@ -256,7 +329,9 @@ class PolicyEngine:
             violations.append(f"api host {host or '<empty>'} is not allowlisted")
         if self.api_call_counts[host] > 10:
             violations.append("api rate exceeds configured limit")
+        payload_label = arg_label(action.args.get("body", ""))
+        if payload_label.confidentiality == Confidentiality.SECRET:
+            violations.append("api request contains secret-tainted data")
         if "call_api" not in task_spec.allowed_tools:
             violations.append("task intent does not allow API calls")
         return violations
-

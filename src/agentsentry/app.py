@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import os
+import json
+import threading
 from functools import lru_cache
 from pathlib import Path
 
 from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import RuntimePaths, ensure_runtime
 from .cases import load_cases
 from .evaluation import run_ablation, run_eval
 from .export import cases_to_json, eval_results_to_csv, eval_results_to_markdown
-from .models import RunRequest, RunResponse
+from .llm import OpenAICompatibleClient
+from .models import RunRequest, RunResponse, new_id
 from .policy import Policy
 from .storage import Store
 from .supervisor import AgentSupervisor
@@ -51,12 +53,70 @@ def create_app() -> FastAPI:
         supervisor = AgentSupervisor(store=store(), policy=policy(), tools=tools)
         return supervisor.run(request)
 
+    @app.post("/api/runs/stream")
+    def start_run_stream(request: RunRequest):
+        def stream():
+            tools = SandboxTools(paths().sandbox, policy())
+            supervisor = AgentSupervisor(store=store(), policy=policy(), tools=tools)
+            done = threading.Event()
+            result_holder: dict[str, object] = {}
+            seen_event_ids: set[str] = set()
+            run_id = request.run_id or new_id("run")
+            stream_request = request.model_copy(update={"run_id": run_id})
+
+            def worker() -> None:
+                try:
+                    result = supervisor.run(stream_request)
+                    result_holder["result"] = result.model_dump()
+                except Exception as exc:  # pragma: no cover - defensive streaming wrapper
+                    result_holder["error"] = str(exc)
+                finally:
+                    done.set()
+
+            thread = threading.Thread(target=worker, daemon=True)
+            thread.start()
+            yield _stream_line("status", {"status": "started"})
+            yield _stream_line(
+                "run",
+                {
+                    "id": run_id,
+                    "task": request.task,
+                    "scenario": request.scenario,
+                    "defense_mode": request.defense_mode,
+                    "final_output": "",
+                    "created_at": "",
+                },
+            )
+
+            while not done.is_set():
+                runs_events = store().list_events(limit=200)
+                for event in reversed(runs_events["events"]):
+                    if event["run_id"] == run_id and event["id"] not in seen_event_ids:
+                        seen_event_ids.add(event["id"])
+                        yield _stream_line("event", event)
+                if done.wait(0.25):
+                    break
+
+            runs_events = store().list_events(limit=200)
+            for event in reversed(runs_events["events"]):
+                if event["run_id"] == run_id and event["id"] not in seen_event_ids:
+                    seen_event_ids.add(event["id"])
+                    yield _stream_line("event", event)
+            if "result" in result_holder:
+                yield _stream_line("done", result_holder["result"])
+            else:
+                yield _stream_line("error", {"error": result_holder.get("error", "unknown stream error")})
+            thread.join(timeout=0.1)
+
+        return StreamingResponse(stream(), media_type="application/x-ndjson; charset=utf-8")
+
     @app.get("/api/llm/config")
     def llm_config():
+        client = OpenAICompatibleClient()
         return {
-            "configured": bool(os.getenv("OPENAI_API_KEY")),
-            "base_url": os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1",
-            "model": os.getenv("OPENAI_MODEL") or "gpt-4o-mini",
+            "configured": bool(client.api_key),
+            "base_url": client.base_url,
+            "model": client.model,
         }
 
     @app.get("/api/events")
@@ -109,6 +169,10 @@ def create_app() -> FastAPI:
         return {"ok": True}
 
     return app
+
+
+def _stream_line(event_type: str, payload: object) -> str:
+    return json.dumps({"type": event_type, "payload": payload}, ensure_ascii=False) + "\n"
 
 
 app = create_app()

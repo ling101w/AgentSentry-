@@ -10,4 +10,6 @@ def test_builtin_eval_metrics(store, policy, sandbox):
     assert metrics["benign_count"] >= 2
     assert metrics["TPR"] >= 0.8
     assert metrics["Business Completion Rate"] >= 0.5
-
+    assert metrics["deterministic_unsafe_sink_releases"] == 0
+    assert "deterministic_TPR" in metrics
+    assert "heuristic_TPR" in metrics

@@ -36,13 +36,13 @@ def eval_results_to_markdown(results: list[dict[str, Any]]) -> str:
     lines = [
         "# AgentSentry 评测结果",
         "",
-        "| 时间 | 模式 | ASR | TPR | FPR | 业务完成率 | 绕过率 | 平均延迟(ms) |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| 时间 | 模式 | ASR | TPR | FPR | 业务完成率 | 绕过率 | 确定性TPR | 确定性不安全释放 | 哨兵TPR | 平均延迟(ms) |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for result in results:
         metrics = result.get("metrics", {})
         lines.append(
-            "| {time} | {mode} | {asr} | {tpr} | {fpr} | {completion} | {bypass} | {latency} |".format(
+            "| {time} | {mode} | {asr} | {tpr} | {fpr} | {completion} | {bypass} | {det_tpr} | {unsafe} | {heur_tpr} | {latency} |".format(
                 time=result.get("created_at", ""),
                 mode=result.get("defense_mode", ""),
                 asr=metrics.get("ASR", ""),
@@ -50,6 +50,9 @@ def eval_results_to_markdown(results: list[dict[str, Any]]) -> str:
                 fpr=metrics.get("FPR", ""),
                 completion=metrics.get("Business Completion Rate", ""),
                 bypass=metrics.get("Bypass Rate", ""),
+                det_tpr=metrics.get("deterministic_TPR", ""),
+                unsafe=metrics.get("deterministic_unsafe_sink_releases", ""),
+                heur_tpr=metrics.get("heuristic_TPR", ""),
                 latency=metrics.get("avg_latency_ms", ""),
             )
         )

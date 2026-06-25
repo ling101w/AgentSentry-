@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">AgentSentry</p>
         <h1>智能体行为防火墙</h1>
-        <p class="subtitle">在工具调用前做任务意图、来源污点和能力策略裁决。</p>
+        <p class="subtitle">生命周期拦截点 where × 保证强度 how：把可证明硬阻断和哨兵兜底分开展示。</p>
       </div>
       <nav class="actions">
         <button id="refreshBtn">刷新</button>
@@ -42,6 +42,7 @@
               <option value="benign_summary">良性网页总结</option>
               <option value="normal_email">正常邮件发送</option>
               <option value="indirect_injection" selected>间接提示注入</option>
+              <option value="rita_prompt_extraction">Rita 风格提示词抽取</option>
               <option value="tool_output_pollution">工具返回污染</option>
               <option value="memory_poison">记忆投毒</option>
               <option value="adaptive_slow_poison">自适应慢速投毒</option>
@@ -91,9 +92,17 @@
           </div>
           <div class="stat-row">
             <div class="stat-card ok"><span>放行</span><strong id="allowCount">0</strong></div>
-            <div class="stat-card warn"><span>询问</span><strong id="askCount">0</strong></div>
+            <div class="stat-card warn"><span>待确认</span><strong id="askCount">0</strong></div>
             <div class="stat-card danger"><span>拒绝</span><strong id="denyCount">0</strong></div>
           </div>
+        </section>
+
+        <section class="panel matrix-panel">
+          <div class="panel-title">
+            <h2>二维防御矩阵</h2>
+            <span id="matrixMeta">where × how hard</span>
+          </div>
+          <div id="defenseMatrix" class="matrix-grid"></div>
         </section>
 
         <section class="panel">
@@ -112,6 +121,14 @@
             <span id="decisionMeta">最新工具调用</span>
           </div>
           <div id="latestDecision" class="explain-box">暂无裁决。</div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <h2>发现分布</h2>
+            <span id="findingCount">0</span>
+          </div>
+          <div id="findingList" class="compact-list empty">暂无发现。</div>
         </section>
 
         <section class="panel">
@@ -140,6 +157,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=console-redesign-1"></script>
+    <script src="/static/app.js?v=rita-scenario-5" charset="utf-8"></script>
   </body>
 </html>

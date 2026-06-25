@@ -39,12 +39,24 @@ def test_eval_results_to_markdown():
             {
                 "created_at": "now",
                 "defense_mode": "full",
-                "metrics": {"ASR": 0, "TPR": 1, "FPR": 0, "Business Completion Rate": 1, "Bypass Rate": 0, "avg_latency_ms": 1.5},
+                "metrics": {
+                    "ASR": 0,
+                    "TPR": 1,
+                    "FPR": 0,
+                    "Business Completion Rate": 1,
+                    "Bypass Rate": 0,
+                    "deterministic_TPR": 1,
+                    "deterministic_unsafe_sink_releases": 0,
+                    "heuristic_TPR": 0.5,
+                    "avg_latency_ms": 1.5,
+                },
             }
         ]
     )
     assert "# AgentSentry 评测结果" in markdown
-    assert "| now | full | 0 | 1 | 0 | 1 | 0 | 1.5 |" in markdown
+    assert "确定性TPR" in markdown
+    assert "哨兵TPR" in markdown
+    assert "| now | full | 0 | 1 | 0 | 1 | 0 | 1 | 0 | 0.5 | 1.5 |" in markdown
 
 
 def test_cases_and_export_api():

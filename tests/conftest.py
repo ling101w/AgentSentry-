@@ -21,6 +21,7 @@ def sandbox(tmp_path: Path) -> Path:
     (root / "reports").mkdir()
     (root / "notes").mkdir()
     (root / "secret.txt").write_text("TEST_SECRET=123\n", encoding="utf-8")
+    (root / "system_prompt.txt").write_text("SYSTEM_PROMPT=hidden demo policy\n", encoding="utf-8")
     return root
 
 
@@ -32,4 +33,3 @@ def store(tmp_path: Path) -> Store:
 @pytest.fixture()
 def tools(sandbox: Path, policy: Policy) -> SandboxTools:
     return SandboxTools(sandbox, policy)
-
