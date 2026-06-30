@@ -14,3 +14,7 @@ dist/
 build/
 node_modules/
 .env
+AgentWard-main/
+AgentWard-main.zip
+src/agentsentry/static/security-screen.css
+src/agentsentry/static/security-screen.js

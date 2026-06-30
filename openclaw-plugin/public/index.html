@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentSentry Records</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">AgentSentry for OpenClaw</p>
+        <h1>运行记录与风险观测</h1>
+        <p class="subtitle">按会话追踪 OpenClaw 提示、工具调用、拦截决策和响应结果。</p>
+      </div>
+      <div class="actions">
+        <a class="button-link primary-link" href="/security-screen">安全态势大屏</a>
+        <a class="button-link" href="/command-lab.html">命令实验室</a>
+        <button id="refreshBtn" type="button">刷新</button>
+        <button id="autoRefreshBtn" class="ghost" type="button">自动刷新：开</button>
+        <button id="exportJsonBtn" class="ghost" type="button">导出 JSON</button>
+        <button id="exportCsvBtn" class="ghost" type="button">导出 CSV</button>
+        <button id="resetBtn" class="ghost danger-action" type="button">清空</button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <section class="stats-grid" id="statsGrid" aria-label="记录概览"></section>
+
+      <section class="workbench">
+        <aside class="sidebar">
+          <section class="panel filters">
+            <div class="panel-title">
+              <h2>筛选</h2>
+              <span id="status" class="pill">连接中</span>
+            </div>
+            <label>
+              搜索
+              <input id="searchInput" type="search" placeholder="工具 / 会话 / 原因 / payload" />
+            </label>
+            <div class="filter-block">
+              <span>视图重点</span>
+              <div class="segmented" id="focusModeGroup">
+                <button class="segment active" type="button" data-focus="important">重点</button>
+                <button class="segment" type="button" data-focus="all">全量</button>
+                <button class="segment" type="button" data-focus="tools">工具</button>
+                <button class="segment" type="button" data-focus="foundation">扫描</button>
+              </div>
+            </div>
+            <div class="field-grid">
+              <label>
+                严重级别
+                <select id="severityFilter">
+                  <option value="">全部</option>
+                  <option value="danger">高危</option>
+                  <option value="warning">警告</option>
+                  <option value="success">通过</option>
+                  <option value="info">信息</option>
+                </select>
+              </label>
+              <label>
+                记录类型
+                <select id="typeFilter">
+                  <option value="">全部</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              生命周期层
+              <select id="layerFilter">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              读取数量
+              <select id="limitSelect">
+                <option value="200">200</option>
+                <option value="500" selected>500</option>
+                <option value="1000">1000</option>
+                <option value="2000">2000</option>
+                <option value="5000">5000</option>
+              </select>
+            </label>
+            <div class="hint">
+              <span>记录文件</span>
+              <strong id="recordsPath">~/.openclaw/agentsentry/records.jsonl</strong>
+            </div>
+          </section>
+
+          <section class="panel sessions-panel">
+            <div class="panel-title">
+              <h2>会话</h2>
+              <span id="sessionCount">0</span>
+            </div>
+            <div id="sessionList" class="session-list"></div>
+          </section>
+        </aside>
+
+        <section class="timeline-column">
+          <section class="panel session-summary" id="sessionSummary"></section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>事件时间线</h2>
+              <span id="recordCount">0 条</span>
+            </div>
+            <div id="timeline" class="timeline"></div>
+          </section>
+        </section>
+
+        <aside class="panel detail">
+          <div class="panel-title detail-title">
+            <div>
+              <h2>详情</h2>
+              <span id="detailMeta">未选择</span>
+            </div>
+            <button id="copyPayloadBtn" class="ghost small" type="button" disabled>复制 JSON</button>
+          </div>
+          <div id="detailBody" class="empty">选择一条记录查看摘要和 payload。</div>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

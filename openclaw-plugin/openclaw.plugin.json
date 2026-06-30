@@ -1,0 +1,343 @@
+{
+  "id": "agent-sentry",
+  "name": "AgentSentry",
+  "description": "OpenClaw telemetry plugin for AgentSentry lifecycle records and dashboard.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dashboard": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Start the built-in local dashboard service."
+          },
+          "host": {
+            "type": "string",
+            "description": "Dashboard bind host. Defaults to 127.0.0.1."
+          },
+          "port": {
+            "type": "number",
+            "description": "Dashboard port. Defaults to 8765."
+          }
+        }
+      },
+      "storage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "stateDir": {
+            "type": "string",
+            "description": "Optional state directory. Defaults to $OPENCLAW_STATE_DIR or ~/.openclaw."
+          },
+          "maxRecords": {
+            "type": "number",
+            "description": "Maximum JSONL records retained after periodic compaction."
+          }
+        }
+      },
+      "capture": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "includeMessageText": {
+            "type": "boolean",
+            "description": "Store previews of user, assistant, and tool-result messages."
+          },
+          "includeToolParams": {
+            "type": "boolean",
+            "description": "Store redacted tool parameters."
+          },
+          "includeSystemPromptPreview": {
+            "type": "boolean",
+            "description": "Store a short redacted system prompt preview."
+          },
+          "previewChars": {
+            "type": "number",
+            "description": "Maximum preview length for captured text fields."
+          }
+        }
+      },
+      "detection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable AgentSentry's lightweight OpenClaw detectors."
+          },
+          "askThreshold": {
+            "type": "number",
+            "description": "Risk score that marks a tool call as review-worthy."
+          },
+          "denyThreshold": {
+            "type": "number",
+            "description": "Risk score that marks a tool call as high risk."
+          }
+        }
+      },
+      "semantic": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable OpenAI-compatible semantic judge."
+          },
+          "judgeToolCalls": {
+            "type": "boolean",
+            "description": "Use semantic judge for high-risk tool call review."
+          },
+          "judgeMessages": {
+            "type": "boolean",
+            "description": "Use semantic judge for message and tool-result content review."
+          },
+          "judgeFoundation": {
+            "type": "boolean",
+            "description": "Use semantic judge for foundation files such as SKILL.md and config files."
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "OpenAI-compatible API base URL."
+          },
+          "model": {
+            "type": "string",
+            "description": "Semantic judge model name."
+          },
+          "apiKeyEnv": {
+            "type": "string",
+            "description": "Environment variable holding the semantic judge API key."
+          },
+          "timeoutMs": {
+            "type": "number",
+            "description": "Semantic judge request timeout in milliseconds."
+          },
+          "maxInputChars": {
+            "type": "number",
+            "description": "Maximum prompt input characters sent to semantic judge."
+          }
+        }
+      },
+      "foundationScan": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Run foundation scan at prompt-build time."
+          },
+          "scanSkills": {
+            "type": "boolean",
+            "description": "Scan skill files such as SKILL.md for malicious instructions."
+          },
+          "scanConfig": {
+            "type": "boolean",
+            "description": "Scan configuration files for risky settings and embedded secrets."
+          },
+          "scanSensitiveFiles": {
+            "type": "boolean",
+            "description": "Detect sensitive files in the workspace."
+          },
+          "maxFiles": {
+            "type": "number",
+            "description": "Maximum files scanned per workspace."
+          },
+          "maxFileBytes": {
+            "type": "number",
+            "description": "Maximum size for scanned text files."
+          },
+          "rescanIntervalMs": {
+            "type": "number",
+            "description": "Minimum interval before rescanning the same workspace."
+          }
+        }
+      },
+      "policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "deterministic": {
+            "type": "boolean",
+            "description": "Enable deterministic task-intent and sink policy checks."
+          },
+          "taintFeedback": {
+            "type": "boolean",
+            "description": "Tighten high-risk sink policy after contaminated tool results."
+          },
+          "restrictWritesToAllowedRoots": {
+            "type": "boolean",
+            "description": "When enabled, write-like tool calls must target configured allowed roots."
+          },
+          "allowlistedRecipients": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Recipients allowed for email/message sink tools."
+          },
+          "allowlistedApiHosts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "API hosts allowed for network sink tools. Empty means host allowlist is not enforced."
+          },
+          "allowedWriteRoots": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Allowed write roots when restrictWritesToAllowedRoots is enabled."
+          },
+          "sensitiveAssets": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Path/name markers treated as sensitive assets."
+          }
+        }
+      },
+      "enforcement": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["observe", "approval", "block"],
+            "description": "observe records only; approval asks the user for high-risk calls; block denies high-risk calls."
+          },
+          "approvalTimeoutMs": {
+            "type": "number",
+            "description": "Approval timeout used when enforcement.mode is approval."
+          }
+        }
+      },
+      "notifications": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enableProactiveNotifications": {
+            "type": "boolean",
+            "description": "Send proactive OpenClaw channel messages when alerts are detected."
+          },
+          "minSeverity": {
+            "type": "string",
+            "enum": ["warning", "danger"],
+            "description": "Minimum severity for proactive notifications."
+          },
+          "maxMessageChars": {
+            "type": "number",
+            "description": "Maximum proactive notification length."
+          }
+        }
+      },
+      "responseCover": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable assistant response covering after contaminated tool output."
+          },
+          "coverAssistantAfterContamination": {
+            "type": "boolean",
+            "description": "Replace the next assistant response after prompt-injection or contaminated tool output is detected."
+          },
+          "message": {
+            "type": "string",
+            "description": "Replacement assistant message used when response covering is active."
+          }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "dashboard.enabled": {
+      "label": "Enable Dashboard",
+      "help": "Starts the local AgentSentry records dashboard."
+    },
+    "dashboard.host": {
+      "label": "Dashboard Host",
+      "help": "Use 127.0.0.1 for local-only access."
+    },
+    "dashboard.port": {
+      "label": "Dashboard Port",
+      "help": "Default: 8765."
+    },
+    "capture.includeMessageText": {
+      "label": "Capture Message Text",
+      "help": "Stores redacted previews of messages for review."
+    },
+    "capture.includeToolParams": {
+      "label": "Capture Tool Params",
+      "help": "Stores redacted tool parameters for review."
+    },
+    "capture.includeSystemPromptPreview": {
+      "label": "Capture System Prompt Preview",
+      "help": "Disabled by default to avoid storing prompt text."
+    },
+    "detection.enabled": {
+      "label": "Enable Detection",
+      "help": "Runs lightweight AgentSentry detectors on tool calls and tool results."
+    },
+    "semantic.enabled": {
+      "label": "Semantic Judge",
+      "help": "Enables OpenAI-compatible semantic risk classification."
+    },
+    "semantic.judgeFoundation": {
+      "label": "Semantic Foundation Scan",
+      "help": "Uses the semantic judge to review SKILL.md and config files during foundation scan."
+    },
+    "semantic.model": {
+      "label": "Semantic Model",
+      "help": "Model used by the semantic judge."
+    },
+    "semantic.apiKeyEnv": {
+      "label": "Semantic API Key Env",
+      "help": "Environment variable name containing the API key."
+    },
+    "foundationScan.enabled": {
+      "label": "Enable Foundation Scan",
+      "help": "Scans workspace files before prompt construction."
+    },
+    "foundationScan.scanSkills": {
+      "label": "Scan Skills",
+      "help": "Checks SKILL.md and related skill files for malicious instructions."
+    },
+    "foundationScan.scanConfig": {
+      "label": "Scan Config",
+      "help": "Checks config files for risky exposure or secrets."
+    },
+    "foundationScan.scanSensitiveFiles": {
+      "label": "Scan Sensitive Files",
+      "help": "Records sensitive files found in the workspace."
+    },
+    "policy.deterministic": {
+      "label": "Deterministic Policy",
+      "help": "Enables task-intent, sensitive asset, and sink checks."
+    },
+    "policy.taintFeedback": {
+      "label": "Taint Feedback",
+      "help": "After a contaminated result, high-risk sinks require review or denial."
+    },
+    "policy.restrictWritesToAllowedRoots": {
+      "label": "Restrict Write Roots",
+      "help": "Requires write-like tool calls to target configured allowed roots."
+    },
+    "enforcement.mode": {
+      "label": "Enforcement Mode",
+      "help": "Default observe mode records findings without blocking OpenClaw."
+    },
+    "notifications.enableProactiveNotifications": {
+      "label": "Enable Notifications",
+      "help": "Send proactive warning messages through OpenClaw channels."
+    },
+    "notifications.minSeverity": {
+      "label": "Notification Severity",
+      "help": "Use danger to notify only high-risk alerts, or warning for broader notifications."
+    },
+    "responseCover.enabled": {
+      "label": "Response Cover",
+      "help": "Replaces the next assistant response after contaminated tool output is detected."
+    },
+    "responseCover.message": {
+      "label": "Cover Message",
+      "help": "Message shown when AgentSentry covers a contaminated assistant response."
+    }
+  }
+}

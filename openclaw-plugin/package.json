@@ -1,0 +1,19 @@
+{
+  "name": "@openclaw/agent-sentry",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentSentry records and lightweight guard telemetry for OpenClaw",
+  "type": "module",
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "test:policy": "npm run build && node ./scripts/policy-smoke.mjs"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.28"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  }
+}

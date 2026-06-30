@@ -1,0 +1,128 @@
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { PluginConfig } from "../config.ts";
+
+export type RecordSeverity = "info" | "success" | "warning" | "danger";
+
+export type AgentSentryRecord = {
+  id: string;
+  run_id: string;
+  session_key: string;
+  type: string;
+  layer: string;
+  severity: RecordSeverity;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
+export class RecordStore {
+  readonly stateDir: string;
+  readonly dataDir: string;
+  readonly recordsPath: string;
+  private maxRecords: number;
+  private writeCount = 0;
+
+  constructor(config: PluginConfig) {
+    this.stateDir = config.storage.stateDir || process.env.OPENCLAW_STATE_DIR?.trim() || join(homedir(), ".openclaw");
+    this.dataDir = join(this.stateDir, "agentsentry");
+    this.recordsPath = join(this.dataDir, "records.jsonl");
+    this.maxRecords = config.storage.maxRecords;
+    mkdirSync(this.dataDir, { recursive: true });
+    if (!existsSync(this.recordsPath)) writeFileSync(this.recordsPath, "", "utf8");
+  }
+
+  add(input: Omit<AgentSentryRecord, "id" | "created_at"> & { id?: string; created_at?: string }): AgentSentryRecord {
+    const record: AgentSentryRecord = {
+      id: input.id || newId("rec"),
+      created_at: input.created_at || new Date().toISOString(),
+      run_id: input.run_id,
+      session_key: input.session_key,
+      type: input.type,
+      layer: input.layer,
+      severity: input.severity,
+      title: input.title,
+      summary: input.summary,
+      payload: input.payload,
+    };
+    appendFileSync(this.recordsPath, `${JSON.stringify(record)}\n`, "utf8");
+    this.writeCount += 1;
+    if (this.writeCount % 200 === 0) this.compact();
+    return record;
+  }
+
+  list(limit = 500): AgentSentryRecord[] {
+    const lines = readTailLines(this.recordsPath, Math.max(1, limit));
+    const records: AgentSentryRecord[] = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        records.push(JSON.parse(line) as AgentSentryRecord);
+      } catch {
+        // Ignore malformed partial lines; JSONL append can leave one if the process is killed.
+      }
+    }
+    return records.reverse();
+  }
+
+  stats(limit = 2000): Record<string, unknown> {
+    const records = this.list(limit);
+    const byType: Record<string, number> = {};
+    const bySeverity: Record<string, number> = {};
+    const byLayer: Record<string, number> = {};
+    const sessions = new Set<string>();
+    const runs = new Set<string>();
+
+    for (const record of records) {
+      byType[record.type] = (byType[record.type] || 0) + 1;
+      bySeverity[record.severity] = (bySeverity[record.severity] || 0) + 1;
+      byLayer[record.layer] = (byLayer[record.layer] || 0) + 1;
+      sessions.add(record.session_key);
+      runs.add(record.run_id);
+    }
+
+    return {
+      total: records.length,
+      sessions: sessions.size,
+      runs: runs.size,
+      byType,
+      bySeverity,
+      byLayer,
+      latest: records[0]?.created_at || null,
+      recordsPath: this.recordsPath,
+    };
+  }
+
+  reset(): void {
+    writeFileSync(this.recordsPath, "", "utf8");
+  }
+
+  compact(): void {
+    const records = this.list(this.maxRecords);
+    const tmpPath = `${this.recordsPath}.tmp`;
+    writeFileSync(tmpPath, records.reverse().map((record) => JSON.stringify(record)).join("\n") + (records.length ? "\n" : ""), "utf8");
+    try {
+      renameSync(tmpPath, this.recordsPath);
+    } catch {
+      rmSync(tmpPath, { force: true });
+    }
+  }
+}
+
+export function newId(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`;
+}
+
+export function runIdForSession(sessionKey: string | undefined): string {
+  if (!sessionKey) return "session_unknown";
+  return `session_${Buffer.from(sessionKey).toString("base64url").slice(0, 24)}`;
+}
+
+function readTailLines(path: string, limit: number): string[] {
+  if (!existsSync(path)) return [];
+  const text = readFileSync(path, "utf8");
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  return lines.slice(Math.max(0, lines.length - limit));
+}

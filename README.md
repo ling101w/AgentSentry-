@@ -18,6 +18,39 @@ python -m uvicorn agentsentry.app:app --reload --app-dir src
 
 Open http://127.0.0.1:8000 and run a scenario from the dashboard.
 
+## OpenClaw Plugin
+
+AgentSentry can also run inside OpenClaw as a plugin, similar to AgentWard. The plugin records OpenClaw lifecycle events, tool calls, lightweight AgentSentry findings, approval decisions, and serves a local records dashboard with JSON/CSV export.
+
+```powershell
+cd .\openclaw-plugin
+npm run build
+.\setup.ps1 -Force
+```
+
+After installing, use `/agentsentry` in OpenClaw. The dashboard defaults to http://127.0.0.1:8765 and JSONL records are stored under `~/.openclaw/agentsentry/records.jsonl`.
+
+The plugin defaults to observe-only mode. To actively gate risky tool calls, change `enforcement.mode` in the OpenClaw plugin config to `approval` or `block`. In approval mode, an OpenClaw `allow-always` resolution caches the exact tool name and parameter hash in `~/.openclaw/agentsentry/approval-cache.json`; clear it with `/agentsentry approvals reset`.
+
+The OpenClaw plugin now also has optional AgentWard-style semantic foundation scan and response covering:
+
+```text
+/agentsentry config set semantic.enabled true
+/agentsentry config set semantic.judgeFoundation true
+/agentsentry config set responseCover.enabled true
+```
+
+Useful runtime commands:
+
+```text
+/agentsentry status
+/agentsentry config get
+/agentsentry config set enforcement.mode approval
+/agentsentry approvals status
+/agentsentry approvals reset
+/agentsentry reset
+```
+
 Offline demos and tests use the deterministic fake LLM. To use a real OpenAI-compatible endpoint, set:
 
 ```powershell

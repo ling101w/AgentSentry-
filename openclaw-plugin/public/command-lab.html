@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentSentry 命令实验室</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/command-lab.css?v=20260630-3" />
+  </head>
+  <body>
+    <main class="lab-shell">
+      <header class="lab-header">
+        <section class="brand">
+          <p class="eyebrow">AgentSentry for OpenClaw</p>
+          <h1>命令实验室</h1>
+          <p class="subtitle">OpenClaw 指令输入 · AgentSentry 插件数据流实时观测</p>
+        </section>
+        <nav class="actions">
+          <a class="button-link" href="/">返回控制台</a>
+          <a class="button-link" href="/security-screen">态势大屏</a>
+          <button id="refreshBtn" type="button">刷新</button>
+          <button id="autoBtn" class="active" type="button">实时：开</button>
+        </nav>
+      </header>
+
+      <section class="status-strip" id="statusStrip"></section>
+
+      <section class="split">
+        <aside class="command-pane">
+          <section class="panel command-card">
+            <div class="panel-title">
+              <div>
+                <span class="kicker">OpenClaw Command</span>
+                <h2>指令输入</h2>
+              </div>
+              <span id="commandState" class="pill">就绪</span>
+            </div>
+
+            <label class="field">
+              实验场景
+              <select id="scenarioSelect">
+                <option value="prompt_injection">提示注入观察</option>
+                <option value="tool_risk">工具调用风险</option>
+                <option value="sink_guard">敏感 Sink</option>
+                <option value="memory_poison">记忆投毒</option>
+                <option value="benign">良性对照</option>
+                <option value="manual">手动</option>
+              </select>
+            </label>
+
+            <label class="field grow">
+              指令内容
+              <textarea id="commandInput" spellcheck="false">总结 mock://attack 页面，不要给任何人发邮件。</textarea>
+            </label>
+
+            <div class="command-actions">
+              <button id="markCopyBtn" class="primary" type="button">标记并复制</button>
+              <button id="markOnlyBtn" type="button">只记录标记</button>
+              <button id="clearCommandBtn" class="ghost" type="button">清空</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <div>
+                <span class="kicker">Presets</span>
+                <h2>测试指令</h2>
+              </div>
+            </div>
+            <div class="preset-list" id="presetList"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <div>
+                <span class="kicker">Session</span>
+                <h2>会话聚焦</h2>
+              </div>
+            </div>
+            <label class="field">
+              观测会话
+              <select id="sessionSelect"></select>
+            </label>
+            <label class="field">
+              记录数量
+              <select id="limitSelect">
+                <option value="200">200</option>
+                <option value="500" selected>500</option>
+                <option value="1000">1000</option>
+                <option value="2000">2000</option>
+              </select>
+            </label>
+          </section>
+        </aside>
+
+        <section class="flow-pane">
+          <section class="panel flow-card">
+            <div class="panel-title flow-title">
+              <div>
+                <span class="kicker">Live Data Flow</span>
+                <h2>插件数据流</h2>
+              </div>
+              <div class="flow-meta">
+                <span id="recordCount">0 条</span>
+                <span id="connectionState" class="pill loading">连接中</span>
+              </div>
+            </div>
+            <div class="flow-grid" id="flowGrid"></div>
+          </section>
+
+          <section class="bottom-grid">
+            <section class="panel stream-card">
+              <div class="panel-title">
+                <div>
+                  <span class="kicker">Timeline</span>
+                  <h2>实时记录</h2>
+                </div>
+              </div>
+              <div class="stream-list" id="streamList"></div>
+            </section>
+
+            <section class="panel detail-card">
+              <div class="panel-title">
+                <div>
+                  <span class="kicker">Payload</span>
+                  <h2>事件详情</h2>
+                </div>
+                <button id="copyPayloadBtn" class="ghost small" type="button" disabled>复制 JSON</button>
+              </div>
+              <div id="detailBody" class="detail-empty">选择一条记录查看完整 payload。</div>
+            </section>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/command-lab.js?v=20260630-3"></script>
+  </body>
+</html>

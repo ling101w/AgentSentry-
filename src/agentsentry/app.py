@@ -47,6 +47,14 @@ def create_app() -> FastAPI:
     def dashboard() -> str:
         return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
+    @app.get("/security-screen", response_class=HTMLResponse)
+    def security_screen() -> str:
+        return (STATIC_DIR / "security-screen.html").read_text(encoding="utf-8")
+
+    @app.get("/screen", response_class=HTMLResponse)
+    def screen_alias() -> str:
+        return (STATIC_DIR / "security-screen.html").read_text(encoding="utf-8")
+
     @app.post("/api/runs", response_model=RunResponse)
     def start_run(request: RunRequest) -> RunResponse:
         tools = SandboxTools(paths().sandbox, policy())

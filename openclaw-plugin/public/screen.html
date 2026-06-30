@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AgentSentry 态势感知大屏</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/screen.css" />
+  </head>
+  <body>
+    <canvas id="threatScene" aria-label="AgentSentry 三维安全态势图"></canvas>
+
+    <main class="screen-shell">
+      <header class="screen-header">
+        <div>
+          <p class="eyebrow">AgentSentry 安全指挥中心</p>
+          <h1>OpenClaw 安全态势感知</h1>
+          <p class="subtitle">把会话、工具调用、基础扫描和告警压到同一张实时三维态势图里。</p>
+        </div>
+        <nav class="header-meta">
+          <span id="clock">--:--:--</span>
+          <span id="health" class="live-pill">连接中</span>
+          <a href="/" class="screen-link">返回控制台</a>
+        </nav>
+      </header>
+
+      <section class="hero-metrics" id="kpiRow"></section>
+
+      <section class="hud-layout">
+        <aside class="left-hud">
+          <section class="hud-panel posture-panel">
+            <div class="panel-title">
+              <span>当前防护姿态</span>
+              <strong id="postureLabel">计算中</strong>
+            </div>
+            <div class="risk-readout">
+              <strong id="riskScore">0</strong>
+              <span>风险指数</span>
+            </div>
+            <p id="postureText">正在读取 AgentSentry 记录。</p>
+          </section>
+
+          <section class="hud-panel">
+            <div class="panel-title">
+              <span>阶段负载</span>
+              <strong id="stageTotal">0</strong>
+            </div>
+            <div class="stage-list" id="stageFlow"></div>
+          </section>
+        </aside>
+
+        <section class="center-hud">
+          <div class="scene-caption">
+            <span>三维威胁拓扑 / Live Security Mesh</span>
+            <strong id="sceneHeadline">等待数据接入</strong>
+          </div>
+          <div class="scene-legend">
+            <span class="danger">高危</span>
+            <span class="warning">警告</span>
+            <span class="success">通过</span>
+            <span class="info">信息</span>
+          </div>
+        </section>
+
+        <aside class="right-hud">
+          <section class="hud-panel">
+            <div class="panel-title">
+              <span>高优先级事件</span>
+              <strong id="alertTotal">0</strong>
+            </div>
+            <div class="event-stream" id="alertStream"></div>
+          </section>
+
+          <section class="hud-panel">
+            <div class="panel-title">
+              <span>会话热区</span>
+              <strong id="sessionHotTotal">0</strong>
+            </div>
+            <div class="session-heat" id="sessionHeat"></div>
+          </section>
+        </aside>
+      </section>
+
+      <section class="bottom-command">
+        <div class="hud-panel flow-panel">
+          <div class="panel-title">
+            <span>攻击面流向</span>
+            <strong id="flowSummary">等待数据</strong>
+          </div>
+          <div class="attack-flow" id="attackFlow"></div>
+        </div>
+
+        <div class="hud-panel">
+          <div class="panel-title">
+            <span>工具治理</span>
+            <strong id="toolTotal">0</strong>
+          </div>
+          <div class="tool-grid" id="toolGrid"></div>
+        </div>
+
+        <div class="hud-panel latest-panel">
+          <div class="panel-title">
+            <span>最新关键事件</span>
+            <strong id="latestCount">0</strong>
+          </div>
+          <div class="latest-events" id="latestEvents"></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/screen.js"></script>
+  </body>
+</html>
