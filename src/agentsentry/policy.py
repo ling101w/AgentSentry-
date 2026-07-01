@@ -173,7 +173,10 @@ def host_from_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme == "mock":
         return "mock.local"
-    return parsed.hostname or ""
+    try:
+        return parsed.hostname or ""
+    except ValueError:
+        return ""
 
 
 def target_allowed(target: str, allowed_targets: list[str]) -> bool:
@@ -219,7 +222,11 @@ def _normalize_target(value: str) -> str:
         return text.rstrip("/")
     scheme = parsed.scheme.lower()
     host = (parsed.hostname or "").lower()
-    port = f":{parsed.port}" if parsed.port else ""
+    try:
+        parsed_port = parsed.port
+    except ValueError:
+        return ""
+    port = f":{parsed_port}" if parsed_port else ""
     path = parsed.path.rstrip("/") or "/"
     query = f"?{parsed.query}" if parsed.query else ""
     return f"{scheme}://{host}{port}{path}{query}"
@@ -231,7 +238,7 @@ def _extract_targets(text: str) -> list[str]:
 
 
 def _clean_target(value: str) -> str:
-    return value.rstrip(".,;:)]}>'\"")
+    return value.rstrip(".,;:)]}>'\"，。；：）】》”’")
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -239,9 +246,10 @@ def _unique(values: list[str]) -> list[str]:
 
 
 class PolicyEngine:
-    def __init__(self, policy: Policy, deterministic_enabled: bool = True):
+    def __init__(self, policy: Policy, deterministic_enabled: bool = True, risk_scoring_enabled: bool = True):
         self.policy = policy
         self.deterministic_enabled = deterministic_enabled
+        self.risk_scoring_enabled = risk_scoring_enabled
         self.api_call_counts: dict[str, int] = {}
 
     def decide(
@@ -254,17 +262,18 @@ class PolicyEngine:
         findings = findings or []
         reasons: list[str] = []
         violations: list[str] = []
-        risk = self._base_tool_risk(action.tool)
+        risk = self._base_tool_risk(action.tool) if self.risk_scoring_enabled else 0
 
         if self.deterministic_enabled and (action.tool in task_spec.forbidden_tools or action.tool not in task_spec.allowed_tools):
             violations.append(f"tool {action.tool} is outside TaskSpec")
-        elif action.tool in task_spec.forbidden_tools or action.tool not in task_spec.allowed_tools:
+        elif self.risk_scoring_enabled and (action.tool in task_spec.forbidden_tools or action.tool not in task_spec.allowed_tools):
             risk += 50
         else:
             reasons.append("tool is allowed by TaskSpec")
 
-        risk += self._taint_risk(action)
-        risk += sentry_score
+        if self.risk_scoring_enabled:
+            risk += self._taint_risk(action)
+            risk += sentry_score
 
         deterministic_finding_reasons = [
             finding.reason
@@ -276,25 +285,27 @@ class PolicyEngine:
         elif self.deterministic_enabled:
             violations.extend(self._deterministic_violations(action, task_spec, record_usage=False))
 
-        if violations:
-            risk += 35
-
         deterministic_block = bool(violations)
+        if deterministic_block:
+            risk = max(risk + 35, 100)
         decision = Decision.ALLOW
         if deterministic_block:
             rule = self.policy.rule_for(action.tool)
             decision = Decision(rule.get("on_violation", "deny")) if rule else Decision.DENY
             if decision == Decision.ASK:
                 decision = Decision.DENY
-        elif any(finding.verdict == DetectionVerdict.BLOCK for finding in findings if finding.finding_type != FindingType.DETERMINISTIC):
+        elif self.risk_scoring_enabled and any(finding.verdict == DetectionVerdict.BLOCK for finding in findings if finding.finding_type != FindingType.DETERMINISTIC):
             decision = Decision.DENY
-        elif risk >= self.policy.deny_threshold:
+        elif self.risk_scoring_enabled and risk >= self.policy.deny_threshold:
             decision = Decision.DENY
-        elif any(
-            finding.verdict == DetectionVerdict.REQUIRE_APPROVAL
-            for finding in findings
-            if finding.finding_type != FindingType.DETERMINISTIC
-        ) or risk >= self.policy.ask_threshold:
+        elif self.risk_scoring_enabled and (
+            any(
+                finding.verdict == DetectionVerdict.REQUIRE_APPROVAL
+                for finding in findings
+                if finding.finding_type != FindingType.DETERMINISTIC
+            )
+            or risk >= self.policy.ask_threshold
+        ):
             decision = Decision.ASK
 
         return PolicyDecision(
@@ -422,12 +433,13 @@ class PolicyEngine:
     def _check_call_api(self, action: ToolAction, task_spec: TaskSpec, *, record_usage: bool = False) -> list[str]:
         url = str(unwrap_arg(action.args.get("url", "")))
         host = host_from_url(url)
-        if record_usage:
-            self.api_call_counts[host] = self.api_call_counts.get(host, 0) + 1
-        api_call_count = self.api_call_counts.get(host, 0)
         violations = self._check_allowed_target(action, task_spec)
         if host not in self.policy.allowlisted_api_hosts:
             violations.append(f"api host {host or '<empty>'} is not allowlisted")
+        countable_call = not violations and bool(host)
+        if record_usage and countable_call:
+            self.api_call_counts[host] = self.api_call_counts.get(host, 0) + 1
+        api_call_count = self.api_call_counts.get(host, 0)
         if api_call_count > 10:
             violations.append("api rate exceeds configured limit")
         payload_label = arg_label(action.args.get("body", ""))

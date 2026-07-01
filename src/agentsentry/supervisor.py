@@ -42,8 +42,9 @@ class AgentSupervisor:
         run_id = request.run_id or new_id("run")
         toggles = toggles_for_mode(request.defense_mode)
         task_spec = derive_task_spec(request.task, self.policy.sensitive_assets)
-        engine = PolicyEngine(self.policy, deterministic_enabled=toggles.deterministic)
+        engine = PolicyEngine(self.policy, deterministic_enabled=toggles.deterministic, risk_scoring_enabled=toggles.sentry)
         guard = GuardPipeline(self.policy, enabled=toggles.sentry, feedback_enabled=toggles.feedback)
+        foundation_guard = GuardPipeline(self.policy, enabled=toggles.deterministic or toggles.sentry, feedback_enabled=toggles.feedback)
         behavior_sentry = BehaviorSentry(enabled=toggles.sentry, feedback_enabled=toggles.feedback)
         llm = FakeLLM(request.scenario) if request.use_fake_llm else self.llm or OpenAICompatibleClient()
         history: list[dict[str, Any]] = []
@@ -55,7 +56,12 @@ class AgentSupervisor:
 
         self.store.create_run(run_id, request.task, request.scenario, request.defense_mode)
         self._event(run_id, "task_spec", task_spec.model_dump())
-        foundation_findings = guard.foundation_scan()
+        foundation_findings = [
+            finding
+            for finding in foundation_guard.foundation_scan()
+            if (toggles.deterministic or finding.finding_type != FindingType.DETERMINISTIC)
+            and (toggles.sentry or finding.finding_type == FindingType.DETERMINISTIC)
+        ]
         for finding in foundation_findings:
             context.record(finding)
             self._event(run_id, "foundation_scan", finding.model_dump(mode="json"))
@@ -126,7 +132,7 @@ class AgentSupervisor:
 
             action = _normalize_action(action)
             action = self._resolve_last(action, last_result)
-            action, exposure_findings = exposures.apply(action)
+            action, exposure_findings = exposures.apply(action) if toggles.deterministic else (action, [])
 
             if action.tool == "final_answer":
                 final_output = str(unwrap_arg(action.args.get("answer", "")))
@@ -143,11 +149,11 @@ class AgentSupervisor:
             step_findings.extend(deterministic_findings)
 
             sentry_score, sentry_reasons = behavior_sentry.score(action, task_spec, history)
-            learned_findings = _learned_findings(sentry_score, sentry_reasons, action.tool)
+            learned_findings = _learned_findings(sentry_score, sentry_reasons, action.tool) if toggles.sentry else []
             for finding in learned_findings:
                 context.record(finding)
             step_findings.extend(learned_findings)
-            h_score = heuristic_score(step_findings)
+            h_score = heuristic_score(step_findings) if toggles.sentry else 0
             policy_decision = engine.decide(action, task_spec, sentry_score=h_score, findings=step_findings)
             policy_decision.reasons.extend(finding.reason for finding in step_findings if finding.finding_type != FindingType.DETERMINISTIC)
 

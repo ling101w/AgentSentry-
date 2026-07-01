@@ -1,6 +1,7 @@
 import type { PluginConfig } from "../config.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
 import {
+  applyExposureTaint,
   decideAction,
   mostSevereVerdict,
   normalizeAction,
@@ -70,13 +71,16 @@ export function detectToolCall(
   state: PolicyState,
   extraFindings: DetectionFinding[] = [],
 ): DetectionResult {
-  const action = normalizeAction(toolName, params);
+  let action = normalizeAction(toolName, params);
   if (!config.detection.enabled) {
-    const policy = decideAction(action, state, config, extraFindings);
+    const policy = decideAction(action, state, config, []);
     return { decision: policy.decision, risk_score: policy.risk_score, findings: policy.findings, summary: "detection disabled; policy only", policy };
   }
 
   const findings: DetectionFinding[] = [...extraFindings];
+  const exposure = applyExposureTaint(action, state, config);
+  action = exposure.action;
+  findings.push(...exposure.findings);
   const text = `${toolName}\n${safeStringify(params)}`;
   let risk = baseToolRisk(toolName);
 

@@ -33,3 +33,28 @@ def test_list_run_events_after_rowid_returns_incremental_events(store):
 
     after_first = store.list_run_events("run-1", after_rowid=events[0]["rowid"])
     assert [event["id"] for event in after_first] == [second.id]
+
+
+def test_list_events_orders_by_write_order_not_created_at(store):
+    store.create_run("run-order", "target", None, "full")
+    older_written_later = Event(run_id="run-order", type="written-later", payload={}, created_at="2000-01-01T00:00:00Z")
+    newer_written_first = Event(run_id="run-order", type="written-first", payload={}, created_at="2999-01-01T00:00:00Z")
+    store.add_event(newer_written_first)
+    store.add_event(older_written_later)
+
+    events = store.list_events(limit=2)["events"]
+
+    assert [event["type"] for event in events] == ["written-later", "written-first"]
+
+
+def test_create_run_is_idempotent_for_stream_retries(store):
+    store.create_run("retry-run", "old task", "old", "full")
+    store.finish_run("retry-run", "old output")
+
+    store.create_run("retry-run", "new task", "new", "none")
+
+    run = next(item for item in store.list_events()["runs"] if item["id"] == "retry-run")
+    assert run["task"] == "new task"
+    assert run["scenario"] == "new"
+    assert run["defense_mode"] == "none"
+    assert run["final_output"] == ""

@@ -37,6 +37,11 @@ export type PolicyState = {
     risk_score: number;
   }>;
   toolResultLabels: Map<string, Label>;
+  exposures: Array<{
+    source: string;
+    text: string;
+    label: Label;
+  }>;
   apiCallCounts: Map<string, number>;
 };
 
@@ -78,6 +83,7 @@ export function createPolicyState(): PolicyState {
     foundationFindings: [],
     history: [],
     toolResultLabels: new Map(),
+    exposures: [],
     apiCallCounts: new Map(),
   };
 }
@@ -96,6 +102,41 @@ export function normalizeAction(toolName: string, params: Record<string, unknown
   return { tool, originalTool: toolName, args, reason };
 }
 
+export function applyExposureTaint(action: AgentSentryAction, state: PolicyState, config: PluginConfig): {
+  action: AgentSentryAction;
+  findings: DetectionFinding[];
+} {
+  if (!config.detection.enabled || !config.policy.deterministic || !state.exposures.length || !HIGH_RISK_SINKS.has(action.tool)) {
+    return { action, findings: [] };
+  }
+
+  const args = { ...action.args };
+  const findings: DetectionFinding[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (isLabeledValue(value)) continue;
+    const text = flattenText(value);
+    if (!text.trim()) continue;
+    const match = matchExposure(text, state.exposures);
+    let exposure = match?.exposure || null;
+    let mode = match?.mode || "";
+    if (!exposure && isSinkPayloadArg(action.tool, key)) {
+      exposure = combinedExposure(state.exposures);
+      mode = "run_exposure_default";
+    }
+    if (!exposure) continue;
+    args[key] = { value, label: exposure.label };
+    findings.push(finding("Execution Control", "deterministic", "block", "sink argument inherits untrusted run exposure", 100, {
+      tool: action.tool,
+      arg: key,
+      source: exposure.source,
+      match: mode,
+    }));
+  }
+
+  if (!findings.length) return { action, findings };
+  return { action: { ...action, args }, findings };
+}
+
 export function decideAction(
   action: AgentSentryAction,
   state: PolicyState,
@@ -105,10 +146,11 @@ export function decideAction(
   const findings = [...incomingFindings];
   const reasons: string[] = [];
   const violations: string[] = [];
-  let risk = baseToolRisk(action.tool);
+  const riskScoringEnabled = config.detection.enabled;
+  let risk = riskScoringEnabled ? baseToolRisk(action.tool) : 0;
 
   const taskSpec = state.taskSpec;
-  if (state.foundationBlocked && HIGH_RISK_SINKS.has(action.tool)) {
+  if (config.policy.deterministic && state.foundationBlocked && HIGH_RISK_SINKS.has(action.tool)) {
     findings.push(finding("Foundation", "deterministic", "block", "foundation scan found blocking workspace risk", 100, {
       blockedFindings: state.foundationFindings.filter((item) => item.verdict === "block").map((item) => item.reason),
     }));
@@ -118,38 +160,48 @@ export function decideAction(
   if (config.policy.deterministic && (taskSpec.forbidden_tools.includes(action.tool) || !taskSpec.allowed_tools.includes(action.tool))) {
     violations.push(`tool ${action.tool} is outside TaskSpec`);
     findings.push(finding("Execution Control", "deterministic", "block", `tool ${action.tool} is outside TaskSpec`, 100, { tool: action.tool }));
-  } else if (taskSpec.forbidden_tools.includes(action.tool) || !taskSpec.allowed_tools.includes(action.tool)) {
+  } else if (riskScoringEnabled && (taskSpec.forbidden_tools.includes(action.tool) || !taskSpec.allowed_tools.includes(action.tool))) {
     risk += 50;
   } else {
     reasons.push("tool is allowed by TaskSpec");
   }
 
-  const alignmentFindings = decisionAlignment(action, taskSpec);
-  findings.push(...alignmentFindings);
+  if (riskScoringEnabled) {
+    const alignmentFindings = decisionAlignment(action, taskSpec);
+    findings.push(...alignmentFindings);
+  }
 
   const policyViolations = config.policy.deterministic ? deterministicViolations(action, taskSpec, state, config) : [];
   for (const violation of policyViolations) {
     violations.push(violation);
     findings.push(finding("Execution Control", "deterministic", "block", violation, 100, { tool: action.tool }));
   }
+  for (const reason of findings
+    .filter((item) => item.finding_type === "deterministic" && item.verdict === "block")
+    .map((item) => item.reason)) {
+    violations.push(reason);
+  }
 
-  const trajectoryFindings = trajectoryFindingsFor(action, state, config);
-  findings.push(...trajectoryFindings);
+  if (riskScoringEnabled) {
+    const trajectoryFindings = trajectoryFindingsFor(action, state, config);
+    findings.push(...trajectoryFindings);
+  }
 
-  const sentryScore = heuristicScore(findings);
-  risk += sentryScore;
-  risk += taintRisk(action, state, config);
-  if (violations.length) risk += 35;
-
+  const sentryScore = riskScoringEnabled ? heuristicScore(findings) : 0;
+  if (riskScoringEnabled) {
+    risk += sentryScore;
+    risk += taintRisk(action, state, config);
+  }
   const deterministicBlock = violations.length > 0 || findings.some((item) => item.finding_type === "deterministic" && item.verdict === "block");
+  if (deterministicBlock) risk = Math.max(risk + 35, 100);
   let decision: "allow" | "ask" | "deny" = "allow";
   if (deterministicBlock) {
     decision = "deny";
-  } else if (findings.some((item) => item.verdict === "block")) {
+  } else if (riskScoringEnabled && findings.some((item) => item.verdict === "block")) {
     decision = "deny";
-  } else if (risk >= config.detection.denyThreshold) {
+  } else if (riskScoringEnabled && risk >= config.detection.denyThreshold) {
     decision = "deny";
-  } else if (risk >= config.detection.askThreshold || findings.some((item) => item.verdict === "require_approval")) {
+  } else if (riskScoringEnabled && (risk >= config.detection.askThreshold || findings.some((item) => item.verdict === "require_approval"))) {
     decision = "ask";
   }
 
@@ -185,29 +237,37 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
 }
 
 export function labelToolResult(toolCallId: string, result: unknown, state: PolicyState, config: PluginConfig): Label {
+  if (!config.detection.enabled) {
+    const label = trustedToolLabel(toolCallId);
+    if (toolCallId) state.toolResultLabels.set(toolCallId, label);
+    return label;
+  }
   const text = safeStringify(result);
   const label: Label = {
     source: toolCallId ? `tool:${toolCallId}` : "tool:unknown",
-    integrity: "trusted",
+    integrity: "untrusted",
     confidentiality: "public",
-    tainted: false,
+    tainted: true,
   };
-  if (hasInjectionSignal(text)) {
-    label.integrity = "untrusted";
-    label.tainted = true;
-    state.contaminated = true;
-  }
+  state.contaminated = true;
   if (config.policy.sensitiveAssets.some((asset) => asset && text.toLowerCase().includes(asset.toLowerCase()))) {
     label.confidentiality = "secret";
-    label.tainted = true;
   }
   if (toolCallId) state.toolResultLabels.set(toolCallId, label);
+  if (text.trim()) {
+    state.exposures.push({ source: label.source, text, label: { ...label } });
+    if (state.exposures.length > 40) state.exposures = state.exposures.slice(-40);
+  }
   return label;
 }
 
 export function resultFindings(toolCallId: string, result: unknown, state: PolicyState, config: PluginConfig): DetectionFinding[] {
+  if (!config.detection.enabled) {
+    labelToolResult(toolCallId, result, state, config);
+    return [];
+  }
   const label = labelToolResult(toolCallId, result, state, config);
-  if (label.integrity !== "untrusted") return [];
+  if (!hasInjectionSignal(safeStringify(result))) return [];
   return [
     finding("Input Sanitization", "heuristic", "pass", "untrusted tool output contains prompt-injection indicators; taint is preserved for sink checks", 25, {
       source: label.source,
@@ -317,13 +377,17 @@ function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, 
   if (action.tool === "call_api") {
     const url = readFirstString(action.args, ["url", "href", "endpoint", "target"]);
     const host = hostFromUrl(url);
+    let apiTargetAllowed = true;
     if (!targetAllowed(url, taskSpec.allowed_targets)) {
       violations.push(`target ${url || "<empty>"} is outside allowed_targets`);
+      apiTargetAllowed = false;
     }
     if (host) {
-      state.apiCallCounts.set(host, (state.apiCallCounts.get(host) || 0) + 1);
       if (config.policy.allowlistedApiHosts.length && !config.policy.allowlistedApiHosts.includes(host)) {
         violations.push(`api host ${host} is not allowlisted`);
+      }
+      if (apiTargetAllowed && (!config.policy.allowlistedApiHosts.length || config.policy.allowlistedApiHosts.includes(host))) {
+        state.apiCallCounts.set(host, (state.apiCallCounts.get(host) || 0) + 1);
       }
       if ((state.apiCallCounts.get(host) || 0) > 10) violations.push("api rate exceeds configured limit");
     }
@@ -416,6 +480,7 @@ function extractLatestUserText(messages: unknown): string {
 }
 
 function flattenText(value: unknown): string {
+  if (isLabeledValue(value)) return flattenText(value.value);
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map(flattenText).join(" ");
   if (value && typeof value === "object") {
@@ -427,6 +492,13 @@ function flattenText(value: unknown): string {
   return value === undefined || value === null ? "" : String(value);
 }
 
+function isLabeledValue(value: unknown): value is { value: unknown; label: Label } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const obj = value as Record<string, unknown>;
+  const label = obj.label as Record<string, unknown> | undefined;
+  return obj.value !== undefined && Boolean(label && typeof label === "object" && typeof label.integrity === "string");
+}
+
 function finding(
   layer: string,
   findingType: "deterministic" | "heuristic" | "learned",
@@ -436,6 +508,15 @@ function finding(
   evidence: Record<string, unknown>,
 ): DetectionFinding {
   return { layer, finding_type: findingType, verdict, reason, score, evidence };
+}
+
+function trustedToolLabel(toolCallId: string): Label {
+  return {
+    source: toolCallId ? `tool:${toolCallId}` : "tool:unknown",
+    integrity: "trusted",
+    confidentiality: "public",
+    tainted: false,
+  };
 }
 
 function heuristicScore(findings: DetectionFinding[]): number {
@@ -520,7 +601,7 @@ function extractTargets(text: string): string[] {
 }
 
 function cleanTarget(value: string): string {
-  return value.replace(/[.,;:\])}>'"]+$/g, "");
+  return value.replace(/[.,;:\])}>'"，。；：）】》”’]+$/g, "");
 }
 
 function hasInjectionSignal(text: string): boolean {
@@ -578,6 +659,63 @@ function printableText(value: string): string {
     if (/\s/.test(char) || char >= " ") printable += 1;
   }
   return printable / Math.max(value.length, 1) >= 0.85 ? canonicalText(value) : "";
+}
+
+function matchExposure(text: string, exposures: PolicyState["exposures"]): { exposure: PolicyState["exposures"][number]; mode: string } | null {
+  const normalized = normalizeExposureText(text);
+  if (!normalized) return null;
+  for (const exposure of exposures) {
+    const candidate = normalizeExposureText(exposure.text);
+    if (!candidate) continue;
+    if (normalized.includes(candidate) || candidate.includes(normalized)) return { exposure, mode: "substring" };
+    if (Math.min(normalized.length, candidate.length) >= 32 && similarity(normalized.slice(0, 1200), candidate.slice(0, 1200)) >= 0.82) {
+      return { exposure, mode: "fuzzy" };
+    }
+  }
+  return null;
+}
+
+function combinedExposure(exposures: PolicyState["exposures"]): PolicyState["exposures"][number] {
+  const sources = Array.from(new Set(exposures.map((item) => item.source))).join("+");
+  const confidentiality = exposures.some((item) => item.label.confidentiality === "secret")
+    ? "secret"
+    : exposures.some((item) => item.label.confidentiality === "internal")
+      ? "internal"
+      : "public";
+  return {
+    source: sources,
+    text: "",
+    label: {
+      source: sources,
+      integrity: "untrusted",
+      confidentiality,
+      tainted: true,
+    },
+  };
+}
+
+function isSinkPayloadArg(tool: string, name: string): boolean {
+  const payloadArgs: Record<string, Set<string>> = {
+    send_email: new Set(["body", "content", "message", "text"]),
+    write_file: new Set(["content", "body", "data", "text", "patch"]),
+    call_api: new Set(["body", "payload", "data", "content"]),
+  };
+  return Boolean(payloadArgs[tool]?.has(name));
+}
+
+function normalizeExposureText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function similarity(left: string, right: string): number {
+  const leftTokens = new Set(left.split(/\s+/).filter(Boolean));
+  const rightTokens = new Set(right.split(/\s+/).filter(Boolean));
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  let intersection = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) intersection += 1;
+  }
+  return intersection / Math.max(leftTokens.size, rightTokens.size);
 }
 
 function containsAny(value: string, markers: string[]): boolean {

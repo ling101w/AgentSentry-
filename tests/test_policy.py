@@ -122,6 +122,7 @@ def test_call_api_target_outside_taskspec_is_denied(policy):
 def test_target_allowed_supports_http_path_prefixes():
     assert target_allowed("https://api.example.com/reports/2026?id=1", ["https://api.example.com/reports"])
     assert not target_allowed("https://api.example.com/admin", ["https://api.example.com/reports"])
+    assert not target_allowed("https://api.example.com:bad/reports", ["https://api.example.com/reports"])
 
 
 def test_task_spec_extracts_explicit_http_targets(policy):
@@ -129,6 +130,12 @@ def test_task_spec_extracts_explicit_http_targets(policy):
     assert "https://api.example.com/reports" in spec.allowed_targets
     assert target_allowed("https://api.example.com/reports/2026", spec.allowed_targets)
     assert not target_allowed("https://api.example.com/admin", spec.allowed_targets)
+
+
+def test_task_spec_strips_cjk_target_trailing_punctuation(policy):
+    spec = derive_task_spec("总结 mock://attack。", policy.sensitive_assets)
+    assert spec.allowed_targets == ["mock://attack"]
+    assert target_allowed("mock://attack", spec.allowed_targets)
 
 
 def test_call_api_rate_limit_counts_once_per_action(policy):
@@ -144,3 +151,20 @@ def test_call_api_rate_limit_counts_once_per_action(policy):
     findings = engine.deterministic_findings(action, spec)
     decision = engine.decide(action, spec, sentry_score=0, findings=findings)
     assert "api rate exceeds configured limit" in decision.violations
+
+
+def test_call_api_rejected_attempts_do_not_consume_rate_budget(policy):
+    engine = PolicyEngine(policy)
+    spec = derive_task_spec("Fetch mock://benign from the mock API.", policy.sensitive_assets)
+    rejected = ToolAction(tool="call_api", args={"url": "mock://unknown"}, reason="probe unapproved endpoint")
+    allowed = ToolAction(tool="call_api", args={"url": "mock://benign"}, reason="fetch approved endpoint")
+
+    for _ in range(12):
+        findings = engine.deterministic_findings(rejected, spec)
+        decision = engine.decide(rejected, spec, sentry_score=0, findings=findings)
+        assert "target mock://unknown is outside allowed_targets" in decision.violations
+
+    findings = engine.deterministic_findings(allowed, spec)
+    decision = engine.decide(allowed, spec, sentry_score=0, findings=findings)
+
+    assert "api rate exceeds configured limit" not in decision.violations
