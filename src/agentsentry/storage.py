@@ -85,6 +85,25 @@ class Store:
                 events.append(item)
             return {"runs": runs, "events": events}
 
+    def list_run_events(self, run_id: str, after_rowid: int = 0, limit: int = 1000) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT rowid, id, run_id, type, payload, created_at
+                FROM events
+                WHERE run_id = ? AND rowid > ?
+                ORDER BY rowid ASC
+                LIMIT ?
+                """,
+                (run_id, after_rowid, limit),
+            ).fetchall()
+        events = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item["payload"])
+            events.append(item)
+        return events
+
     def save_eval(self, result: EvalResult) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -113,4 +132,3 @@ class Store:
             conn.execute("DELETE FROM events")
             conn.execute("DELETE FROM runs")
             conn.execute("DELETE FROM eval_results")
-

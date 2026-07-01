@@ -129,3 +129,18 @@ def test_task_spec_extracts_explicit_http_targets(policy):
     assert "https://api.example.com/reports" in spec.allowed_targets
     assert target_allowed("https://api.example.com/reports/2026", spec.allowed_targets)
     assert not target_allowed("https://api.example.com/admin", spec.allowed_targets)
+
+
+def test_call_api_rate_limit_counts_once_per_action(policy):
+    engine = PolicyEngine(policy)
+    spec = derive_task_spec("Fetch mock://benign from the mock API.", policy.sensitive_assets)
+    action = ToolAction(tool="call_api", args={"url": "mock://benign"}, reason="fetch")
+
+    for _ in range(10):
+        findings = engine.deterministic_findings(action, spec)
+        decision = engine.decide(action, spec, sentry_score=0, findings=findings)
+        assert "api rate exceeds configured limit" not in decision.violations
+
+    findings = engine.deterministic_findings(action, spec)
+    decision = engine.decide(action, spec, sentry_score=0, findings=findings)
+    assert "api rate exceeds configured limit" in decision.violations

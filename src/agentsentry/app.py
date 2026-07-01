@@ -69,6 +69,7 @@ def create_app() -> FastAPI:
             done = threading.Event()
             result_holder: dict[str, object] = {}
             seen_event_ids: set[str] = set()
+            last_event_rowid = 0
             run_id = request.run_id or new_id("run")
             stream_request = request.model_copy(update={"run_id": run_id})
 
@@ -97,17 +98,17 @@ def create_app() -> FastAPI:
             )
 
             while not done.is_set():
-                runs_events = store().list_events(limit=200)
-                for event in reversed(runs_events["events"]):
-                    if event["run_id"] == run_id and event["id"] not in seen_event_ids:
+                for event in store().list_run_events(run_id, after_rowid=last_event_rowid):
+                    last_event_rowid = max(last_event_rowid, int(event.get("rowid", 0)))
+                    if event["id"] not in seen_event_ids:
                         seen_event_ids.add(event["id"])
                         yield _stream_line("event", event)
                 if done.wait(0.25):
                     break
 
-            runs_events = store().list_events(limit=200)
-            for event in reversed(runs_events["events"]):
-                if event["run_id"] == run_id and event["id"] not in seen_event_ids:
+            for event in store().list_run_events(run_id, after_rowid=last_event_rowid):
+                last_event_rowid = max(last_event_rowid, int(event.get("rowid", 0)))
+                if event["id"] not in seen_event_ids:
                     seen_event_ids.add(event["id"])
                     yield _stream_line("event", event)
             if "result" in result_holder:

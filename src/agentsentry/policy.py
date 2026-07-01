@@ -274,7 +274,7 @@ class PolicyEngine:
         if deterministic_finding_reasons:
             violations = _unique(violations + deterministic_finding_reasons)
         elif self.deterministic_enabled:
-            violations.extend(self._deterministic_violations(action, task_spec))
+            violations.extend(self._deterministic_violations(action, task_spec, record_usage=False))
 
         if violations:
             risk += 35
@@ -320,7 +320,7 @@ class PolicyEngine:
                 )
             )
         if self.deterministic_enabled:
-            for violation in self._deterministic_violations(action, task_spec):
+            for violation in self._deterministic_violations(action, task_spec, record_usage=True):
                 findings.append(
                     GuardFinding(
                         layer="Execution Control",
@@ -354,16 +354,17 @@ class PolicyEngine:
                 risk += 45
         return min(risk, 80)
 
-    def _deterministic_violations(self, action: ToolAction, task_spec: TaskSpec) -> list[str]:
+    def _deterministic_violations(self, action: ToolAction, task_spec: TaskSpec, *, record_usage: bool = False) -> list[str]:
         if action.tool not in KNOWN_TOOLS:
             return [f"unknown tool {action.tool} is not allowlisted"]
         if action.tool in HIGH_RISK_TOOLS and not self.policy.rule_for(action.tool):
             return [f"missing deterministic sink rule for {action.tool}"]
+        if action.tool == "call_api":
+            return self._check_call_api(action, task_spec, record_usage=record_usage)
         checks = {
             "read_webpage": self._check_read_webpage,
             "send_email": self._check_send_email,
             "write_file": self._check_write_file,
-            "call_api": self._check_call_api,
         }
         checker = checks.get(action.tool)
         return checker(action, task_spec) if checker else []
@@ -418,14 +419,16 @@ class PolicyEngine:
             violations.append("task intent does not allow file write")
         return violations
 
-    def _check_call_api(self, action: ToolAction, task_spec: TaskSpec) -> list[str]:
+    def _check_call_api(self, action: ToolAction, task_spec: TaskSpec, *, record_usage: bool = False) -> list[str]:
         url = str(unwrap_arg(action.args.get("url", "")))
         host = host_from_url(url)
-        self.api_call_counts[host] = self.api_call_counts.get(host, 0) + 1
+        if record_usage:
+            self.api_call_counts[host] = self.api_call_counts.get(host, 0) + 1
+        api_call_count = self.api_call_counts.get(host, 0)
         violations = self._check_allowed_target(action, task_spec)
         if host not in self.policy.allowlisted_api_hosts:
             violations.append(f"api host {host or '<empty>'} is not allowlisted")
-        if self.api_call_counts[host] > 10:
+        if api_call_count > 10:
             violations.append("api rate exceeds configured limit")
         payload_label = arg_label(action.args.get("body", ""))
         if payload_label.confidentiality == Confidentiality.SECRET:
