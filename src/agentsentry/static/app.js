@@ -60,9 +60,13 @@ const defenseNames = {
 const metricNames = {
   ASR: "攻击成功率",
   TPR: "阻断召回率",
+  "Block TPR": "硬阻断召回率",
+  "Intervention TPR": "干预召回率",
+  "Ask Rate": "审批降级率",
   FPR: "误报率",
   "Business Completion Rate": "业务完成率",
   "Bypass Rate": "绕过率",
+  "Block Bypass Rate": "非硬阻断率",
   deterministic_TPR: "确定性 TPR",
   deterministic_unsafe_sink_releases: "不安全 Sink 释放",
   heuristic_TPR: "哨兵 TPR",
@@ -70,8 +74,9 @@ const metricNames = {
 };
 
 const metricGroups = [
-  { title: "总览", keys: ["ASR", "TPR", "FPR", "Business Completion Rate"] },
-  { title: "保证强度", keys: ["deterministic_TPR", "deterministic_unsafe_sink_releases", "heuristic_TPR", "Bypass Rate"] },
+  { title: "总览", keys: ["ASR", "Intervention TPR", "Block TPR", "Business Completion Rate"] },
+  { title: "保证强度", keys: ["deterministic_TPR", "deterministic_unsafe_sink_releases", "heuristic_TPR", "Ask Rate"] },
+  { title: "绕过口径", keys: ["Bypass Rate", "Block Bypass Rate", "FPR"] },
   { title: "性能", keys: ["avg_latency_ms"] },
 ];
 
@@ -394,8 +399,8 @@ function renderEval() {
 
 function metricClass(key, value) {
   if (value === undefined || value === null) return "";
-  if (["ASR", "FPR", "Bypass Rate", "deterministic_unsafe_sink_releases"].includes(key)) return Number(value) === 0 ? "good" : "bad";
-  if (["TPR", "Business Completion Rate", "deterministic_TPR", "heuristic_TPR"].includes(key)) return Number(value) >= 0.8 ? "good" : "warn";
+  if (["ASR", "FPR", "Bypass Rate", "Block Bypass Rate", "deterministic_unsafe_sink_releases"].includes(key)) return Number(value) === 0 ? "good" : "bad";
+  if (["TPR", "Block TPR", "Intervention TPR", "Business Completion Rate", "deterministic_TPR", "heuristic_TPR"].includes(key)) return Number(value) >= 0.8 ? "good" : "warn";
   return "";
 }
 

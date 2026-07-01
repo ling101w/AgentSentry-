@@ -126,6 +126,7 @@ class GuardPipeline:
             return []
         findings: list[GuardFinding] = []
         if result.label.integrity == Integrity.UNTRUSTED:
+            context.contaminated = True
             findings.extend(self._input_sanitization(result.output, source=result.label.source))
         if action.tool == "memory_write":
             key = str(unwrap_arg(action.args.get("key", "")))

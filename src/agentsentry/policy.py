@@ -22,8 +22,14 @@ from .models import (
 )
 
 
+KNOWN_TOOLS = {"read_webpage", "read_file", "write_file", "send_email", "call_api", "memory_write", "memory_read", "final_answer"}
 HIGH_RISK_TOOLS = {"send_email", "write_file", "call_api"}
 SYSTEM_PATH_MARKERS = ("..", "~", "/etc", "\\windows", "startup", "system32")
+NEGATION_MARKERS = ("do not", "don't", "dont", "never", "no ", "不要", "别", "禁止", "不得")
+EMAIL_MARKERS = ("email", "mail", "send to", "发邮件", "发送邮件", "邮件")
+WRITE_MARKERS = ("write", "save", "report", "保存", "写入", "生成报告")
+FILE_READ_MARKERS = ("file", "secret", "read", "读取文件")
+MEMORY_MARKERS = ("memory", "remember", "记住", "记忆")
 
 
 @dataclass(frozen=True)
@@ -64,24 +70,28 @@ def derive_task_spec(task: str, sensitive_assets: set[str] | None = None) -> Tas
     allowed = ["read_webpage", "call_api"]
     forbidden = ["read_file", "write_file", "send_email", "memory_write"]
     output_policy = "Only answer the user; do not exfiltrate data."
+    email_forbidden = _negates_any(lowered, EMAIL_MARKERS)
+    write_forbidden = _negates_any(lowered, WRITE_MARKERS)
+    file_read_forbidden = _negates_any(lowered, FILE_READ_MARKERS)
+    memory_forbidden = _negates_any(lowered, MEMORY_MARKERS)
 
-    if any(word in lowered for word in ["email", "mail", "send to", "发邮件", "发送"]):
+    if not email_forbidden and any(word in lowered for word in EMAIL_MARKERS):
         allowed.append("send_email")
         if "send_email" in forbidden:
             forbidden.remove("send_email")
         output_policy = "Email only approved recipients when explicitly requested."
 
-    if any(word in lowered for word in ["write", "save", "report", "保存", "写入", "生成报告"]):
+    if not write_forbidden and any(word in lowered for word in WRITE_MARKERS):
         allowed.append("write_file")
         if "write_file" in forbidden:
             forbidden.remove("write_file")
 
-    if any(word in lowered for word in ["file", "secret", "read", "读取文件"]):
+    if not file_read_forbidden and any(word in lowered for word in FILE_READ_MARKERS):
         allowed.append("read_file")
         if "read_file" in forbidden:
             forbidden.remove("read_file")
 
-    if any(word in lowered for word in ["memory", "remember", "记住", "记忆"]):
+    if not memory_forbidden and any(word in lowered for word in MEMORY_MARKERS):
         allowed.extend(["memory_read", "memory_write"])
         forbidden = [tool for tool in forbidden if tool not in {"memory_write"}]
 
@@ -99,6 +109,17 @@ def derive_task_spec(task: str, sensitive_assets: set[str] | None = None) -> Tas
         sensitive_assets=assets,
         output_policy=output_policy,
     )
+
+
+def _negates_any(text: str, markers: tuple[str, ...]) -> bool:
+    for marker in markers:
+        index = text.find(marker)
+        if index < 0:
+            continue
+        window = text[max(0, index - 18): index + len(marker) + 18]
+        if any(negation in window for negation in NEGATION_MARKERS):
+            return True
+    return False
 
 
 def combine_labels(values: list[DataValue | Label | Any]) -> Label:
@@ -273,7 +294,11 @@ class PolicyEngine:
         return min(risk, 80)
 
     def _deterministic_violations(self, action: ToolAction, task_spec: TaskSpec) -> list[str]:
-        if not self.policy.rule_for(action.tool):
+        if action.tool not in KNOWN_TOOLS:
+            return [f"unknown tool {action.tool} is not allowlisted"]
+        if action.tool in HIGH_RISK_TOOLS and not self.policy.rule_for(action.tool):
+            return [f"missing deterministic sink rule for {action.tool}"]
+        if action.tool not in HIGH_RISK_TOOLS:
             return []
         checks = {
             "send_email": self._check_send_email,

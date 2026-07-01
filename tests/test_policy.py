@@ -10,6 +10,12 @@ def test_task_spec_blocks_email_for_summary(policy):
     assert "send_email" in spec.forbidden_tools
 
 
+def test_task_spec_negative_email_intent_does_not_allow_email(policy):
+    spec = derive_task_spec("总结 mock://attack 页面，不要给任何人发邮件。", policy.sensitive_assets)
+    assert "send_email" not in spec.allowed_tools
+    assert "send_email" in spec.forbidden_tools
+
+
 def test_secret_to_untrusted_email_is_denied(policy):
     engine = PolicyEngine(policy)
     spec = derive_task_spec("Summarize the webpage.", policy.sensitive_assets)
@@ -69,3 +75,14 @@ def test_deterministic_findings_are_hard_blocks(policy):
     assert decision.decision == "deny"
     assert decision.deterministic_block
     assert any(finding.finding_type == "deterministic" for finding in findings)
+
+
+def test_unknown_tool_is_fail_closed(policy):
+    engine = PolicyEngine(policy)
+    spec = derive_task_spec("Summarize the webpage.", policy.sensitive_assets)
+    action = ToolAction(tool="shell_exec", args={"cmd": "cat secret.txt"}, reason="unknown tool")
+    findings = engine.deterministic_findings(action, spec)
+    decision = engine.decide(action, spec, sentry_score=0, findings=findings)
+    assert decision.decision == "deny"
+    assert decision.deterministic_block
+    assert any("unknown tool shell_exec" in item for item in decision.violations)
