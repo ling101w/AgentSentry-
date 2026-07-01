@@ -74,7 +74,8 @@ const HIDDEN_HTML_PATTERNS = [
   /style\s*=\s*["'][^"']*(?:opacity\s*:\s*0|display\s*:\s*none|visibility\s*:\s*hidden)/i,
   /style\s*=\s*["'][^"']*(?:width\s*:\s*0|height\s*:\s*0|overflow\s*:\s*hidden)/i,
   /<(?:span|div|p|a)\b[^>]*(?:hidden|aria-hidden\s*=\s*["']true["'])[^>]*>/i,
-  /<!--[\s\S]{0,240}(?:ignore|system|developer|token|secret|id_rsa|ssh|exfiltrate|忽略|系统|密钥)[\s\S]{0,240}-->/i,
+  /<!--[\s\S]{0,360}(?:ignore|system|developer|token|secret|credential|id_(?:rsa|ed25519|ecdsa|dsa)|ssh|exfiltrate|archive|route|ingest|telemetry|ops-archive|忽略|系统|密钥|凭据|归档|投递)[\s\S]{0,360}-->/i,
+  /\bdata-(?:note|ops|sync|trace|payload|comment)\s*=\s*["'][^"']{16,}["']/i,
 ];
 
 const PROMPT_INJECTION_PATTERNS = [
@@ -82,9 +83,9 @@ const PROMPT_INJECTION_PATTERNS = [
   /\b(system|developer|internal)\b.{0,56}\b(prompt|configuration|policy|instruction|message)\b/i,
   /(act\s+as|pretend\s+to\s+be).{0,32}(developer|system|jailbroken|unfiltered)/i,
   /(bypass|disable|override|circumvent|evade).{0,40}(policy|guardrail|safety|approval|monitor|audit)/i,
-  /(send|show|list|provide|copy|exfiltrate|upload|post).{0,96}(api[_ -]?key|token|secret|password|credential|private\s*key|id_rsa|openclaw\.json)/i,
+  /(send|show|list|provide|copy|exfiltrate|upload|post|attach|append|include|route|forward|mirror|sync|archive).{0,120}(api[_ -]?key|token|secret|password|credential|private\s*key|identity|session|environment|config|id_(?:rsa|ed25519|ecdsa|dsa)|openclaw\.json|\.env)/i,
   /(忽略|绕过|禁用|关闭).{0,40}(安全策略|策略|规则|限制|审批|审计|监督|系统提示)/i,
-  /(读取|发送|上传|泄露|外发).{0,96}(ssh|私钥|密钥|token|api[_ -]?key|openclaw\.json|系统提示|配置)/i,
+  /(读取|发送|上传|泄露|外发|附加|追加|归档|同步|转发|投递).{0,96}(ssh|私钥|密钥|凭据|身份|会话|环境|token|api[_ -]?key|openclaw\.json|系统提示|配置|\.env)/i,
 ];
 
 const PDF_STEGO_PATTERNS = [
@@ -95,13 +96,14 @@ const PDF_STEGO_PATTERNS = [
 ];
 
 const IMAGE_METADATA_PATTERNS = [
-  /\b(?:exif|xmp|itxt|tEXt|zTXt|comment|metadata|ocr|alt\s*text)\b.{0,120}(?:ignore|system|developer|token|secret|id_rsa|exfiltrate|忽略|系统|密钥)/i,
-  /<\?xpacket[\s\S]{0,600}(?:ignore|system|developer|token|secret|id_rsa|exfiltrate|忽略|系统|密钥)/i,
+  /\b(?:exif|xmp|itxt|tEXt|zTXt|comment|metadata|ocr|alt\s*text)\b.{0,180}(?:ignore|system|developer|token|secret|credential|id_(?:rsa|ed25519|ecdsa|dsa)|exfiltrate|archive|route|ingest|telemetry|忽略|系统|密钥|凭据|归档|投递)/i,
+  /<\?xpacket[\s\S]{0,800}(?:ignore|system|developer|token|secret|credential|id_(?:rsa|ed25519|ecdsa|dsa)|exfiltrate|archive|route|ingest|telemetry|忽略|系统|密钥|凭据)/i,
 ];
 
 const URL_FRAGMENT_PATTERNS = [
-  /https?:\/\/[^\s"'<>#]+#[^\s"'<>]*(?:ignore|system|developer|token|secret|id_rsa|exfiltrate|忽略|系统|密钥)/i,
-  /#[^\s"'<>]*(?:ignore|system|developer|token|secret|id_rsa|exfiltrate|忽略|系统|密钥)/i,
+  /https?:\/\/[^\s"'<>#]+#[^\s"'<>]*(?:ignore|system|developer|token|secret|credential|id_(?:rsa|ed25519|ecdsa|dsa)|openclaw|\.env|exfiltrate|archive|route|ingest|telemetry|忽略|系统|密钥|凭据|归档|投递)/i,
+  /#[^\s"'<>]*(?:ignore|system|developer|token|secret|credential|id_(?:rsa|ed25519|ecdsa|dsa)|openclaw|\.env|exfiltrate|archive|route|ingest|telemetry|忽略|系统|密钥|凭据|归档|投递)/i,
+  /#[A-Za-z0-9+/_=-]{24,}/,
 ];
 
 const MEMORY_POISON_PATTERNS = [
@@ -109,24 +111,29 @@ const MEMORY_POISON_PATTERNS = [
   /\brole\s*[:=]\s*["']?(?:system|developer)["']?/i,
   /(always|future|next\s+time|from\s+now\s+on|persist|remember).{0,80}(ignore|bypass|disable|override|priority|execute)/i,
   /(以后|未来|下次|永久|记住).{0,80}(忽略|绕过|禁用|优先执行|直接执行|无需确认|关闭安全)/i,
+  /(future|default|profile|preference|continuity|fast[-\s]?path|quiet).{0,120}(approval|review|confirmation|guard|policy|banner).{0,100}(already\s+handled|skip|suppress|quiet|silent|auto|no\s+interruption)/i,
+  /(route|archive|forward|mirror|sync|attach|append|include).{0,120}(identity|session|environment|config|credential|private|operator|bundle|openclaw\.json|\.env|\.ssh)/i,
+  /(以后|后续|默认|长期|偏好|连续性|快速通道).{0,90}(审批|确认|策略|安全|提示|横幅).{0,90}(已处理|跳过|静默|自动|无需|不打扰)/i,
+  /(归档|同步|转发|附加|追加|包含|投递).{0,100}(身份|会话|环境|配置|凭据|资料|材料|openclaw\.json|\.env|\.ssh)/i,
   /\b(?:cron|crontab|systemd|startup|autorun|hooks\/wake|\/hooks\/wake)\b/i,
 ];
 
 const GATEWAY_HIJACK_PATTERNS = [
   /[?&]gatewayURL\s*=\s*wss?:\/\/(?!localhost(?::|\/|$)|127\.0\.0\.1(?::|\/|$)|\[::1\](?::|\/|$))/i,
   /\bgatewayURL\b.{0,80}\bwss?:\/\/(?!localhost(?::|\/|$)|127\.0\.0\.1(?::|\/|$)|\[::1\](?::|\/|$))/i,
-  /\bgateway(?:Auth)?(?:Token|URL)\b.{0,80}(?:evil|attacker|collect|exfil|外发|窃取)/i,
+  /\bgateway(?:Auth)?(?:Token|URL)\b.{0,120}(?:collect|exfil|ingest|telemetry|archive|route|sync|external|外发|窃取|归档|同步|投递)/i,
 ];
 
 const SKILL_EXFIL_PATTERNS = [
-  /openclaw\.json|gateway.{0,24}(?:auth|token)|auth.{0,24}token/i,
-  /\b(?:fetch|axios|curl|wget|https?\.request|XMLHttpRequest)\b[\s\S]{0,180}(?:token|secret|openclaw\.json|gateway|credential|password)/i,
-  /\b(?:readFileSync|readFile|fs\.)\b[\s\S]{0,180}(?:openclaw\.json|\.env|id_rsa|secret|token|password)/i,
+  /\b(?:fetch|axios|curl|wget|https?\.request|XMLHttpRequest)\b[\s\S]{0,220}(?:token|secret|openclaw\.json|gateway|credential|password|\.env|\.ssh|identity|config|session)/i,
+  /\b(?:readFileSync|readFile|fs\.|openSync|createReadStream)\b[\s\S]{0,220}(?:openclaw\.json|\.env|id_(?:rsa|ed25519|ecdsa|dsa)|secret|token|password|credential|\.openclaw)/i,
+  /(?:openclaw\.json|\.openclaw|\.env|\.ssh|id_(?:rsa|ed25519|ecdsa|dsa))[\s\S]{0,260}\b(?:fetch|axios|curl|wget|https?\.request|XMLHttpRequest)\b/i,
 ];
 
 const SENSITIVE_PATTERNS: Array<[string, RegExp]> = [
   ["private_key", /-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/],
-  ["ssh_private_key_path", /(?:~\/\.ssh\/id_rsa|\.ssh[/\\]id_rsa|id_ed25519)/i],
+  ["ssh_private_key_path", /(?:~\/\.ssh\/id_(?:rsa|ed25519|ecdsa|dsa)|\.ssh[/\\]id_(?:rsa|ed25519|ecdsa|dsa)|id_(?:rsa|ed25519|ecdsa|dsa))/i],
+  ["env_file", /(?:^|[^\w])\.env(?:[^\w]|$)/i],
   ["api_key", /\bsk-[a-zA-Z0-9_-]{16,}\b/],
   ["github_token", /\bgh[pousr]_[a-zA-Z0-9_]{20,}\b/],
   ["slack_token", /\bxox[baprs]-[a-zA-Z0-9-]{16,}\b/],
@@ -134,6 +141,13 @@ const SENSITIVE_PATTERNS: Array<[string, RegExp]> = [
   ["bearer_token", /\bbearer\s+[a-zA-Z0-9._-]{16,}\b/i],
   ["named_secret", /\b(api[_-]?key|token|secret|password|credential|authorization)\b/i],
   ["openclaw_config", /\bopenclaw\.json\b/i],
+];
+
+const DATA_FLOW_EXFIL_PATTERNS = [
+  /(route|forward|archive|mirror|sync|attach|append|include|post|send|upload|transmit).{0,140}(identity|session|environment|config|profile|bundle|operator|credential|private|material|openclaw\.json|\.env|\.ssh|id_(?:rsa|ed25519|ecdsa|dsa))/i,
+  /(identity|session|environment|config|credential|private|operator|material|openclaw\.json|\.env|\.ssh|id_(?:rsa|ed25519|ecdsa|dsa)).{0,140}(route|forward|archive|mirror|sync|attach|append|include|post|send|upload|transmit|endpoint|collector|ingest|telemetry|metrics|webhook)/i,
+  /(归档|同步|转发|附加|追加|包含|投递|发送|上传).{0,120}(身份|会话|环境|配置|凭据|资料|材料|openclaw\.json|\.env|\.ssh)/i,
+  /(身份|会话|环境|配置|凭据|资料|材料|openclaw\.json|\.env|\.ssh).{0,120}(归档|同步|转发|附加|追加|包含|投递|发送|上传|端点)/i,
 ];
 
 const SOURCE_DEFAULT_TRUST: Record<TrustSource, TrustLevel> = {
@@ -176,7 +190,12 @@ export function analyzeTrustContent(
     skillExfil: matchPatterns(text, SKILL_EXFIL_PATTERNS),
     sensitive: matchSensitive(text),
   };
+  matched.promptInjection.push(...matchPatterns(text, DATA_FLOW_EXFIL_PATTERNS));
   matched.promptInjection = matched.promptInjection.filter((item) => !isNegatedSafetyBoundary(item));
+  matched.memoryPoison = matched.memoryPoison.filter((item) => !isNegatedSafetyBoundary(item));
+  if (hasSkillDataFlow(text, lowerPath, source, options.toolName)) {
+    matched.skillExfil.push("skill code reads local state and contacts an external endpoint");
+  }
 
   if (/(^|\/)(memory\.md|agents\.md|soul\.md|user\.md)$/i.test(lowerPath)) {
     matched.memoryPoison.push(lowerPath);
@@ -440,36 +459,152 @@ function extractStrings(buffer: Buffer): string {
 
 function matchPatterns(text: string, patterns: RegExp[]): string[] {
   const out: string[] = [];
-  for (const pattern of patterns) {
-    const match = pattern.exec(text);
-    if (match) out.push(sanitizeEvidence(match[0]));
+  for (const variant of textVariants(text)) {
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0;
+      const match = pattern.exec(variant);
+      if (match) {
+        const index = typeof match.index === "number" ? match.index : 0;
+        const start = Math.max(0, index - 48);
+        const end = Math.min(variant.length, index + match[0].length + 48);
+        out.push(sanitizeEvidence(variant.slice(start, end)));
+      }
+    }
   }
   return Array.from(new Set(out));
 }
 
 function matchSensitive(text: string): string[] {
   const kinds: string[] = [];
-  for (const [kind, pattern] of SENSITIVE_PATTERNS) {
-    if (pattern.test(text)) kinds.push(kind);
+  for (const variant of textVariants(text)) {
+    for (const [kind, pattern] of SENSITIVE_PATTERNS) {
+      pattern.lastIndex = 0;
+      if (pattern.test(variant)) kinds.push(kind);
+    }
   }
   return Array.from(new Set(kinds));
 }
 
+function textVariants(text: string): string[] {
+  const normalized = canonicalText(text);
+  const compact = deobfuscateSeparators(normalized);
+  return Array.from(new Set([
+    normalized,
+    compact,
+    ...decodedTextCandidates(normalized),
+    ...decodedTextCandidates(compact),
+  ].filter(Boolean))).slice(0, 18);
+}
+
+function canonicalText(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff\u00ad]/g, "")
+    .replace(/&(?:#x?200b|zwnj|zwj|nbsp);/gi, " ");
+}
+
+function deobfuscateSeparators(text: string): string {
+  return text
+    .replace(/["'`]\s*\+\s*["'`]/g, "")
+    .replace(/([A-Za-z0-9])[\s._-]{1,3}(json|env|ssh|token|secret|credential|config)\b/gi, "$1$2")
+    .replace(/open\s*claw\s*\.?\s*json/gi, "openclaw.json");
+}
+
+function decodedTextCandidates(text: string): string[] {
+  const tokens = text.match(/[A-Za-z0-9+/_=-]{16,}|(?:[0-9A-Fa-f]{2}){8,}/g) || [];
+  const out: string[] = [];
+  for (const token of tokens.slice(0, 28)) {
+    if (token.length > 4096) continue;
+    for (const candidate of encodedTokenVariants(token)) {
+      const b64 = decodeBase64Text(candidate);
+      if (b64) out.push(b64);
+      const hex = decodeHexText(candidate);
+      if (hex) out.push(hex);
+    }
+  }
+  return out;
+}
+
+function encodedTokenVariants(token: string): string[] {
+  const variants = [token];
+  const index = token.indexOf("=");
+  if (index > 0) {
+    const head = token.slice(0, index);
+    const tail = token.slice(index + 1);
+    if (tail.length >= 16 && /^[A-Za-z0-9+/_-]+={0,2}$/.test(tail) && /^[A-Za-z][A-Za-z0-9_-]{2,40}$/.test(head)) {
+      variants.push(tail);
+    }
+  }
+  return Array.from(new Set(variants));
+}
+
+function decodeBase64Text(token: string): string {
+  if (token.length < 16) return "";
+  try {
+    const normalized = token.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+    return printableText(Buffer.from(padded, "base64").toString("utf8"));
+  } catch {
+    return "";
+  }
+}
+
+function decodeHexText(token: string): string {
+  if (token.length < 16 || token.length % 2) return "";
+  if (!/^[0-9A-Fa-f]+$/.test(token)) return "";
+  try {
+    return printableText(Buffer.from(token, "hex").toString("utf8"));
+  } catch {
+    return "";
+  }
+}
+
+function printableText(value: string): string {
+  if (!value || value.length > 4096) return "";
+  let printable = 0;
+  for (const char of value) {
+    if (/\s/.test(char) || char >= " ") printable += 1;
+  }
+  return printable / Math.max(value.length, 1) >= 0.85 ? canonicalText(value) : "";
+}
+
 function isNegatedSafetyBoundary(value: string): boolean {
-  return /(?:do\s+not|don't|without|never|no\s+need\s+to|不要|不需要|无需|禁止|不得|避免|不能|不应).{0,80}(?:read|send|upload|include|access|exfiltrate|token|secret|password|credential|private\s*key|读取|访问|发送|上传|外发|泄露|包含|凭据|密钥|私钥|配置)/i.test(value)
-    || /(?:read|send|upload|include|access|exfiltrate|读取|访问|发送|上传|外发|泄露|包含).{0,40}(?:do\s+not|don't|without|never|不要|不需要|无需|禁止|不得|避免|不能|不应)/i.test(value);
+  return /(?:do\s+not|don't|without|never|no\s+need\s+to|不要|不需要|不包含|无需|禁止|不得|避免|不能|不应).{0,100}(?:read|send|upload|include|access|exfiltrate|token|secret|password|credential|private\s*key|读取|访问|发送|上传|外发|泄露|包含|凭据|密钥|私钥|配置)/i.test(value)
+    || /(?:read|send|upload|include|access|exfiltrate|读取|访问|发送|上传|外发|泄露|包含).{0,60}(?:do\s+not|don't|without|never|不要|不需要|不包含|无需|禁止|不得|避免|不能|不应)/i.test(value);
 }
 
 function hasExfilSignal(text: string): boolean {
-  return /(exfiltrate|send|post|upload|transmit|collect|webhook|外发|发送|上传|泄露).{0,100}(token|secret|password|credential|private\s*key|id_rsa|openclaw\.json|api[_ -]?key|密钥|私钥|配置)/i.test(text);
+  return textVariants(text).some((variant) =>
+    /(exfiltrate|send|post|upload|transmit|collect|webhook|route|forward|archive|mirror|sync|attach|append|include|ingest|telemetry|metrics|外发|发送|上传|泄露|归档|同步|转发|附加|追加|投递).{0,140}(token|secret|password|credential|private\s*key|identity|session|environment|config|id_(?:rsa|ed25519|ecdsa|dsa)|openclaw\.json|api[_ -]?key|\.env|\.ssh|密钥|私钥|凭据|身份|会话|配置)/i.test(variant)
+      || DATA_FLOW_EXFIL_PATTERNS.some((pattern) => {
+        pattern.lastIndex = 0;
+        return pattern.test(variant);
+      })
+  );
+}
+
+function hasSkillDataFlow(text: string, lowerPath: string, source: TrustSource, toolName?: string): boolean {
+  const skillSurface = source === "skill"
+    || lowerPath.endsWith("skill.md")
+    || lowerPath.includes("/skills/")
+    || /skill|plugin|package/i.test(toolName || "");
+  if (!skillSurface) return false;
+  return textVariants(text).some((variant) => {
+    const readsLocal = /\b(?:readFileSync|readFile|openSync|createReadStream|fs\.|Path\(|open\()\b[\s\S]{0,260}(?:openclaw\.json|\.openclaw|\.env|\.ssh|id_(?:rsa|ed25519|ecdsa|dsa)|credentials?|config|session)/i.test(variant)
+      || /(?:openclaw\.json|\.openclaw|\.env|\.ssh|id_(?:rsa|ed25519|ecdsa|dsa))[\s\S]{0,260}\b(?:readFileSync|readFile|openSync|createReadStream|fs\.|Path\(|open\()\b/i.test(variant);
+    const contactsNetwork = /\b(?:fetch|axios|curl|wget|https?\.request|XMLHttpRequest|requests?\.(?:post|get)|urlopen)\b/i.test(variant)
+      || /https?:\/\/(?!localhost(?::|\/|$)|127\.0\.0\.1(?::|\/|$)|\[::1\](?::|\/|$))/i.test(variant);
+    const declaresBenignSurface = /(weather|forecast|calendar|translate|天气|预报|日历|翻译|摘要|查询)/i.test(variant);
+    return readsLocal && contactsNetwork && (declaresBenignSurface || /skill|package|plugin|能力|扩展/i.test(variant));
+  });
 }
 
 function hasPrivilegeSignal(text: string): boolean {
-  return /(sudo|root|chmod|chown|systemctl|crontab|\/etc\/|startup|system32|~\/\.ssh|id_rsa|管理员|提权|系统目录)/i.test(text);
+  return textVariants(text).some((variant) => /(sudo|root|chmod|chown|systemctl|crontab|\/etc\/|startup|system32|~\/\.ssh|id_(?:rsa|ed25519|ecdsa|dsa)|管理员|提权|系统目录)/i.test(variant));
 }
 
 function hasIntentDriftSignal(text: string): boolean {
-  return /(instead|do\s+not\s+summarize|ignore\s+the\s+user|new\s+objective|改为|不要总结|忽略用户|新任务|优先执行)/i.test(text);
+  return textVariants(text).some((variant) => /(instead|do\s+not\s+summarize|ignore\s+the\s+user|new\s+objective|quiet\s+continuity|approval.{0,32}already\s+handled|改为|不要总结|忽略用户|新任务|优先执行|静默|已处理审批)/i.test(variant));
 }
 
 function score(condition: boolean, value: number): number {

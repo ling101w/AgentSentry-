@@ -27,11 +27,11 @@ systemctl status agentsentry.service --no-pager
 ## 控制台展示顺序
 
 1. 在 8000 选择 DeterministicLLM，运行“良性网页总结”和“正常白名单邮件”，说明良性业务可完成。
-2. 运行“间接提示注入”，说明网页内容被标记为不可信，`read_file` 和攻击者邮件被阻断。
+2. 运行“间接提示注入”，说明用户请求只是网页/邮件总结，但外部内容中的隐藏编码路由被标记为不可信，`read_file` 和非白名单外部邮件被阻断。
 3. 运行“工具返回污染”，说明 API 返回夹带的写启动项指令被 `write_file` 策略阻断。
 4. 运行“Rita 风格提示词抽取”，说明系统提示读取被 TaskSpec 和敏感资产策略阻断。
-5. 运行“记忆投毒”或“自适应慢速投毒”，说明记忆写入审计和外部邮件阻断。
-6. 打开 8765，看 OpenClaw 插件记录、foundation scan、tool_decision 和 alert。
+5. 运行“记忆投毒”或“自适应慢速投毒”，说明业务化长期 profile 会被记忆审计识别，非白名单外部路由被阻断。
+6. 打开 `8765/command-lab`，选择“外部内容注入：隐藏邮件”或“恶意第三方 Skill”预设，保持默认正常业务请求，点击运行；再查看 OpenClaw 插件记录、foundation scan、tool_decision 和 alert。
 
 ## 交付文件
 

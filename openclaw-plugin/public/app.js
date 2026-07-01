@@ -8,6 +8,8 @@ const state = {
   selectedSession: "",
   focusMode: "important",
   autoRefresh: true,
+  timelinePage: 1,
+  timelinePageSize: 30,
   timer: null,
 };
 
@@ -16,7 +18,11 @@ const layerNames = {
   "LLM Input": "模型输入",
   "Message Write": "消息写入",
   "Input Sanitization": "输入净化",
+  "Cognition Protection": "认知保护",
   "Decision Alignment": "决策对齐",
+  "ABAC Session Policy": "ABAC 会话策略",
+  "System Preflight": "系统预执行",
+  "Sentry Trajectory": "行为轨迹",
   "Execution Control": "执行控制",
   "Tool Result": "工具结果",
   Runtime: "运行时",
@@ -126,7 +132,12 @@ async function refresh({ keepSelection = true } = {}) {
     ]);
 
     state.records = recordsResponse.records || [];
-    state.stats = statsResponse || {};
+    state.stats = {
+      ...(statsResponse || {}),
+      totalRecords: recordsResponse.totalRecords ?? statsResponse?.totalRecords ?? statsResponse?.total,
+      windowRecords: recordsResponse.windowRecords ?? state.records.length,
+      windowLimit: recordsResponse.windowLimit ?? Number(limit),
+    };
     normalizeSelection(keepSelection);
     setStatus("已连接", "ok");
     render();
@@ -158,13 +169,21 @@ function render() {
   renderSessionSummary();
 
   const records = groupTimelineRecords(filteredRecords());
-  if (!state.selectedId || !records.some((record) => record.id === state.selectedId)) {
-    state.selectedId = records[0]?.id || "";
+  const paged = paginate(records, state.timelinePage, state.timelinePageSize);
+  state.timelinePage = paged.page;
+  if (!state.selectedId || !paged.items.some((record) => record.id === state.selectedId)) {
+    state.selectedId = paged.items[0]?.id || records[0]?.id || "";
   }
 
-  $("recordCount").textContent = `${records.length} 条`;
-  $("timeline").innerHTML = records.length ? records.map(eventHtml).join("") : '<div class="empty">暂无记录</div>';
+  $("recordCount").textContent = `${records.length} 条 · 第 ${paged.page}/${paged.pages} 页`;
+  $("timeline").innerHTML = records.length
+    ? `${paged.items.map(eventHtml).join("")}${paginationHtml("timeline", paged)}`
+    : '<div class="empty">暂无记录</div>';
   bindTimeline(records);
+  bindPagination("timeline", (page) => {
+    state.timelinePage = page;
+    render();
+  });
 
   const selected = records.find((record) => record.id === state.selectedId) || state.records.find((record) => record.id === state.selectedId);
   if (selected) renderDetail(selected);
@@ -182,7 +201,7 @@ function renderStats() {
 
   $("recordsPath").textContent = stats.recordsPath || "~/.openclaw/agentsentry/records.jsonl";
   $("statsGrid").innerHTML = [
-    statCard("总记录", stats.total || records.length || 0, "全部事件"),
+    statCard("总记录", stats.totalRecords ?? stats.total ?? records.length ?? 0, `最近展示 ${stats.windowRecords ?? records.length} / ${stats.windowLimit ?? $("limitSelect").value}`),
     statCard("会话", stats.sessions || buildSessions().length || 0, "OpenClaw sessions"),
     statCard("高危", severity.danger || 0, "danger", "danger"),
     statCard("警告", severity.warning || 0, "warning", "warning"),
@@ -246,6 +265,7 @@ function renderSessions() {
     node.addEventListener("click", () => {
       state.selectedSession = node.dataset.session || ALL_SESSIONS;
       state.selectedId = "";
+      resetTimelinePage();
       render();
     });
   }
@@ -325,11 +345,10 @@ function sessionInsight(records) {
 function stageRail(records) {
   const stages = [
     ["基础扫描", records.filter((record) => record.layer === "Foundation" || record.type === "foundation_scan").length],
-    ["模型输入", records.filter((record) => record.type === "llm_input").length],
-    ["消息", records.filter((record) => record.type === "message_write").length],
-    ["工具裁决", records.filter((record) => record.type === "tool_decision").length],
-    ["工具结果", records.filter((record) => record.type === "tool_result").length],
-    ["告警", records.filter((record) => record.type === "alert").length],
+    ["输入净化", records.filter((record) => record.layer === "Input Sanitization" || record.type === "message_write").length],
+    ["认知保护", records.filter((record) => record.layer === "Cognition Protection" || record.layer === "Sentry Trajectory" || /memory|webhook|poison|taint/i.test(searchableText(record))).length],
+    ["决策对齐", records.filter((record) => record.layer === "Decision Alignment" || record.layer === "ABAC Session Policy" || /taskspec|intent|scope|drift|abac/i.test(searchableText(record))).length],
+    ["执行控制", records.filter((record) => record.layer === "Execution Control" || record.layer === "System Preflight" || record.layer === "Tool Result" || ["tool_decision", "tool_result", "alert", "response_cover"].includes(record.type)).length],
   ];
   return `
     <div class="stage-rail">
@@ -377,6 +396,10 @@ function filteredRecords() {
   });
 
   return sortRecordsDesc(records);
+}
+
+function resetTimelinePage() {
+  state.timelinePage = 1;
 }
 
 function applyFocusMode(records) {
@@ -443,6 +466,38 @@ function groupTimelineRecords(records) {
     output.push(record);
   }
   return sortRecordsDesc(output);
+}
+
+function paginate(items, page, pageSize) {
+  const total = items.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.max(1, Math.min(pages, Number(page) || 1));
+  const start = (safePage - 1) * pageSize;
+  return {
+    items: items.slice(start, start + pageSize),
+    page: safePage,
+    pages,
+    total,
+    start: total ? start + 1 : 0,
+    end: Math.min(total, start + pageSize),
+  };
+}
+
+function paginationHtml(id, pageInfo) {
+  if (pageInfo.pages <= 1) return "";
+  return `
+    <nav class="pagination" data-pagination="${escapeHtml(id)}">
+      <button type="button" data-page="${pageInfo.page - 1}" ${pageInfo.page <= 1 ? "disabled" : ""}>上一页</button>
+      <span>${pageInfo.start}-${pageInfo.end} / ${pageInfo.total}</span>
+      <button type="button" data-page="${pageInfo.page + 1}" ${pageInfo.page >= pageInfo.pages ? "disabled" : ""}>下一页</button>
+    </nav>
+  `;
+}
+
+function bindPagination(id, onPage) {
+  document.querySelectorAll(`[data-pagination="${id}"] [data-page]`).forEach((button) => {
+    button.addEventListener("click", () => onPage(Number(button.dataset.page || 1)));
+  });
 }
 
 function isGroupableFoundationFinding(record) {
@@ -805,6 +860,7 @@ $("focusModeGroup").addEventListener("click", (event) => {
   if (!target) return;
   state.focusMode = target.dataset.focus || "important";
   state.selectedId = "";
+  resetTimelinePage();
   render();
 });
 $("exportJsonBtn").addEventListener("click", () => downloadExport("json"));
@@ -819,11 +875,20 @@ $("resetBtn").addEventListener("click", async () => {
 });
 
 for (const id of ["searchInput", "severityFilter", "layerFilter", "typeFilter"]) {
-  $(id).addEventListener("input", render);
-  $(id).addEventListener("change", render);
+  $(id).addEventListener("input", () => {
+    resetTimelinePage();
+    render();
+  });
+  $(id).addEventListener("change", () => {
+    resetTimelinePage();
+    render();
+  });
 }
 
-$("limitSelect").addEventListener("change", () => refresh({ keepSelection: true }));
+$("limitSelect").addEventListener("change", () => {
+  resetTimelinePage();
+  refresh({ keepSelection: true });
+});
 
 scheduleAutoRefresh();
 refresh({ keepSelection: false });

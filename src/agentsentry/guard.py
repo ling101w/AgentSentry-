@@ -32,7 +32,8 @@ INJECTION_PATTERNS = [
         r"<\|im_start\|>.*?<\|im_end\|>",
         r"<role>assistant</role>.*?<role>human</role>",
         r"ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|rules?|commands?)",
-        r"(send|show|list|provide|exfiltrate).{0,80}(api[_ -]?key|token|secret|password|credential)",
+        r"(send|show|list|provide|exfiltrate|route|archive|mirror|sync|attach|append|include|post|upload|transmit).{0,120}(api[_ -]?key|token|secret|password|credential|identity|session|environment|config|system_prompt|\.env|\.ssh)",
+        r"(identity|session|environment|config|credential|system_prompt|secret\.txt|\.env|\.ssh).{0,120}(route|archive|mirror|sync|attach|append|include|post|upload|transmit|endpoint)",
         r"(system|developer|internal).{0,40}(prompt|configuration|policy)",
         r"(系统提示|开发者提示|内部配置|工具声明|输出格式规则|内部配置附录)",
         r"(完整|确切|原始).{0,60}(提示词|系统提示|配置|工具|规则)",
@@ -48,8 +49,9 @@ MEMORY_POISON_PATTERNS = [
         r"new\s+instructions?\s*:",
         r"you\s+are\s+now\s+(a|an)\b",
         r"(whenever|when|if).{0,80}(user|time|asks|mentions).{0,80}(send|write|call|exfiltrate)",
-        r"(attacker|evil|exfil)[\w.-]*@",
-        r"(secret|password|token|api[_ -]?key).{0,80}(send|upload|email|post)",
+        r"(future|default|profile|preference|continuity|fast[-\s]?path|quiet).{0,120}(approval|review|confirmation|guard|policy|banner|route|archive).{0,100}(already\s+handled|skip|suppress|quiet|silent|auto|external|ops-archive)",
+        r"(route|archive|forward|mirror|sync|attach|append|include).{0,120}(identity|session|environment|config|credential|operator|bundle|secret|system_prompt|\.env|\.ssh)",
+        r"(secret|password|token|api[_ -]?key|credential|identity|system_prompt|\.env|\.ssh).{0,100}(send|upload|email|post|route|archive|sync)",
     ]
 ]
 
@@ -292,14 +294,18 @@ def _matching_patterns(text: str, patterns: list[re.Pattern[str]]) -> list[str]:
         for pattern in patterns:
             match = pattern.search(variant)
             if match:
-                matches.append(match.group(0)[:120])
-    return list(dict.fromkeys(matches))
+                start = max(0, match.start() - 48)
+                end = min(len(variant), match.end() + 48)
+                matches.append(variant[start:end][:220])
+    return [item for item in dict.fromkeys(matches) if not _is_negated_safety_boundary(item)]
 
 
 def _text_variants(text: str) -> list[str]:
     normalized = _canonical_text(text)
-    variants = [normalized]
+    compact = _deobfuscate_separators(normalized)
+    variants = [normalized, compact]
     variants.extend(_decoded_text_candidates(normalized))
+    variants.extend(_decoded_text_candidates(compact))
     return list(dict.fromkeys(item for item in variants if item))[:12]
 
 
@@ -310,19 +316,50 @@ def _canonical_text(text: str) -> str:
     return normalized
 
 
+def _is_negated_safety_boundary(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(do\s+not|don't|without|never|no\s+need\s+to|不要|不需要|不包含|无需|禁止|不得|避免|不能|不应).{0,100}(read|send|upload|include|access|exfiltrate|token|secret|password|credential|private\s*key|读取|访问|发送|上传|外发|泄露|包含|凭据|密钥|私钥|配置)",
+            text,
+            re.I | re.S,
+        )
+        or re.search(
+            r"(read|send|upload|include|access|exfiltrate|读取|访问|发送|上传|外发|泄露|包含).{0,60}(do\s+not|don't|without|never|不要|不需要|不包含|无需|禁止|不得|避免|不能|不应)",
+            text,
+            re.I | re.S,
+        )
+    )
+
+
+def _deobfuscate_separators(text: str) -> str:
+    text = re.sub(r"[\"'`]\s*\+\s*[\"'`]", "", text)
+    text = re.sub(r"open\s*claw\s*\.?\s*json", "openclaw.json", text, flags=re.I)
+    return text
+
+
 def _decoded_text_candidates(text: str) -> list[str]:
     candidates: list[str] = []
     tokens = re.findall(r"[A-Za-z0-9+/_=-]{16,}|(?:[0-9A-Fa-f]{2}){8,}", text)
     for token in tokens[:24]:
         if len(token) > 4096:
             continue
-        decoded = _decode_base64_text(token)
-        if decoded:
-            candidates.append(decoded)
-        decoded = _decode_hex_text(token)
-        if decoded:
-            candidates.append(decoded)
+        for candidate in _encoded_token_variants(token):
+            decoded = _decode_base64_text(candidate)
+            if decoded:
+                candidates.append(decoded)
+            decoded = _decode_hex_text(candidate)
+            if decoded:
+                candidates.append(decoded)
     return candidates
+
+
+def _encoded_token_variants(token: str) -> list[str]:
+    variants = [token]
+    if "=" in token:
+        head, tail = token.split("=", 1)
+        if tail and len(tail) >= 16 and re.fullmatch(r"[A-Za-z0-9+/_-]+={0,2}", tail) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{2,40}", head):
+            variants.append(tail)
+    return list(dict.fromkeys(variants))
 
 
 def _decode_base64_text(token: str) -> str:

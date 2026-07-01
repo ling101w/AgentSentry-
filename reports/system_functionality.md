@@ -105,12 +105,25 @@ OpenClaw 插件会记录以下生命周期事件：
 
 | 场景 | 检测能力 |
 | --- | --- |
-| 隐藏邮件指令 | 检测 HTML 白色字体、极小字号、透明元素、隐藏 span 中的恶意指令 |
-| 恶意网页注入 | 检测零尺寸元素、HTML 注释、URL fragment 中的提示注入 |
+| 隐藏邮件指令 | 检测 HTML 白色字体、极小字号、透明元素、隐藏 span、data 属性和编码载荷 |
+| 恶意网页注入 | 检测零尺寸元素、HTML 注释、URL fragment 和 base64/hex 编码提示注入 |
 | PDF 隐写注入 | 检测 PDF 透明文本、低可见度文本层、Optional Content Layer 等特征 |
-| 图像文本注入 | 检测图片元数据、OCR 文本、iTXt/tEXt/comment 中的恶意指令 |
+| 图像文本注入 | 检测图片元数据、OCR 文本、iTXt/tEXt/comment 中的编码或命令型指令 |
 
 这些检测结果会写入 `guard_finding`，并把后续高风险 sink 标记为不可信数据流。
+
+
+
+### 7.1 隐蔽载荷与编码检测
+
+当前实验样例不要求用户在提示词里直接写“读取密钥”或“发给攻击者”。系统会在外部内容和工具参数中做以下处理：
+
+- 对文本做 Unicode 规范化，去除零宽字符和软连字符。
+- 对 base64、URL-safe base64、hex 编码片段做可打印文本解码。
+- 检测“归档、同步、遥测、证据附录、route、archive、telemetry、ingest”等业务化外联说法与本地敏感来源的组合。
+- 对 Skill 代码执行“本地文件读取 API + `.openclaw/.env/.ssh` 路径 + 外部网络 API”的组合判断。
+
+这部分用于降低只靠 `attacker`、`evil`、`token` 等显眼关键词带来的漏报和误报。
 
 ## 8. 记忆与配置持久化防护
 
@@ -139,7 +152,7 @@ OpenClaw 插件会记录以下生命周期事件：
 - `?gatewayURL=ws://...`
 - `gatewayURL=wss://...`
 - 非本机、非 localhost、非 127.0.0.1 的 Control UI 网关覆盖
-- 与 token、gateway auth、evil/attacker/collect 等外传语义组合出现的参数
+- 与非本机网关覆盖、外部归档/遥测端点、本地配置读取等数据流组合出现的参数
 
 命中后会在工具调用前阻断，并记录为 `tool_hijack` 风险。
 
@@ -147,10 +160,10 @@ OpenClaw 插件会记录以下生命周期事件：
 
 基础扫描和工具调用检测会识别：
 
-- Skill 文件读取 `openclaw.json`
-- 读取 `.env`、SSH 私钥、token、secret 等敏感文件
-- 使用 `fetch`、`axios`、`curl`、`wget`、`http.request` 等方式外传配置或令牌
-- “天气查询”等正常功能描述与实际读取/外传 OpenClaw 凭据的行为不一致
+- Skill 文件读取 `openclaw.json` 或 `.openclaw` 下的本地配置
+- 读取 `.env`、SSH 身份文件、凭据、会话或配置材料
+- 使用 `fetch`、`axios`、`curl`、`wget`、`http.request` 等方式连接非白名单外部端点
+- “天气查询”等正常功能描述与实际“本地配置读取 + 外部端点”的行为不一致
 
 命中后会生成 Foundation 或 Execution Control 层告警。
 
@@ -160,7 +173,7 @@ OpenClaw 插件会记录以下生命周期事件：
 
 已实现检查：
 
-- 命令读取并外传 `~/.ssh/id_rsa`、`.env`、`openclaw.json`、secret 文件。
+- 命令读取并外传 `~/.ssh/id_rsa`、`~/.ssh/id_ed25519`、`.env`、`openclaw.json`、secret/credential 文件。
 - `curl | bash`、`wget | sh` 等远程脚本执行。
 - `sudo`、`chmod 777`、`chown`、`systemctl`、`crontab` 等高权限或持久化命令。
 - 工具参数指向敏感路径、OpenClaw 配置、启动项或系统目录。

@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, closeSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PluginConfig } from "../config.ts";
@@ -67,8 +67,30 @@ export class RecordStore {
     return records.reverse();
   }
 
+  count(): number {
+    if (!existsSync(this.recordsPath)) return 0;
+    const stat = statSync(this.recordsPath);
+    if (!stat.size) return 0;
+    const fd = openSync(this.recordsPath, "r");
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let total = 0;
+    let bytesRead = 0;
+    try {
+      do {
+        bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+        for (let i = 0; i < bytesRead; i += 1) {
+          if (buffer[i] === 10) total += 1;
+        }
+      } while (bytesRead > 0);
+    } finally {
+      closeSync(fd);
+    }
+    return total;
+  }
+
   stats(limit = 2000): Record<string, unknown> {
     const records = this.list(limit);
+    const totalRecords = this.count();
     const byType: Record<string, number> = {};
     const bySeverity: Record<string, number> = {};
     const byLayer: Record<string, number> = {};
@@ -84,7 +106,10 @@ export class RecordStore {
     }
 
     return {
-      total: records.length,
+      total: totalRecords,
+      totalRecords,
+      windowRecords: records.length,
+      windowLimit: limit,
       sessions: sessions.size,
       runs: runs.size,
       byType,
@@ -122,7 +147,30 @@ export function runIdForSession(sessionKey: string | undefined): string {
 
 function readTailLines(path: string, limit: number): string[] {
   if (!existsSync(path)) return [];
-  const text = readFileSync(path, "utf8");
+  const stat = statSync(path);
+  if (!stat.size) return [];
+  const fd = openSync(path, "r");
+  const chunkSize = 128 * 1024;
+  const chunks: Buffer[] = [];
+  let position = stat.size;
+  let newlineCount = 0;
+  try {
+    while (position > 0 && newlineCount <= limit) {
+      const readSize = Math.min(chunkSize, position);
+      position -= readSize;
+      const buffer = Buffer.allocUnsafe(readSize);
+      const bytesRead = readSync(fd, buffer, 0, readSize, position);
+      if (bytesRead <= 0) break;
+      const chunk = bytesRead === buffer.length ? buffer : buffer.subarray(0, bytesRead);
+      chunks.push(chunk);
+      for (let i = 0; i < chunk.length; i += 1) {
+        if (chunk[i] === 10) newlineCount += 1;
+      }
+    }
+  } finally {
+    closeSync(fd);
+  }
+  const text = Buffer.concat(chunks.reverse()).toString("utf8");
   const lines = text.split(/\r?\n/).filter(Boolean);
   return lines.slice(Math.max(0, lines.length - limit));
 }

@@ -26,3 +26,4 @@ reports/supervision_ablation/baseline-escaped-writes/
 reports/supervision_ablation/*-outbox.jsonl
 reports/supervision_ablation/*-shell-exec.jsonl
 reports/supervision_ablation/*-memory.json
+reports/supervision_ablation/*-sensitive-read.jsonl

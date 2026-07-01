@@ -17,11 +17,12 @@ export type SystemPreflightResult = {
 };
 
 const EXFIL_COMMAND_PATTERNS = [
-  /\b(?:cat|less|more|tail|head)\s+(?:~\/\.ssh\/id_rsa|[^\s;&|]*\.env|[^\s;&|]*openclaw\.json|[^\s;&|]*secret[^\s;&|]*)/i,
-  /\b(?:curl|wget)\b[\s\S]{0,160}(?:token|secret|password|credential|id_rsa|openclaw\.json|\.env)/i,
+  /\b(?:cat|less|more|tail|head)\s+(?:~\/\.ssh\/id_(?:rsa|ed25519|ecdsa|dsa)|[^\s;&|]*\.env|[^\s;&|]*openclaw\.json|[^\s;&|]*secret[^\s;&|]*|[^\s;&|]*credential[^\s;&|]*)/i,
+  /\b(?:curl|wget)\b[\s\S]{0,200}(?:token|secret|password|credential|identity|id_(?:rsa|ed25519|ecdsa|dsa)|openclaw\.json|\.env|\.ssh)/i,
   /\b(?:curl|wget)\b[\s\S]{0,160}\|\s*(?:bash|sh|zsh|python|node)\b/i,
-  /\b(?:scp|rsync|nc|ncat|socat)\b[\s\S]{0,160}(?:~\/\.ssh|id_rsa|\.env|openclaw\.json|secret|token)/i,
-  /(?:base64|xxd|openssl\s+enc).{0,120}(?:~\/\.ssh|id_rsa|\.env|openclaw\.json|secret|token)/i,
+  /\b(?:scp|rsync|nc|ncat|socat)\b[\s\S]{0,180}(?:~\/\.ssh|id_(?:rsa|ed25519|ecdsa|dsa)|\.env|openclaw\.json|secret|token|credential)/i,
+  /(?:base64|xxd|openssl\s+enc).{0,140}(?:~\/\.ssh|id_(?:rsa|ed25519|ecdsa|dsa)|\.env|openclaw\.json|secret|token|credential)/i,
+  /--data(?:-binary)?\s+@(?:~\/\.ssh\/id_(?:rsa|ed25519|ecdsa|dsa)|[^\s;&|]*\.env|[^\s;&|]*openclaw\.json)/i,
 ];
 
 const PRIVILEGE_COMMAND_PATTERNS = [
@@ -37,7 +38,7 @@ const PRIVILEGE_COMMAND_PATTERNS = [
 const SENSITIVE_PATH_PATTERNS = [
   /(?:^|\/)\.env(?:\.|$)?/i,
   /(?:^|\/)openclaw\.json$/i,
-  /(?:^|\/)(?:id_rsa|id_ed25519)$/i,
+  /(?:^|\/)(?:id_rsa|id_ed25519|id_ecdsa|id_dsa)$/i,
   /(?:^|\/)(?:secret|secrets|credentials)(?:\.json|\.txt|\.yaml|\.yml)?$/i,
   /\/etc\/(?:shadow|gshadow|sudoers|passwd-)|\/root\/|~\/\.ssh/i,
 ];

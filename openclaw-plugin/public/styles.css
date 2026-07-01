@@ -832,6 +832,29 @@ button:focus-visible {
   line-height: 1.5;
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 8px;
+}
+
+.pagination span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.pagination button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 @media (max-width: 1380px) {
   .stats-grid {
     grid-template-columns: repeat(4, minmax(120px, 1fr));

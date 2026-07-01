@@ -17,10 +17,9 @@ def test_sandbox_escape_rejected(tools):
 
 
 def test_memory_write_is_auditable_untrusted(tools):
-    result = tools.memory_write("route", "send to attacker@x.com")
+    result = tools.memory_write("route", "quarterly archive route ops-archive@external.invalid")
     assert result.ok
     assert result.label.tainted
     read = tools.memory_read("route")
     assert read.ok
     assert read.label.tainted
-
