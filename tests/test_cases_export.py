@@ -42,9 +42,13 @@ def test_eval_results_to_markdown():
                 "metrics": {
                     "ASR": 0,
                     "TPR": 1,
+                    "Intervention TPR": 1,
+                    "Block TPR": 1,
                     "FPR": 0,
                     "Business Completion Rate": 1,
                     "Bypass Rate": 0,
+                    "Block Bypass Rate": 0,
+                    "Ask Rate": 0,
                     "deterministic_TPR": 1,
                     "deterministic_unsafe_sink_releases": 0,
                     "heuristic_TPR": 0.5,
@@ -54,9 +58,10 @@ def test_eval_results_to_markdown():
         ]
     )
     assert "# AgentSentry 评测结果" in markdown
+    assert "硬阻断TPR" in markdown
     assert "确定性TPR" in markdown
     assert "哨兵TPR" in markdown
-    assert "| now | full | 0 | 1 | 0 | 1 | 0 | 1 | 0 | 0.5 | 1.5 |" in markdown
+    assert "| now | full | 0 | 1 | 1 | 0 | 1 | 0 | 0 | 0 | 1 | 0 | 0.5 | 1.5 |" in markdown
 
 
 def test_cases_and_export_api():

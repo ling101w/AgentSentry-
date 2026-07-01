@@ -54,7 +54,15 @@ class Store:
     def create_run(self, run_id: str, task: str, scenario: str | None, defense_mode: str) -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO runs (id, task, scenario, defense_mode, created_at) VALUES (?, ?, ?, ?, ?)",
+                """
+                INSERT INTO runs (id, task, scenario, defense_mode, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    task = excluded.task,
+                    scenario = excluded.scenario,
+                    defense_mode = excluded.defense_mode,
+                    final_output = ''
+                """,
                 (run_id, task, scenario, defense_mode, utc_now()),
             )
 
@@ -79,11 +87,33 @@ class Store:
                 ).fetchall()
             ]
             events = []
-            for row in conn.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall():
+            for row in conn.execute(
+                "SELECT rowid, id, run_id, type, payload, created_at FROM events ORDER BY rowid DESC LIMIT ?",
+                (limit,),
+            ).fetchall():
                 item = dict(row)
                 item["payload"] = json.loads(item["payload"])
                 events.append(item)
             return {"runs": runs, "events": events}
+
+    def list_run_events(self, run_id: str, after_rowid: int = 0, limit: int = 1000) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT rowid, id, run_id, type, payload, created_at
+                FROM events
+                WHERE run_id = ? AND rowid > ?
+                ORDER BY rowid ASC
+                LIMIT ?
+                """,
+                (run_id, after_rowid, limit),
+            ).fetchall()
+        events = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item["payload"])
+            events.append(item)
+        return events
 
     def save_eval(self, result: EvalResult) -> None:
         with self._connect() as conn:

@@ -20,6 +20,8 @@ src/agentsentry/static/security-screen.css
 src/agentsentry/static/security-screen.js
 openclaw-workspace/
 reports/**/*.png
+reports/full_acceptance/full_acceptance_report_*.md
+reports/full_acceptance/full_acceptance_results_*.json
 reports/supervision_ablation/baseline-escaped-writes/
 reports/supervision_ablation/*-outbox.jsonl
 reports/supervision_ablation/*-shell-exec.jsonl

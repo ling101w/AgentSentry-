@@ -1,11 +1,11 @@
 # AgentSentry 完整功能验收测试报告
 
-- 生成时间：2026-07-01T10:17:16.763453+00:00
+- 生成时间：2026-07-01T11:23:22.284592+00:00
 - 测试入口：`http://127.0.0.1:8765`
 - 记录来源：`http://127.0.0.1:8765/api/records?limit=5000`
 - 测试结果：18/18 通过，0 失败
-- 测试前记录数：3154
-- 测试后记录数：3465
+- 测试前记录数：3465
+- 测试后记录数：3776
 - 系统预执行策略：`active`
 - eBPF 状态：`unavailable`；原因：bpffs and bpftool exist, but /sys/fs/bpf is not accessible to this user service; unprivileged_bpf_disabled=2
 

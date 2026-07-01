@@ -3,6 +3,7 @@ import { clampText, redactObject, safeStringify } from "./redact.ts";
 import { systemPreflight } from "./system-monitor.ts";
 import { analyzeTrustContent, riskMax, sourceFromTool } from "./trust.ts";
 import {
+  applyExposureTaint,
   decideAction,
   mostSevereVerdict,
   normalizeAction,
@@ -76,13 +77,16 @@ export function detectToolCall(
   state: PolicyState,
   extraFindings: DetectionFinding[] = [],
 ): DetectionResult {
-  const action = normalizeAction(toolName, params);
+  let action = normalizeAction(toolName, params);
   if (!config.detection.enabled) {
-    const policy = decideAction(action, state, config, extraFindings);
+    const policy = decideAction(action, state, config, []);
     return { decision: policy.decision, risk_score: policy.risk_score, findings: policy.findings, summary: "detection disabled; policy only", policy };
   }
 
   const findings: DetectionFinding[] = [...extraFindings];
+  const exposure = applyExposureTaint(action, state, config);
+  action = exposure.action;
+  findings.push(...exposure.findings);
   const text = `${toolName}\n${safeStringify(params)}`;
   let risk = baseToolRisk(toolName);
   const command = readCommand(params);
@@ -239,9 +243,63 @@ function collectPathLike(value: unknown, out: string[] = []): string[] {
 
 function matchPatterns(text: string, patterns: RegExp[]): string[] {
   const matches: string[] = [];
-  for (const pattern of patterns) {
-    const match = pattern.exec(text);
-    if (match) matches.push(match[0].slice(0, 160));
+  for (const variant of textVariants(text)) {
+    for (const pattern of patterns) {
+      const match = pattern.exec(variant);
+      if (match) matches.push(match[0].slice(0, 160));
+    }
   }
-  return matches;
+  return Array.from(new Set(matches));
+}
+
+function textVariants(text: string): string[] {
+  const normalized = canonicalText(text);
+  return Array.from(new Set([normalized, ...decodedTextCandidates(normalized)].filter(Boolean))).slice(0, 12);
+}
+
+function canonicalText(text: string): string {
+  return text.normalize("NFKC").replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff\u00ad]/g, "");
+}
+
+function decodedTextCandidates(text: string): string[] {
+  const tokens = text.match(/[A-Za-z0-9+/_=-]{16,}|(?:[0-9A-Fa-f]{2}){8,}/g) || [];
+  const out: string[] = [];
+  for (const token of tokens.slice(0, 24)) {
+    if (token.length > 4096) continue;
+    const b64 = decodeBase64Text(token);
+    if (b64) out.push(b64);
+    const hex = decodeHexText(token);
+    if (hex) out.push(hex);
+  }
+  return out;
+}
+
+function decodeBase64Text(token: string): string {
+  if (token.length < 16) return "";
+  try {
+    const normalized = token.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+    return printableText(Buffer.from(padded, "base64").toString("utf8"));
+  } catch {
+    return "";
+  }
+}
+
+function decodeHexText(token: string): string {
+  if (token.length < 16 || token.length % 2) return "";
+  if (!/^[0-9A-Fa-f]+$/.test(token)) return "";
+  try {
+    return printableText(Buffer.from(token, "hex").toString("utf8"));
+  } catch {
+    return "";
+  }
+}
+
+function printableText(value: string): string {
+  if (!value || value.length > 4096) return "";
+  let printable = 0;
+  for (const char of value) {
+    if (/\s/.test(char) || char >= " ") printable += 1;
+  }
+  return printable / Math.max(value.length, 1) >= 0.85 ? canonicalText(value) : "";
 }

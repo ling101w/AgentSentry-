@@ -5,6 +5,7 @@ allowlist:
   api_hosts:
     - 127.0.0.1
     - localhost
+    - mock.local
     - api.example.com
   write_roots:
     - reports

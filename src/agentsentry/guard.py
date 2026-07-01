@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -131,6 +134,7 @@ class GuardPipeline:
             return []
         findings: list[GuardFinding] = []
         if result.label.integrity == Integrity.UNTRUSTED:
+            context.contaminated = True
             findings.extend(self._input_sanitization(result.output, source=result.label.source))
         if action.tool == "memory_write":
             key = str(unwrap_arg(action.args.get("key", "")))
@@ -284,8 +288,79 @@ def _matching_patterns(text: str, patterns: list[re.Pattern[str]]) -> list[str]:
     if not text:
         return []
     matches: list[str] = []
-    for pattern in patterns:
-        match = pattern.search(text)
-        if match:
-            matches.append(match.group(0)[:120])
-    return matches
+    for variant in _text_variants(text):
+        for pattern in patterns:
+            match = pattern.search(variant)
+            if match:
+                matches.append(match.group(0)[:120])
+    return list(dict.fromkeys(matches))
+
+
+def _text_variants(text: str) -> list[str]:
+    normalized = _canonical_text(text)
+    variants = [normalized]
+    variants.extend(_decoded_text_candidates(normalized))
+    return list(dict.fromkeys(item for item in variants if item))[:12]
+
+
+def _canonical_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff]", "", normalized)
+    normalized = normalized.replace("\xad", "")
+    return normalized
+
+
+def _decoded_text_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    tokens = re.findall(r"[A-Za-z0-9+/_=-]{16,}|(?:[0-9A-Fa-f]{2}){8,}", text)
+    for token in tokens[:24]:
+        if len(token) > 4096:
+            continue
+        decoded = _decode_base64_text(token)
+        if decoded:
+            candidates.append(decoded)
+        decoded = _decode_hex_text(token)
+        if decoded:
+            candidates.append(decoded)
+    return candidates
+
+
+def _decode_base64_text(token: str) -> str:
+    cleaned = token.strip()
+    if len(cleaned) < 16:
+        return ""
+    padded = cleaned + "=" * (-len(cleaned) % 4)
+    for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+        try:
+            raw = decoder(padded)
+        except (binascii.Error, ValueError):
+            continue
+        decoded = _decode_bytes(raw)
+        if decoded:
+            return _canonical_text(decoded)
+    return ""
+
+
+def _decode_hex_text(token: str) -> str:
+    cleaned = re.sub(r"\s+", "", token)
+    if len(cleaned) < 16 or len(cleaned) % 2:
+        return ""
+    try:
+        raw = bytes.fromhex(cleaned)
+    except ValueError:
+        return ""
+    decoded = _decode_bytes(raw)
+    return _canonical_text(decoded) if decoded else ""
+
+
+def _decode_bytes(raw: bytes) -> str:
+    if not raw or len(raw) > 4096:
+        return ""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
+    printable = sum(1 for char in text if char.isprintable() or char.isspace())
+    if printable / max(len(text), 1) < 0.85:
+        return ""
+    return text

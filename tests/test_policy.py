@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from agentsentry.models import DataValue, Integrity, Label, ToolAction
-from agentsentry.policy import PolicyEngine, derive_task_spec, label_for_path
+from agentsentry.policy import PolicyEngine, derive_task_spec, label_for_path, target_allowed
 
 
 def test_task_spec_blocks_email_for_summary(policy):
     spec = derive_task_spec("Summarize the webpage.", policy.sensitive_assets)
     assert "read_webpage" in spec.allowed_tools
+    assert "send_email" in spec.forbidden_tools
+
+
+def test_task_spec_negative_email_intent_does_not_allow_email(policy):
+    spec = derive_task_spec("总结 mock://attack 页面，不要给任何人发邮件。", policy.sensitive_assets)
+    assert "send_email" not in spec.allowed_tools
     assert "send_email" in spec.forbidden_tools
 
 
@@ -69,3 +75,96 @@ def test_deterministic_findings_are_hard_blocks(policy):
     assert decision.decision == "deny"
     assert decision.deterministic_block
     assert any(finding.finding_type == "deterministic" for finding in findings)
+
+
+def test_unknown_tool_is_fail_closed(policy):
+    engine = PolicyEngine(policy)
+    spec = derive_task_spec("Summarize the webpage.", policy.sensitive_assets)
+    action = ToolAction(tool="shell_exec", args={"cmd": "cat secret.txt"}, reason="unknown tool")
+    findings = engine.deterministic_findings(action, spec)
+    decision = engine.decide(action, spec, sentry_score=0, findings=findings)
+    assert decision.decision == "deny"
+    assert decision.deterministic_block
+    assert any("unknown tool shell_exec" in item for item in decision.violations)
+
+
+def test_allowed_targets_permit_builtin_mock_sources(policy):
+    engine = PolicyEngine(policy)
+    spec = derive_task_spec("Summarize mock://rita.", policy.sensitive_assets)
+    action = ToolAction(tool="read_webpage", args={"url": "mock://rita"}, reason="read red-team note")
+    decision = engine.decide(action, spec, sentry_score=0)
+    assert decision.decision == "allow"
+    assert not decision.violations
+
+
+def test_read_webpage_target_outside_taskspec_is_denied(policy):
+    engine = PolicyEngine(policy)
+    spec = derive_task_spec("Summarize the approved webpage.", policy.sensitive_assets)
+    action = ToolAction(tool="read_webpage", args={"url": "mock://unknown"}, reason="read unapproved target")
+    findings = engine.deterministic_findings(action, spec)
+    decision = engine.decide(action, spec, sentry_score=0, findings=findings)
+    assert decision.decision == "deny"
+    assert decision.deterministic_block
+    assert "target mock://unknown is outside allowed_targets" in decision.violations
+
+
+def test_call_api_target_outside_taskspec_is_denied(policy):
+    engine = PolicyEngine(policy)
+    spec = derive_task_spec("Fetch report data from the mock API.", policy.sensitive_assets)
+    action = ToolAction(tool="call_api", args={"url": "mock://unknown"}, reason="call unapproved endpoint")
+    findings = engine.deterministic_findings(action, spec)
+    decision = engine.decide(action, spec, sentry_score=0, findings=findings)
+    assert decision.decision == "deny"
+    assert decision.deterministic_block
+    assert "target mock://unknown is outside allowed_targets" in decision.violations
+
+
+def test_target_allowed_supports_http_path_prefixes():
+    assert target_allowed("https://api.example.com/reports/2026?id=1", ["https://api.example.com/reports"])
+    assert not target_allowed("https://api.example.com/admin", ["https://api.example.com/reports"])
+    assert not target_allowed("https://api.example.com:bad/reports", ["https://api.example.com/reports"])
+
+
+def test_task_spec_extracts_explicit_http_targets(policy):
+    spec = derive_task_spec("Summarize https://api.example.com/reports today.", policy.sensitive_assets)
+    assert "https://api.example.com/reports" in spec.allowed_targets
+    assert target_allowed("https://api.example.com/reports/2026", spec.allowed_targets)
+    assert not target_allowed("https://api.example.com/admin", spec.allowed_targets)
+
+
+def test_task_spec_strips_cjk_target_trailing_punctuation(policy):
+    spec = derive_task_spec("总结 mock://attack。", policy.sensitive_assets)
+    assert spec.allowed_targets == ["mock://attack"]
+    assert target_allowed("mock://attack", spec.allowed_targets)
+
+
+def test_call_api_rate_limit_counts_once_per_action(policy):
+    engine = PolicyEngine(policy)
+    spec = derive_task_spec("Fetch mock://benign from the mock API.", policy.sensitive_assets)
+    action = ToolAction(tool="call_api", args={"url": "mock://benign"}, reason="fetch")
+
+    for _ in range(10):
+        findings = engine.deterministic_findings(action, spec)
+        decision = engine.decide(action, spec, sentry_score=0, findings=findings)
+        assert "api rate exceeds configured limit" not in decision.violations
+
+    findings = engine.deterministic_findings(action, spec)
+    decision = engine.decide(action, spec, sentry_score=0, findings=findings)
+    assert "api rate exceeds configured limit" in decision.violations
+
+
+def test_call_api_rejected_attempts_do_not_consume_rate_budget(policy):
+    engine = PolicyEngine(policy)
+    spec = derive_task_spec("Fetch mock://benign from the mock API.", policy.sensitive_assets)
+    rejected = ToolAction(tool="call_api", args={"url": "mock://unknown"}, reason="probe unapproved endpoint")
+    allowed = ToolAction(tool="call_api", args={"url": "mock://benign"}, reason="fetch approved endpoint")
+
+    for _ in range(12):
+        findings = engine.deterministic_findings(rejected, spec)
+        decision = engine.decide(rejected, spec, sentry_score=0, findings=findings)
+        assert "target mock://unknown is outside allowed_targets" in decision.violations
+
+    findings = engine.deterministic_findings(allowed, spec)
+    decision = engine.decide(allowed, spec, sentry_score=0, findings=findings)
+
+    assert "api rate exceeds configured limit" not in decision.violations
