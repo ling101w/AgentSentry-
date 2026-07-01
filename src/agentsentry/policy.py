@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from .models import (
 
 KNOWN_TOOLS = {"read_webpage", "read_file", "write_file", "send_email", "call_api", "memory_write", "memory_read", "final_answer"}
 HIGH_RISK_TOOLS = {"send_email", "write_file", "call_api"}
+DEFAULT_ALLOWED_TARGETS = ["mock://benign", "mock://attack", "mock://polluted", "mock://rita"]
 SYSTEM_PATH_MARKERS = ("..", "~", "/etc", "\\windows", "startup", "system32")
 NEGATION_MARKERS = ("do not", "don't", "dont", "never", "no ", "不要", "别", "禁止", "不得")
 EMAIL_MARKERS = ("email", "mail", "send to", "发邮件", "发送邮件", "邮件")
@@ -101,11 +103,12 @@ def derive_task_spec(task: str, sensitive_assets: set[str] | None = None) -> Tas
     # Stable order without duplicates.
     allowed = list(dict.fromkeys(allowed))
     forbidden = [tool for tool in dict.fromkeys(forbidden) if tool not in allowed]
+    allowed_targets = _extract_targets(task) or DEFAULT_ALLOWED_TARGETS
     return TaskSpec(
         task=task,
         allowed_tools=allowed,
         forbidden_tools=forbidden,
-        allowed_targets=["mock://benign", "mock://attack", "mock://polluted"],
+        allowed_targets=_unique(allowed_targets),
         sensitive_assets=assets,
         output_policy=output_policy,
     )
@@ -171,6 +174,64 @@ def host_from_url(url: str) -> str:
     if parsed.scheme == "mock":
         return "mock.local"
     return parsed.hostname or ""
+
+
+def target_allowed(target: str, allowed_targets: list[str]) -> bool:
+    if not allowed_targets:
+        return True
+    normalized_target = _normalize_target(target)
+    if not normalized_target:
+        return False
+    return any(_target_matches(normalized_target, allowed) for allowed in allowed_targets)
+
+
+def _target_matches(target: str, allowed: str) -> bool:
+    normalized_allowed = _normalize_target(allowed)
+    if not normalized_allowed:
+        return False
+    if target == normalized_allowed:
+        return True
+
+    target_url = urlparse(target)
+    allowed_url = urlparse(normalized_allowed)
+    if target_url.scheme and allowed_url.scheme and target_url.scheme != allowed_url.scheme:
+        return False
+    if target_url.scheme == "mock" or allowed_url.scheme == "mock":
+        return target == normalized_allowed
+    if allowed_url.hostname and target_url.hostname != allowed_url.hostname:
+        return False
+
+    allowed_path = (allowed_url.path or "/").rstrip("/")
+    target_path = (target_url.path or "/").rstrip("/")
+    if allowed_path in {"", "/"}:
+        return True
+    return target_path == allowed_path or target_path.startswith(f"{allowed_path}/")
+
+
+def _normalize_target(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if parsed.scheme == "mock":
+        return text.rstrip("/")
+    if not parsed.scheme or not parsed.netloc:
+        return text.rstrip("/")
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    port = f":{parsed.port}" if parsed.port else ""
+    path = parsed.path.rstrip("/") or "/"
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{scheme}://{host}{port}{path}{query}"
+
+
+def _extract_targets(text: str) -> list[str]:
+    matches = re.findall(r"\b(?:https?://\S+|mock://\S+)", text)
+    return [_clean_target(match) for match in matches if _clean_target(match)]
+
+
+def _clean_target(value: str) -> str:
+    return value.rstrip(".,;:)]}>'\"")
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -298,15 +359,27 @@ class PolicyEngine:
             return [f"unknown tool {action.tool} is not allowlisted"]
         if action.tool in HIGH_RISK_TOOLS and not self.policy.rule_for(action.tool):
             return [f"missing deterministic sink rule for {action.tool}"]
-        if action.tool not in HIGH_RISK_TOOLS:
-            return []
         checks = {
+            "read_webpage": self._check_read_webpage,
             "send_email": self._check_send_email,
             "write_file": self._check_write_file,
             "call_api": self._check_call_api,
         }
         checker = checks.get(action.tool)
         return checker(action, task_spec) if checker else []
+
+    def _check_allowed_target(self, action: ToolAction, task_spec: TaskSpec) -> list[str]:
+        url = str(unwrap_arg(action.args.get("url", "")))
+        if not target_allowed(url, task_spec.allowed_targets):
+            target = url or "<empty>"
+            return [f"target {target} is outside allowed_targets"]
+        return []
+
+    def _check_read_webpage(self, action: ToolAction, task_spec: TaskSpec) -> list[str]:
+        violations = self._check_allowed_target(action, task_spec)
+        if "read_webpage" not in task_spec.allowed_tools:
+            violations.append("task intent does not allow webpage read")
+        return violations
 
     def _check_send_email(self, action: ToolAction, task_spec: TaskSpec) -> list[str]:
         violations: list[str] = []
@@ -349,7 +422,7 @@ class PolicyEngine:
         url = str(unwrap_arg(action.args.get("url", "")))
         host = host_from_url(url)
         self.api_call_counts[host] = self.api_call_counts.get(host, 0) + 1
-        violations: list[str] = []
+        violations = self._check_allowed_target(action, task_spec)
         if host not in self.policy.allowlisted_api_hosts:
             violations.append(f"api host {host or '<empty>'} is not allowlisted")
         if self.api_call_counts[host] > 10:

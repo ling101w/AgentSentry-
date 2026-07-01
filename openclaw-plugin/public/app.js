@@ -81,7 +81,7 @@ const toolNames = {
 const findingTypeNames = {
   deterministic: "确定性规则",
   heuristic: "启发式规则",
-  learned: "模型判断",
+  learned: "语义/哨兵判断",
   unknown: "未知类型",
 };
 

@@ -13,6 +13,7 @@ export type TaskSpec = {
   task: string;
   allowed_tools: string[];
   forbidden_tools: string[];
+  allowed_targets: string[];
   sensitive_assets: string[];
   output_policy: string;
 };
@@ -68,6 +69,7 @@ const EXPLICIT_NO_EMAIL = ["do not email", "don't email", "no email", "不要发
 
 export function createPolicyState(): PolicyState {
   const taskSpec = deriveTaskSpec("", []);
+
   return {
     currentTask: "",
     taskSpec,
@@ -252,10 +254,13 @@ export function deriveTaskSpec(task: string, sensitiveAssets: string[]): TaskSpe
     allowed.push("read_webpage");
   }
 
+  const explicitTargets = extractTargets(task);
+
   return {
     task,
     allowed_tools: unique(allowed),
     forbidden_tools: unique(forbidden.filter((tool) => !allowed.includes(tool))),
+    allowed_targets: unique(explicitTargets.length ? explicitTargets : ["mock://benign", "mock://attack", "mock://polluted", "mock://rita"]),
     sensitive_assets: sensitiveAssets,
     output_policy: outputPolicy,
   };
@@ -263,6 +268,13 @@ export function deriveTaskSpec(task: string, sensitiveAssets: string[]): TaskSpe
 
 function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, state: PolicyState, config: PluginConfig): string[] {
   const violations: string[] = [];
+  if (action.tool === "read_webpage") {
+    const url = readFirstString(action.args, ["url", "href", "endpoint", "target"]);
+    if (!targetAllowed(url, taskSpec.allowed_targets)) {
+      violations.push(`target ${url || "<empty>"} is outside allowed_targets`);
+    }
+  }
+
   if (action.tool === "send_email") {
     const recipient = readFirstString(action.args, ["recipient", "to", "target", "email"]);
     const body = readFirstString(action.args, ["body", "content", "message", "text"]);
@@ -305,6 +317,9 @@ function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, 
   if (action.tool === "call_api") {
     const url = readFirstString(action.args, ["url", "href", "endpoint", "target"]);
     const host = hostFromUrl(url);
+    if (!targetAllowed(url, taskSpec.allowed_targets)) {
+      violations.push(`target ${url || "<empty>"} is outside allowed_targets`);
+    }
     if (host) {
       state.apiCallCounts.set(host, (state.apiCallCounts.get(host) || 0) + 1);
       if (config.policy.allowlistedApiHosts.length && !config.policy.allowlistedApiHosts.includes(host)) {
@@ -459,8 +474,110 @@ function hostFromUrl(url: string): string {
   }
 }
 
+function targetAllowed(target: string, allowedTargets: string[]): boolean {
+  if (!allowedTargets.length) return true;
+  const normalizedTarget = normalizeTarget(target);
+  if (!normalizedTarget) return false;
+  return allowedTargets.some((allowed) => targetMatches(normalizedTarget, allowed));
+}
+
+function targetMatches(target: string, allowed: string): boolean {
+  const normalizedAllowed = normalizeTarget(allowed);
+  if (!normalizedAllowed) return false;
+  if (target === normalizedAllowed) return true;
+  try {
+    const targetUrl = new URL(target);
+    const allowedUrl = new URL(normalizedAllowed);
+    if (targetUrl.protocol !== allowedUrl.protocol) return false;
+    if (targetUrl.protocol === "mock:") return target === normalizedAllowed;
+    if (targetUrl.hostname !== allowedUrl.hostname) return false;
+    const allowedPath = allowedUrl.pathname.replace(/\/$/, "") || "/";
+    const targetPath = targetUrl.pathname.replace(/\/$/, "") || "/";
+    return allowedPath === "/" || targetPath === allowedPath || targetPath.startsWith(`${allowedPath}/`);
+  } catch {
+    return target === normalizedAllowed;
+  }
+}
+
+function normalizeTarget(value: string): string {
+  const text = value.trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text);
+    if (parsed.protocol === "mock:") return text.replace(/\/$/, "");
+    parsed.protocol = parsed.protocol.toLowerCase();
+    parsed.hostname = parsed.hostname.toLowerCase();
+    parsed.pathname = parsed.pathname.replace(/\/$/, "") || "/";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return text.replace(/\/$/, "");
+  }
+}
+
+function extractTargets(text: string): string[] {
+  const matches = text.match(/\b(?:https?:\/\/\S+|mock:\/\/\S+)/g) || [];
+  return matches.map(cleanTarget).filter(Boolean);
+}
+
+function cleanTarget(value: string): string {
+  return value.replace(/[.,;:\])}>'"]+$/g, "");
+}
+
 function hasInjectionSignal(text: string): boolean {
+  text = textVariants(text).join("\n");
   return /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|rules?|commands?)|system.{0,40}prompt|developer.{0,40}prompt|exfiltrate|api[_ -]?key|token|secret|password|bypass\s+(policy|guardrail|safety|restriction)|系统提示|开发者提示|内部配置/i.test(text);
+}
+
+function textVariants(text: string): string[] {
+  const normalized = canonicalText(text);
+  return unique([normalized, ...decodedTextCandidates(normalized)].filter(Boolean)).slice(0, 12);
+}
+
+function canonicalText(text: string): string {
+  return text.normalize("NFKC").replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff\u00ad]/g, "");
+}
+
+function decodedTextCandidates(text: string): string[] {
+  const tokens = text.match(/[A-Za-z0-9+/_=-]{16,}|(?:[0-9A-Fa-f]{2}){8,}/g) || [];
+  const out: string[] = [];
+  for (const token of tokens.slice(0, 24)) {
+    if (token.length > 4096) continue;
+    const b64 = decodeBase64Text(token);
+    if (b64) out.push(b64);
+    const hex = decodeHexText(token);
+    if (hex) out.push(hex);
+  }
+  return out;
+}
+
+function decodeBase64Text(token: string): string {
+  if (token.length < 16) return "";
+  try {
+    const normalized = token.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+    return printableText(Buffer.from(padded, "base64").toString("utf8"));
+  } catch {
+    return "";
+  }
+}
+
+function decodeHexText(token: string): string {
+  if (token.length < 16 || token.length % 2) return "";
+  if (!/^[0-9A-Fa-f]+$/.test(token)) return "";
+  try {
+    return printableText(Buffer.from(token, "hex").toString("utf8"));
+  } catch {
+    return "";
+  }
+}
+
+function printableText(value: string): string {
+  if (!value || value.length > 4096) return "";
+  let printable = 0;
+  for (const char of value) {
+    if (/\s/.test(char) || char >= " ") printable += 1;
+  }
+  return printable / Math.max(value.length, 1) >= 0.85 ? canonicalText(value) : "";
 }
 
 function containsAny(value: string, markers: string[]): boolean {

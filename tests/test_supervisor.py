@@ -164,6 +164,19 @@ def test_behavior_sentry_emits_learned_finding(store, policy, tools):
     assert any(finding["finding_type"] == "learned" for finding in email_decision["findings"])
 
 
+def test_run_blocks_web_target_outside_taskspec(store, policy, tools):
+    class TargetDriftLLM:
+        def next_action(self, task, history):
+            return json.dumps({"tool": "read_webpage", "args": {"url": "mock://unknown"}, "reason": "read unapproved target"})
+
+    supervisor = AgentSupervisor(store, policy, tools, llm=TargetDriftLLM())
+    response = supervisor.run(RunRequest(task="Summarize mock://benign.", use_fake_llm=False, max_steps=1))
+    read_decision = response.decisions[0]
+    assert read_decision["decision"] == "deny"
+    assert read_decision["deterministic_block"]
+    assert any("target mock://unknown is outside allowed_targets" in item for item in read_decision["violations"])
+
+
 def test_real_llm_keeps_scenario_metadata_without_using_fake_script(store, policy, tools):
     class RealLikeLLM:
         def next_action(self, task, history):

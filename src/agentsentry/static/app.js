@@ -30,7 +30,7 @@ const matrixLayers = ["Foundation", "Input Sanitization", "Cognition Protection"
 const matrixTypes = [
   { key: "deterministic", label: "确定性", hint: "可证明硬闸门" },
   { key: "heuristic", label: "启发式", hint: "规则/轨迹兜底" },
-  { key: "learned", label: "学习型", hint: "预留扩展" },
+  { key: "learned", label: "哨兵", hint: "轻量特征/语义扩展" },
 ];
 
 const typeNames = {
@@ -47,7 +47,7 @@ const typeNames = {
 
 const decisionNames = { allow: "放行", ask: "待确认", deny: "拒绝" };
 const executionNames = { executed: "已执行", blocked: "未执行", skipped: "跳过" };
-const findingTypeNames = { deterministic: "确定性", heuristic: "启发式", learned: "学习型" };
+const findingTypeNames = { deterministic: "确定性", heuristic: "启发式", learned: "哨兵" };
 const verdictNames = { pass: "记录", require_approval: "需确认", block: "阻断" };
 const defenseNames = {
   full: "完整防御",

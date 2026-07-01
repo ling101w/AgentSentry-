@@ -10,6 +10,8 @@ AgentSentry is a runnable M2 prototype for an LLM-agent behavior firewall:
 - SQLite event store and a FastAPI-served monitoring dashboard.
 - Built-in benign/attack evaluation suite with ablations.
 
+Current scope: the deterministic layer enforces TaskSpec tool bounds, allowed target URLs, taint-to-sink checks, recipient/path/API allowlists, and fail-closed sink rules. The sentry layer is a lightweight rule/feature baseline that emits heuristic or `learned`-typed findings for residual-risk telemetry; it is not a trained IsolationForest/GNN model. The built-in evaluation suite is deterministic and offline by default; AgentDojo/InjecAgent integration remains adapter/future-work territory.
+
 ## Quick Start
 
 ```powershell
