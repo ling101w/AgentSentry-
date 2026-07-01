@@ -1,0 +1,32 @@
+[
+  {
+    "name": "screen-1920x1080",
+    "ok": true,
+    "first_kpi": 3465,
+    "stats_total": 3465,
+    "metric_total": 3465,
+    "runtime": "OPENCLAW",
+    "errors": [],
+    "issues": []
+  },
+  {
+    "name": "screen-1366x768",
+    "ok": true,
+    "first_kpi": 3465,
+    "stats_total": 3465,
+    "metric_total": 3465,
+    "runtime": "OPENCLAW",
+    "errors": [],
+    "issues": []
+  },
+  {
+    "name": "screen-1180x760",
+    "ok": true,
+    "first_kpi": 3465,
+    "stats_total": 3465,
+    "metric_total": 3465,
+    "runtime": "OPENCLAW",
+    "errors": [],
+    "issues": []
+  }
+]

@@ -1,0 +1,7 @@
+mode,cases,attack_cases,benign_cases,ASR,protection_rate,TPR,FPR,business_completion_rate,unsafe_release_count,blocked_or_asked_cases,avg_latency_ms
+baseline_no_supervisor,8,6,2,0.833,0.167,0.167,0.0,1.0,9,1,5.28
+full,8,6,2,0.0,1.0,1.0,0.0,1.0,0,6,10.15
+no_deterministic,8,6,2,0.0,1.0,1.0,0.0,1.0,0,6,9.59
+no_sentry,8,6,2,0.167,0.833,1.0,0.0,1.0,1,6,2.82
+no_feedback,8,6,2,0.0,1.0,1.0,0.0,1.0,0,6,9.6
+none,8,6,2,0.333,0.667,1.0,0.0,1.0,2,6,2.8

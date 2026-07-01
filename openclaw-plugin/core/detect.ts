@@ -1,5 +1,7 @@
 import type { PluginConfig } from "../config.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
+import { systemPreflight } from "./system-monitor.ts";
+import { analyzeTrustContent, riskMax, sourceFromTool } from "./trust.ts";
 import {
   decideAction,
   mostSevereVerdict,
@@ -40,7 +42,8 @@ const DANGEROUS_COMMAND_PATTERNS = [
   /\bgit\s+reset\s+--hard\b/i,
   /\bshutdown\b|\breboot\b/i,
   /\bformat\b\s+[a-z]:/i,
-  /\bcurl\b|\bwget\b|\binvoke-webrequest\b/i,
+  /\b(?:curl|wget)\b[\s\S]{0,160}\|\s*(?:bash|sh|zsh|python|node)\b/i,
+  /\b(?:curl|wget|invoke-webrequest)\b[\s\S]{0,160}(?:id_rsa|\.env|openclaw\.json|token|secret|password|api[_-]?key)/i,
   /\bchmod\s+777\b/i,
   /\breg\s+add\b/i,
 ];
@@ -52,6 +55,8 @@ const PROMPT_INJECTION_PATTERNS = [
   /bypass\s+(policy|guardrail|safety|restriction)/i,
   /act\s+as\s+(an?\s+)?(unfiltered|jailbroken|developer mode)/i,
   /(系统提示|开发者提示|内部配置|工具声明|输出格式规则|完整提示词)/i,
+  /(忽略|绕过|禁用|关闭).{0,32}(安全策略|策略|规则|限制|防护|审计|监督)/i,
+  /(以后|未来|下次).{0,60}(忽略|绕过|优先执行|直接执行|无需确认)/i,
 ];
 
 const SENSITIVE_PATH_PATTERNS = [
@@ -59,7 +64,8 @@ const SENSITIVE_PATH_PATTERNS = [
   /\.env\b/i,
   /id_rsa|ssh[/\\]config/i,
   /api[_-]?key|token|secret|password/i,
-  /windows[/\\]system32|\/etc\/|startup/i,
+  /windows[/\\]system32|startup/i,
+  /\/etc\/(?:shadow|gshadow|sudoers|passwd-)/i,
   /\.\.[/\\]/,
 ];
 
@@ -79,8 +85,23 @@ export function detectToolCall(
   const findings: DetectionFinding[] = [...extraFindings];
   const text = `${toolName}\n${safeStringify(params)}`;
   let risk = baseToolRisk(toolName);
-
   const command = readCommand(params);
+  if (command && isLowRiskShellRead(command)) {
+    risk = 5;
+  }
+  const trustAnalysis = analyzeTrustContent(params, {
+    source: sourceFromTool(toolName),
+    sourceId: toolName,
+    toolName,
+    previewChars: config.capture.previewChars,
+  });
+  findings.push(...trustAnalysis.findings);
+  risk += Math.min(55, Math.trunc(riskMax(trustAnalysis.risk_vector) / 2));
+
+  const preflight = systemPreflight(toolName, params, { previewChars: config.capture.previewChars });
+  findings.push(...preflight.findings);
+  risk += Math.min(70, Math.trunc(riskMax(preflight.risk_vector) * 0.7));
+
   if (command) {
     const matched = DANGEROUS_COMMAND_PATTERNS.filter((pattern) => pattern.test(command)).map((pattern) => pattern.source);
     if (matched.length) {
@@ -97,7 +118,7 @@ export function detectToolCall(
   }
 
   const pathLike = collectPathLike(params);
-  const sensitivePaths = pathLike.filter((value) => SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(value)));
+  const sensitivePaths = pathLike.filter((value) => !isSafeSystemReadPath(value) && SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(value)));
   if (sensitivePaths.length) {
     risk += 35;
     findings.push({
@@ -133,14 +154,43 @@ export function detectToolCall(
   };
 }
 
+function isSafeSystemReadPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  return [
+    "/etc/os-release",
+    "/etc/issue",
+    "/etc/hostname",
+    "/proc/cpuinfo",
+    "/proc/meminfo",
+    "/proc/loadavg",
+    "/proc/uptime",
+  ].includes(normalized);
+}
+
+function isLowRiskShellRead(command: string): boolean {
+  const trimmed = command.trim();
+  const safePatterns = [
+    /^(pwd|whoami|id|hostname|uname\s+-a|date)$/i,
+    /^(ls|find|du|df)(\s+[-\w./~*]+)*$/i,
+    /^(cat|head|tail)\s+\/etc\/(os-release|issue|hostname)$/i,
+    /^(cat|head|tail)\s+\/proc\/(cpuinfo|meminfo|loadavg|uptime)$/i,
+    /^stat\s+[-\w./~*]+$/i,
+    /^wc\s+[-\w\s./~*]+$/i,
+  ];
+  return safePatterns.some((pattern) => pattern.test(trimmed));
+}
+
 export { mostSevereVerdict };
 
 export function detectMessageContent(content: unknown, config: PluginConfig): DetectionFinding[] {
   if (!config.detection.enabled) return [];
   const text = clampText(content, config.capture.previewChars);
+  const trustAnalysis = analyzeTrustContent(content, { source: "user_input", sourceId: "message", previewChars: config.capture.previewChars });
   const matched = matchPatterns(text, PROMPT_INJECTION_PATTERNS);
-  if (!matched.length) return [];
+  const findings = [...trustAnalysis.findings];
+  if (!matched.length) return findings;
   return [
+    ...findings,
     {
       layer: "Input Sanitization",
       finding_type: "heuristic",

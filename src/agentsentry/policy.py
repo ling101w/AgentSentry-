@@ -95,7 +95,7 @@ def derive_task_spec(task: str, sensitive_assets: set[str] | None = None) -> Tas
         task=task,
         allowed_tools=allowed,
         forbidden_tools=forbidden,
-        allowed_targets=["mock://benign", "mock://attack", "mock://polluted"],
+        allowed_targets=["http://127.0.0.1:8765/api/health", "https://example.com/"],
         sensitive_assets=assets,
         output_policy=output_policy,
     )
@@ -147,8 +147,6 @@ def unwrap_arg(arg: Any) -> Any:
 
 def host_from_url(url: str) -> str:
     parsed = urlparse(url)
-    if parsed.scheme == "mock":
-        return "mock.local"
     return parsed.hostname or ""
 
 

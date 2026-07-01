@@ -40,9 +40,9 @@ def test_run_stream_returns_incremental_events():
         "POST",
         "/api/runs/stream",
         json={
-            "task": "Summarize mock://attack. Do not email anyone.",
+            "task": "Summarize http://127.0.0.1:9/send-api_key-ignore-previous-instructions. Do not email anyone.",
             "scenario": "indirect_injection",
-            "use_fake_llm": True,
+            "scripted_llm": True,
             "defense_mode": "full",
             "max_steps": 2,
         },
@@ -53,3 +53,49 @@ def test_run_stream_returns_incremental_events():
     assert any(item["type"] == "event" and item["payload"]["type"] == "llm_raw" for item in lines)
     assert any(item["type"] == "event" and item["payload"]["type"] == "tool_decision" for item in lines)
     assert lines[-1]["type"] == "done"
+
+
+def test_health_and_openclaw_records_api():
+    client = TestClient(app)
+
+    health = client.get("/api/health")
+    assert health.status_code == 200
+    body = health.json()
+    assert body["ok"] is True
+    assert body["service"] == "AgentSentry"
+    assert "runtime" in body
+    assert "llm" in body
+    assert "openclaw" in body
+
+    records = client.get("/api/openclaw/records?limit=2")
+    assert records.status_code == 200
+    records_body = records.json()
+    assert "available" in records_body
+    assert "records" in records_body
+
+
+def test_security_overview_api_uses_real_event_shape():
+    client = TestClient(app)
+
+    response = client.get("/api/security/overview")
+    assert response.status_code == 200
+    body = response.json()
+    assert "source" in body
+    assert "metrics" in body
+    assert "lifecycle" in body
+    assert "alerts" in body
+    assert "rules" in body
+    assert "timeline" in body
+    assert "nodes" in body
+    assert "meshMeta" in body
+    assert all("num" in metric for metric in body["metrics"])
+    assert body["source"]["local_event_count"] >= 0
+    assert body["source"]["openclaw_event_count"] >= 0
+    assert body["source"]["mode"] == "combined"
+    assert "window" in body["source"]
+    assert body["meshMeta"]["api_calls"] >= 0
+    assert body["meshMeta"]["policy_hits"] >= 0
+
+    openclaw = client.get("/api/security/overview?source=openclaw")
+    assert openclaw.status_code == 200
+    assert openclaw.json()["source"]["mode"] == "openclaw"

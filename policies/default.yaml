@@ -3,7 +3,9 @@ allowlist:
     - user@example.com
     - security@example.com
   api_hosts:
-    - mock.local
+    - 127.0.0.1
+    - localhost
+    - api.example.com
   write_roots:
     - reports
     - notes
@@ -16,7 +18,7 @@ sensitive_assets:
   - system_prompt.txt
 
 risk_thresholds:
-  ask: 40
+  ask: 45
   deny: 70
 
 rules:

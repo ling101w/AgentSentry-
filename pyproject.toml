@@ -14,6 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "playwright",
     "pytest",
 ]
 
@@ -21,4 +22,3 @@ dev = [
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-q"
-

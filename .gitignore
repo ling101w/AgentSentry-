@@ -18,3 +18,9 @@ AgentWard-main/
 AgentWard-main.zip
 src/agentsentry/static/security-screen.css
 src/agentsentry/static/security-screen.js
+openclaw-workspace/
+reports/**/*.png
+reports/supervision_ablation/baseline-escaped-writes/
+reports/supervision_ablation/*-outbox.jsonl
+reports/supervision_ablation/*-shell-exec.jsonl
+reports/supervision_ablation/*-memory.json

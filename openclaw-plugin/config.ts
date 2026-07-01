@@ -244,22 +244,22 @@ function objectAt(obj: Record<string, unknown>, key: string): Record<string, unk
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-function readBoolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === "boolean" ? value : fallback;
+function readBoolean(value: unknown, defaultValue: boolean): boolean {
+  return typeof value === "boolean" ? value : defaultValue;
 }
 
-function readString(value: unknown, fallback: string): string {
-  return typeof value === "string" ? value.trim() : fallback;
+function readString(value: unknown, defaultValue: string): string {
+  return typeof value === "string" ? value.trim() : defaultValue;
 }
 
-function readPositiveInt(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : fallback;
+function readPositiveInt(value: unknown, defaultValue: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : defaultValue;
 }
 
-function readStringArray(value: unknown, fallback: string[]): string[] {
-  if (!Array.isArray(value)) return fallback;
+function readStringArray(value: unknown, defaultValue: string[]): string[] {
+  if (!Array.isArray(value)) return defaultValue;
   const items = value.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean);
-  return items.length ? Array.from(new Set(items)) : fallback;
+  return items.length ? Array.from(new Set(items)) : defaultValue;
 }
 
 export const ConfigSchema = {

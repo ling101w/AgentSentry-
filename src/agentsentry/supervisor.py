@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any
 
-from .llm import ActionParseError, FakeLLM, LLMClient, OpenAICompatibleClient, parse_action
+from .llm import ActionParseError, DeterministicLLM, LLMClient, OpenAICompatibleClient, parse_action
 from .guard import GuardContext, GuardPipeline, heuristic_score, most_severe_verdict
 from .models import DataValue, Decision, DetectionVerdict, Event, ExecutionStatus, FindingType, GuardFinding, RunRequest, RunResponse, ToolAction, ToolResult, new_id
 from .policy import Policy, PolicyEngine, combine_labels, derive_task_spec, unwrap_arg
@@ -42,7 +42,7 @@ class AgentSupervisor:
         task_spec = derive_task_spec(request.task, self.policy.sensitive_assets)
         engine = PolicyEngine(self.policy, deterministic_enabled=toggles.deterministic)
         guard = GuardPipeline(self.policy, enabled=toggles.sentry, feedback_enabled=toggles.feedback)
-        llm = FakeLLM(request.scenario) if request.use_fake_llm else self.llm or OpenAICompatibleClient()
+        llm = DeterministicLLM(request.scenario) if request.scripted_llm else self.llm or OpenAICompatibleClient()
         history: list[dict[str, Any]] = []
         decisions: list[dict[str, Any]] = []
         last_result: ToolResult | None = None

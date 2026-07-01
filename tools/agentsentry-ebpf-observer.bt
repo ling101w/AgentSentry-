@@ -1,0 +1,62 @@
+/*
+ * AgentSentry eBPF observer.
+ *
+ * Run as root with:
+ *   sudo bpftrace /home/ubuntu/AgentSentry-/tools/agentsentry-ebpf-observer.bt
+ *
+ * The OpenClaw plugin still performs the blocking decision before tool execution.
+ * This observer adds kernel-level evidence for exec/open/connect behavior when
+ * the host allows eBPF attachment.
+ */
+
+BEGIN
+{
+  printf("{\"event\":\"observer_start\",\"ts_ns\":%llu,\"component\":\"agentsentry-ebpf\"}\n", nsecs);
+}
+
+tracepoint:syscalls:sys_enter_execve
+/comm == "node" || comm == "bash" || comm == "sh" || comm == "zsh" || comm == "python" || comm == "python3" || comm == "curl" || comm == "wget"/
+{
+  printf(
+    "{\"event\":\"execve\",\"ts_ns\":%llu,\"pid\":%d,\"uid\":%d,\"comm\":\"%s\",\"argv0\":\"%s\",\"argv1\":\"%s\",\"argv2\":\"%s\"}\n",
+    nsecs,
+    pid,
+    uid,
+    comm,
+    str(args->argv[0]),
+    str(args->argv[1]),
+    str(args->argv[2])
+  );
+}
+
+tracepoint:syscalls:sys_enter_openat
+/comm == "node" || comm == "bash" || comm == "sh" || comm == "python" || comm == "python3"/
+{
+  printf(
+    "{\"event\":\"openat\",\"ts_ns\":%llu,\"pid\":%d,\"uid\":%d,\"comm\":\"%s\",\"filename\":\"%s\",\"flags\":%d}\n",
+    nsecs,
+    pid,
+    uid,
+    comm,
+    str(args->filename),
+    args->flags
+  );
+}
+
+tracepoint:syscalls:sys_enter_connect
+/comm == "node" || comm == "curl" || comm == "wget" || comm == "python" || comm == "python3"/
+{
+  printf(
+    "{\"event\":\"connect\",\"ts_ns\":%llu,\"pid\":%d,\"uid\":%d,\"comm\":\"%s\",\"fd\":%d}\n",
+    nsecs,
+    pid,
+    uid,
+    comm,
+    args->fd
+  );
+}
+
+END
+{
+  printf("{\"event\":\"observer_stop\",\"ts_ns\":%llu,\"component\":\"agentsentry-ebpf\"}\n", nsecs);
+}

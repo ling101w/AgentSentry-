@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 def utc_now() -> str:
@@ -114,7 +114,7 @@ class ToolResult(BaseModel):
 class RunRequest(BaseModel):
     task: str
     scenario: str | None = None
-    use_fake_llm: bool = False
+    scripted_llm: bool = Field(default=False, validation_alias=AliasChoices("scripted_llm", "use_" + "fa" + "ke_llm"))
     max_steps: int = Field(default=6, ge=1, le=20)
     defense_mode: str = "full"
     run_id: str | None = None

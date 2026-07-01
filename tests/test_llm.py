@@ -7,9 +7,9 @@ from agentsentry.llm import ActionParseError, OpenAICompatibleClient, parse_acti
 
 
 def test_parse_action_json():
-    action = parse_action('{"tool":"read_webpage","args":{"url":"mock://benign"},"reason":"read"}')
+    action = parse_action('{"tool":"read_webpage","args":{"url":"http://127.0.0.1:8765/api/health"},"reason":"read"}')
     assert action.tool == "read_webpage"
-    assert action.args["url"] == "mock://benign"
+    assert action.args["url"] == "http://127.0.0.1:8765/api/health"
 
 
 def test_parse_action_rejects_malformed():

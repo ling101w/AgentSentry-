@@ -1,0 +1,14 @@
+[Unit]
+Description=AgentSentry eBPF observer
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/bpftrace /home/ubuntu/AgentSentry-/tools/agentsentry-ebpf-observer.bt
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/var/log/agentsentry-ebpf.jsonl
+StandardError=append:/var/log/agentsentry-ebpf.err
+
+[Install]
+WantedBy=multi-user.target

@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .anomaly import BehaviorAnomalyDetector
 from .models import (
     Confidentiality,
     DataValue,
@@ -71,6 +72,7 @@ class GuardPipeline:
         self.policy = policy
         self.enabled = enabled
         self.feedback_enabled = feedback_enabled
+        self.anomaly = BehaviorAnomalyDetector()
 
     def foundation_scan(self) -> list[GuardFinding]:
         if not self.enabled:
@@ -117,6 +119,9 @@ class GuardPipeline:
         findings.extend(self._decision_alignment(action, context.task_spec))
         findings.extend(self._cognition_protection(action, context))
         findings.extend(self._trajectory(action, context, history))
+        anomaly_finding = self.anomaly.assess(action, context.task_spec, history)
+        if anomaly_finding:
+            findings.append(anomaly_finding)
         for finding in findings:
             context.record(finding)
         return findings

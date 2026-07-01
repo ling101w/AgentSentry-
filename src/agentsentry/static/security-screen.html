@@ -59,6 +59,7 @@
       pointer-events: none;
       z-index: 0;
       opacity: 0.9;
+      overflow: hidden;
     }
 
     .screen-bg::before {
@@ -171,8 +172,7 @@
       font-weight: 800;
       letter-spacing: 0.02em;
       white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      overflow: visible;
     }
 
     .subtitle {
@@ -271,6 +271,8 @@
       font-size: 12px;
       margin-bottom: 5px;
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .h-stat .value {
@@ -498,6 +500,7 @@
       color: var(--text);
       font-weight: 800;
       letter-spacing: 0.02em;
+      min-width: 0;
     }
 
     .panel-header .left {
@@ -505,6 +508,14 @@
       align-items: center;
       gap: 8px;
       min-width: 0;
+      overflow: hidden;
+    }
+
+    .panel-header .left > span:not(.diamond) {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .panel-header small {
@@ -547,18 +558,39 @@
     }
 
     .gauge .value {
+      width: min(104px, 78%);
+      display: grid;
+      justify-items: center;
+      gap: 2px;
       text-align: center;
+      line-height: 1;
       z-index: 1;
+      overflow: hidden;
+    }
+
+    .gauge .value > div:first-child {
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      white-space: nowrap;
     }
 
     .gauge .big {
-      font-size: 34px;
+      font-size: clamp(24px, 2vw, 34px);
       font-weight: 900;
-      letter-spacing: 0.02em;
+      letter-spacing: 0;
     }
 
     .gauge .slash { font-size: 16px; color: var(--text-faint); }
-    .gauge .small { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+    .gauge .small {
+      max-width: 100%;
+      color: var(--text-faint);
+      font-size: clamp(9px, 0.7vw, 12px);
+      line-height: 1.15;
+      margin-top: 0;
+      overflow: hidden;
+      text-wrap: balance;
+    }
 
     .risk-box {
       border: 1px solid rgba(255, 77, 94, 0.28);
@@ -572,6 +604,26 @@
     .risk-box .label { color: var(--text-faint); font-size: 13px; margin-bottom: 6px; }
     .risk-box .risk { color: var(--red); font-size: 22px; font-weight: 900; letter-spacing: 0.03em; text-shadow: 0 0 12px rgba(255, 77, 94, 0.38); }
     .risk-box .en { color: rgba(255, 77, 94, 0.86); font-size: 12px; margin-top: 4px; }
+    .risk-box.stable {
+      border-color: rgba(53, 242, 155, 0.28);
+      background: rgba(53, 242, 155, 0.07);
+      box-shadow: inset 0 0 24px rgba(53, 242, 155, 0.06);
+    }
+    .risk-box.stable .risk,
+    .risk-box.stable .en {
+      color: var(--green);
+      text-shadow: 0 0 12px rgba(53, 242, 155, 0.28);
+    }
+    .risk-box.medium {
+      border-color: rgba(248, 184, 78, 0.30);
+      background: rgba(248, 184, 78, 0.08);
+      box-shadow: inset 0 0 24px rgba(248, 184, 78, 0.06);
+    }
+    .risk-box.medium .risk,
+    .risk-box.medium .en {
+      color: var(--amber);
+      text-shadow: 0 0 12px rgba(248, 184, 78, 0.26);
+    }
 
     .assessment {
       color: var(--text-dim);
@@ -651,6 +703,7 @@
       gap: 8px;
       height: calc(100% - 34px);
       min-height: 0;
+      overflow: hidden;
     }
 
     .mode-list {
@@ -705,6 +758,13 @@
     .mode-table div:nth-child(6n) { border-right: 0; }
     .mode-table .num { color: var(--red); font-weight: 800; }
     .mode-table .good { color: var(--green); font-weight: 800; }
+    .mode-table .empty-cell {
+      grid-column: 1 / -1;
+      color: var(--text-faint);
+      border-right: 0;
+      text-align: center;
+      padding: 10px 6px;
+    }
 
     .mesh-panel {
       min-width: 0;
@@ -1407,7 +1467,7 @@
     .timeline {
       height: calc(100% - 34px);
       position: relative;
-      padding: 8px 12px 2px 42px;
+      padding: 8px 12px 2px 54px;
     }
 
     .timeline svg {
@@ -1421,7 +1481,7 @@
       left: 0;
       top: 16px;
       bottom: 26px;
-      width: 38px;
+      width: 50px;
       display: grid;
       grid-template-rows: repeat(4, 1fr);
       align-items: center;
@@ -1541,6 +1601,20 @@
       pointer-events: none;
     }
 
+    .empty-screen {
+      height: 100%;
+      min-height: 80px;
+      display: grid;
+      place-items: center;
+      padding: 14px;
+      border: 1px dashed rgba(233, 251, 255, 0.16);
+      border-radius: 8px;
+      color: var(--text-faint);
+      font-size: 12px;
+      line-height: 1.45;
+      text-align: center;
+    }
+
     .three-mesh-stage {
       position: absolute;
       inset: 0;
@@ -1632,7 +1706,7 @@
       font-weight: 900;
     }
 
-    .three-fallback {
+    .three-empty {
       display: none;
       position: absolute;
       inset: 0;
@@ -1663,6 +1737,12 @@
       font-size: 12px;
       pointer-events: none;
       opacity: 0.92;
+      min-width: 0;
+    }
+
+    .mesh-meta-line span {
+      min-width: 0;
+      white-space: nowrap;
     }
 
     .mesh-meta-line b {
@@ -1886,7 +1966,8 @@
       }
 
       .gauge .small {
-        font-size: 10px;
+        font-size: 9.5px;
+        line-height: 1.08;
       }
 
       .risk-box {
@@ -2091,6 +2172,591 @@
       }
     }
 
+    /* ===== Production fit: prevent text clipping and panel overlap on projectors/laptops ===== */
+    .header,
+    .header-right,
+    .kpi,
+    .panel,
+    .panel-header,
+    .alert,
+    .rule,
+    .stage,
+    .mini-table div,
+    .mode-item,
+    .three-label {
+      min-width: 0;
+    }
+
+    .panel-header .left,
+    .mesh-head .left,
+    .alert-type,
+    .reason,
+    .rule-name code,
+    .mode-item span:nth-child(2),
+    .stage .name,
+    .stage .p,
+    .mini-tip .api-metric,
+    .mesh-meta-line span,
+    .three-label .node-name,
+    .three-label .node-line {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .panel-header .left,
+    .mesh-head .left,
+    .three-label .node-name,
+    .three-label .node-line {
+      white-space: nowrap;
+    }
+
+    .alert-stream,
+    .rules,
+    .attack-chain,
+    .mode-wrap,
+    .timeline {
+      min-height: 0;
+    }
+
+    .alert-stream,
+    .rules {
+      overflow: hidden;
+    }
+
+    .header-actions {
+      min-width: 0;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .header-actions button {
+      height: 30px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
+
+    .kpi-num {
+      font-size: clamp(19px, 1.42vw, 30px);
+    }
+
+    .mesh-state-inline {
+      max-width: min(620px, 48vw);
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mesh-meta-line {
+      overflow: hidden;
+    }
+
+    .three-label {
+      max-width: 150px;
+    }
+
+    .three-label.core {
+      max-width: 172px;
+    }
+
+    .mini-table,
+    .mode-table {
+      overflow: hidden;
+    }
+
+    .mini-table div,
+    .mode-table div {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 1680px) {
+      .header {
+        grid-template-columns: minmax(260px, 1fr) minmax(300px, 0.72fr) minmax(520px, 1.3fr);
+      }
+
+      .header-right {
+        grid-template-columns: minmax(132px, 1fr) minmax(88px, 0.7fr) minmax(92px, 0.7fr) minmax(96px, 0.7fr) minmax(250px, auto);
+        gap: 7px;
+      }
+
+      .h-stat {
+        padding-left: 9px;
+      }
+    }
+
+    @media (max-width: 1366px), (max-height: 820px) {
+      .app {
+        grid-template-rows: 56px 88px minmax(0, 1fr) 138px;
+        gap: 7px;
+        padding: 8px;
+      }
+
+      .header {
+        grid-template-columns: minmax(260px, 1fr) minmax(250px, 0.74fr) minmax(430px, 1.22fr);
+        gap: 8px;
+      }
+
+      .logo {
+        width: 40px;
+        height: 40px;
+      }
+
+      .logo::before {
+        width: 25px;
+        height: 25px;
+        font-size: 16px;
+      }
+
+      .title {
+        font-size: 20px;
+      }
+
+      .subtitle {
+        display: none;
+      }
+
+      .defense-banner {
+        height: 48px;
+      }
+
+      .defense-main {
+        font-size: 17px;
+        gap: 8px;
+      }
+
+      .defense-sub {
+        display: none;
+      }
+
+      .shield-icon {
+        width: 22px;
+        height: 22px;
+      }
+
+      .header-right {
+        grid-template-columns: minmax(104px, 1fr) minmax(76px, 0.55fr) minmax(68px, 0.5fr) minmax(190px, auto);
+        gap: 5px;
+        font-size: 11px;
+      }
+
+      .header-right .h-stat:nth-child(4) {
+        display: none;
+      }
+
+      .h-stat .label {
+        font-size: 9px;
+        margin-bottom: 2px;
+      }
+
+      .h-stat .value {
+        font-size: 11px;
+      }
+
+      .header-actions button {
+        height: 26px;
+        padding: 0 7px;
+        font-size: 11px;
+      }
+
+      .kpis {
+        gap: 6px;
+      }
+
+      .kpi {
+        padding: 7px 8px;
+        grid-template-columns: 28px minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) 16px;
+        gap: 1px 6px;
+      }
+
+      .kpi-icon {
+        width: 28px;
+        height: 28px;
+        font-size: 15px;
+      }
+
+      .kpi-num {
+        font-size: 18px;
+      }
+
+      .kpi-label-cn {
+        font-size: 10.5px;
+      }
+
+      .kpi-label-en {
+        display: none;
+      }
+
+      .trend {
+        font-size: 9px;
+        line-height: 1.1;
+      }
+
+      .trend span span {
+        display: none;
+      }
+
+      .spark {
+        height: 14px;
+      }
+
+      .main-grid {
+        grid-template-columns: minmax(230px, 23%) minmax(0, 1fr) minmax(250px, 24%);
+        gap: 7px;
+      }
+
+      .bottom-grid {
+        grid-template-columns: minmax(310px, 1.05fr) minmax(250px, 0.85fr) minmax(360px, 1.34fr);
+        gap: 7px;
+      }
+
+      .panel {
+        padding: 7px 8px;
+        border-radius: 10px;
+      }
+
+      .panel-header {
+        height: 18px;
+        margin-bottom: 5px;
+        gap: 8px;
+        font-size: 12px;
+      }
+
+      .panel-header small {
+        font-size: 9px;
+      }
+
+      .left-col {
+        gap: 7px;
+        grid-template-rows: minmax(132px, 0.9fr) minmax(132px, 0.86fr) minmax(140px, 0.9fr);
+      }
+
+      .posture {
+        grid-template-columns: 84px minmax(0, 1fr);
+      }
+
+      .gauge {
+        width: 82px;
+      }
+
+      .gauge .big {
+        font-size: 20px;
+      }
+
+      .gauge .slash {
+        font-size: 10px;
+      }
+
+      .gauge .small {
+        font-size: 8px;
+        line-height: 1.05;
+      }
+
+      .risk-box {
+        padding: 7px;
+      }
+
+      .risk-box .label,
+      .risk-box .en,
+      .running {
+        display: none;
+      }
+
+      .risk-box .risk {
+        font-size: 16px;
+      }
+
+      .assessment {
+        margin-top: 5px;
+        font-size: 10px;
+        line-height: 1.35;
+        -webkit-line-clamp: 2;
+      }
+
+      .bar-row {
+        grid-template-columns: 86px minmax(0, 1fr) 30px 30px;
+        gap: 5px;
+        min-height: 15px;
+        font-size: 9.8px;
+      }
+
+      .legend {
+        display: none;
+      }
+
+      .mode-wrap {
+        height: calc(100% - 22px);
+        grid-template-columns: 0.8fr 1fr;
+      }
+
+      .mode-list {
+        gap: 3px;
+        font-size: 9.8px;
+      }
+
+      .mode-item {
+        grid-template-columns: 8px minmax(0, 1fr) 24px;
+        gap: 4px;
+      }
+
+      .radar svg {
+        min-height: 92px;
+      }
+
+      .mode-table {
+        display: none;
+      }
+
+      .mesh-canvas-three {
+        height: calc(100% - 24px);
+      }
+
+      .mesh-state-inline {
+        max-width: 40vw;
+        padding: 2px 6px;
+        font-size: 9px;
+      }
+
+      .mesh-head small {
+        display: none;
+      }
+
+      .mesh-meta-line {
+        left: 8px;
+        right: 48px;
+        bottom: 7px;
+        min-height: 24px;
+        padding: 5px 7px;
+        gap: 8px;
+        font-size: 9px;
+      }
+
+      .mesh-meta-line span:nth-child(n+4) {
+        display: none;
+      }
+
+      .mesh-tools {
+        right: 9px;
+        bottom: 7px;
+        gap: 4px;
+      }
+
+      .mesh-tools button {
+        width: 28px;
+        height: 28px;
+        font-size: 14px;
+      }
+
+      .three-label {
+        max-width: 112px;
+        min-width: 82px;
+        padding: 4px 5px;
+      }
+
+      .three-label.low {
+        display: none;
+      }
+
+      .three-label .node-name {
+        font-size: 9.5px;
+      }
+
+      .three-label .node-line {
+        font-size: 8.5px;
+      }
+
+      .three-label .node-num {
+        font-size: 10px;
+      }
+
+      .alert-stream {
+        height: calc(100% - 23px);
+        gap: 5px;
+      }
+
+      .alert {
+        min-height: 0;
+        padding: 6px 7px 6px 9px;
+      }
+
+      .alert:nth-of-type(n+5) {
+        display: none;
+      }
+
+      .alert-top {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 5px;
+      }
+
+      .badge {
+        font-size: 8px;
+        padding: 2px 4px;
+      }
+
+      .alert-type {
+        font-size: 10.5px;
+      }
+
+      .alert-time {
+        font-size: 9px;
+      }
+
+      .alert-mid,
+      .reason {
+        margin-top: 4px;
+        font-size: 9px;
+      }
+
+      .attack-chain {
+        height: calc(100% - 23px);
+        gap: 5px;
+      }
+
+      .stage {
+        min-height: 42px;
+        padding: 5px 3px;
+        margin-left: -7px;
+        clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%, 12px 50%);
+      }
+
+      .stage .n {
+        font-size: 13px;
+      }
+
+      .stage .p,
+      .stage .name {
+        font-size: 8.5px;
+      }
+
+      .mini-table {
+        font-size: 8.5px;
+      }
+
+      .mini-table div {
+        padding: 3px 2px;
+      }
+
+      .rules {
+        height: calc(100% - 23px);
+        gap: 5px;
+      }
+
+      .rule,
+      .rules-head {
+        grid-template-columns: minmax(0, 1fr) 44px 42px;
+        gap: 6px;
+        font-size: 8.8px;
+      }
+
+      .rule-index {
+        width: 15px;
+        height: 15px;
+        font-size: 9px;
+      }
+
+      .hit-bar {
+        height: 6px;
+        margin-top: 2px;
+      }
+
+      .rule-link {
+        display: none;
+      }
+
+      .timeline {
+        height: calc(100% - 23px);
+        padding: 4px 8px 0 34px;
+      }
+
+      .timeline-labels {
+        width: 38px;
+        font-size: 9px;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      html, body {
+        overflow: auto;
+      }
+
+      .app {
+        width: 1180px;
+        min-width: 1180px;
+        height: 760px;
+        min-height: 760px;
+      }
+
+      .header {
+        grid-template-columns: 348px 280px minmax(520px, 1fr);
+        gap: 7px;
+      }
+
+      .brand {
+        gap: 8px;
+      }
+
+      .logo {
+        width: 38px;
+        height: 38px;
+      }
+
+      .logo::before {
+        width: 23px;
+        height: 23px;
+        font-size: 15px;
+      }
+
+      .title {
+        font-size: 19px;
+      }
+
+      .defense-main {
+        font-size: 15px;
+        letter-spacing: 0.05em;
+      }
+
+      .shield-icon {
+        width: 20px;
+        height: 20px;
+      }
+    }
+
+    @media (max-width: 1280px), (max-height: 780px) {
+      .header {
+        grid-template-columns: minmax(190px, 0.8fr) minmax(220px, 0.7fr) minmax(390px, 1.24fr);
+      }
+
+      .header-actions {
+        gap: 5px;
+      }
+
+      .mesh-state-inline {
+        display: none;
+      }
+    }
+
+    @media (max-width: 1366px) {
+      .mesh-head .left > span:nth-child(2) {
+        max-width: 470px;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .header {
+        grid-template-columns: 348px 280px minmax(520px, 1fr);
+        gap: 7px;
+      }
+
+      .brand {
+        gap: 8px;
+      }
+
+      .title {
+        font-size: 19px;
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -2114,9 +2780,9 @@
               <path d="M12 2.8 19.2 6v5.2c0 4.6-2.9 8.8-7.2 10-4.3-1.2-7.2-5.4-7.2-10V6L12 2.8Z"></path>
               <path d="m8.4 12 2.3 2.3 5-5"></path>
             </svg>
-            FULL DEFENSE ACTIVE
+            REAL DEFENSE ACTIVE
           </div>
-          <div class="defense-sub">全防御模式已激活 · 所有防护能力运行正常</div>
+          <div class="defense-sub">真实审计链路在线 · 策略、工具调用与 OpenClaw 记录持续汇总</div>
         </div>
       </section>
 
@@ -2127,7 +2793,7 @@
         </div>
         <div class="h-stat">
           <div class="label">运行模式</div>
-          <div class="value ok" id="runtimeMode">FULL DEFENSE</div>
+          <div class="value ok" id="runtimeMode">REAL / API</div>
         </div>
         <div class="h-stat">
           <div class="label">连接状态</div>
@@ -2138,11 +2804,10 @@
           <div class="value ok" id="refreshState"><span class="dot"></span> 实时刷新</div>
         </div>
         <div class="header-actions">
-          <button id="backBtn" type="button">返回控制台</button>
-          <button id="demoBtn" type="button">演示数据</button>
-          <button id="realBtn" class="active" type="button">真实数据</button>
-          <button id="pauseBtn" type="button">暂停刷新</button>
-          <button id="fullscreenBtn" type="button">全屏</button>
+          <button id="backBtn" type="button" title="返回控制台">控制台</button>
+          <button id="realBtn" class="active" type="button" title="切换到真实数据">真实</button>
+          <button id="pauseBtn" type="button" title="暂停或恢复刷新">暂停</button>
+          <button id="fullscreenBtn" type="button" title="进入或退出全屏">全屏</button>
         </div>
       </section>
     </header>
@@ -2170,18 +2835,18 @@
                 </defs>
               </svg>
               <div class="value">
-                <div><span class="big" id="protectionIndex">92</span><span class="slash">/100</span></div>
+                <div><span class="big" id="protectionIndex">0</span><span class="slash">/100</span></div>
                 <div class="small">防护指数<br/>Protection Index</div>
               </div>
             </div>
-            <div class="risk-box">
+            <div class="risk-box stable" id="riskBox">
               <div class="label">风险等级</div>
-              <div class="risk" id="riskLevel">高风险</div>
-              <div class="en">HIGH RISK</div>
+              <div class="risk" id="riskLevel">暂无数据</div>
+              <div class="en" id="riskLevelEn">NO DATA</div>
             </div>
           </div>
           <div class="assessment" id="assessment">
-            检测到多起高危行为尝试，攻击面活跃。系统已成功拦截 6 个高危事件，关键策略命中率保持稳定。建议持续关注工具滥用与提示注入风险。
+            等待真实审计事件进入 AgentSentry。运行实验用例后，系统会自动汇总工具调用、策略裁决、OpenClaw 记录和阻断结果。
           </div>
           <div class="running">防护状态：<span class="dot"></span> 稳定运行</div>
         </section>
@@ -2203,16 +2868,12 @@
         <section class="panel">
           <div class="panel-header">
             <div class="left">C. Defense Modes 对比</div>
-            <small>今日风险评分（越低越好）</small>
+            <small>风险评分</small>
           </div>
           <div class="mode-wrap">
             <div class="mode-list" id="modeList"></div>
             <div class="radar" id="radarChart"></div>
-            <div class="mode-table">
-              <div>阶段</div><div>输入污染</div><div>认知偏移</div><div>决策越界</div><div>工具执行</div><div>数据外泄</div>
-              <div>高危事件数</div><div class="num">231</div><div class="num">187</div><div class="num">142</div><div class="num">326</div><div class="num">132</div>
-              <div>拦截成功率</div><div class="good">92%</div><div class="good">89%</div><div class="good">86%</div><div class="good">93%</div><div class="good">95%</div>
-            </div>
+            <div class="mode-table" id="modeStageTable"></div>
           </div>
         </section>
       </aside>
@@ -2221,9 +2882,9 @@
         <div class="panel-header mesh-head">
           <div class="left">
             <span class="diamond"></span>
-            <span>Agent 行为安全拓扑 / Live Agent Security Mesh</span>
+            <span title="Live Agent Security Mesh">Agent 行为安全拓扑</span>
             <span class="mesh-state-inline">
-              风险活动密集 · 防护指数 <b id="meshProtection">92</b> · <strong id="meshBlocks">6</strong> 个高危行为已拦截 · 较昨日 ▲ 7 分
+              <span id="meshStateText">等待真实审计事件</span> · 防护指数 <b id="meshProtection">0</b> · 已阻断 <strong id="meshBlocks">0</strong>
             </span>
           </div>
           <small>
@@ -2237,7 +2898,7 @@
         <div class="mesh-canvas mesh-canvas-three" id="meshCanvas">
           <div id="threeMesh" class="three-mesh-stage" data-tip="Three.js 3D Agent Security Mesh：中心 Agent Runtime、外围工具节点、3D 风险路径、污染传播粒子与拦截路径。"></div>
           <div id="threeLabels" class="three-label-layer"></div>
-          <div id="threeFallback" class="three-fallback">
+          <div id="threeSceneEmpty" class="three-empty">
             <div>
               <b>Three.js 未加载</b><br/>
               请确认网络可访问 CDN，或把 three.min.js 放到本地后替换脚本地址。
@@ -2245,10 +2906,10 @@
           </div>
           <div class="mesh-meta-line">
             <span><b>API 调用流</b></span>
-            <span>调用频率 <b style="color:var(--cyan)">2,478 次</b></span>
-            <span>成功率 <b style="color:var(--green)">98.1%</b></span>
-            <span>污染事件 <b style="color:var(--red)">3</b></span>
-            <span>策略命中 <b style="color:var(--amber)">12</b></span>
+            <span>调用频率 <b id="meshApiCalls" style="color:var(--cyan)">0 次</b></span>
+            <span>未阻断率 <b id="meshSuccessRate" style="color:var(--green)">0.0%</b></span>
+            <span>污染事件 <b id="meshPollutionEvents" style="color:var(--red)">0</b></span>
+            <span>策略命中 <b id="meshPolicyHits" style="color:var(--amber)">0</b></span>
           </div>
           <div class="mesh-tools">
             <button type="button" id="meshZoomIn" title="Zoom in">+</button>
@@ -2317,93 +2978,70 @@
     const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
     const state = {
-      useDemo: false,
       paused: false,
       refreshMs: 3200,
       tick: 0,
       data: null,
       interval: null
     };
-    const dataSource = "fastapi";
+    const dataSource = "real";
 
     const baseData = {
       metrics: [
-        { key: "total", icon: "⌁", num: 128543, cn: "总事件数", en: "Total Events", trend: 12.6, type: "cyan" },
-        { key: "blocks", icon: "⬟", num: 326, cn: "高危拦截", en: "High Risk Blocks", trend: 18.3, type: "red" },
-        { key: "tools", icon: "⚒", num: 8762, cn: "工具调用", en: "Tool Calls", trend: 9.2, type: "cyan" },
-        { key: "taint", icon: "☣", num: 1243, cn: "污染传播", en: "Taint Flows", trend: 21.7, type: "amber" },
-        { key: "drift", icon: "⌖", num: 187, cn: "意图漂移", en: "Drift Alerts", trend: 15.4, type: "amber" },
-        { key: "memory", icon: "🧠", num: 72, cn: "记忆投毒", en: "Memory Poisoning", trend: 11.8, type: "red" },
-        { key: "allowed", icon: "✓", num: 6892, cn: "策略放行", en: "Allowed", trend: 8.7, type: "green" },
-        { key: "pending", icon: "?", num: 154, cn: "待审批", en: "Ask / Pending", trend: 6.2, type: "amber" }
+        { key: "total", icon: "⌁", num: 0, cn: "总事件数", en: "Total Events", trend: 0, type: "cyan" },
+        { key: "blocks", icon: "⬟", num: 0, cn: "高危拦截", en: "High Risk Blocks", trend: 0, type: "red" },
+        { key: "tools", icon: "⚒", num: 0, cn: "工具调用", en: "Tool Calls", trend: 0, type: "cyan" },
+        { key: "taint", icon: "☣", num: 0, cn: "污染传播", en: "Taint Flows", trend: 0, type: "amber" },
+        { key: "drift", icon: "⌖", num: 0, cn: "意图漂移", en: "Drift Alerts", trend: 0, type: "amber" },
+        { key: "memory", icon: "◇", num: 0, cn: "记忆投毒", en: "Memory Poisoning", trend: 0, type: "red" },
+        { key: "allowed", icon: "✓", num: 0, cn: "策略放行", en: "Allowed", trend: 0, type: "green" },
+        { key: "pending", icon: "?", num: 0, cn: "待审批", en: "Ask / Pending", trend: 0, type: "amber" }
       ],
-      lifecycle: [
-        ["Foundation", 89, 2145],
-        ["Input Sanitization", 93, 3847],
-        ["Cognition Protection", 91, 2632],
-        ["Decision Alignment", 88, 1523],
-        ["Execution Control", 95, 1856]
-      ],
-      modes: [
-        ["full（当前）", 18, "#35f29b"],
-        ["no_deterministic", 52, "#f8b84e"],
-        ["no_sentry", 74, "#ff4d5e"],
-        ["no_feedback", 63, "#a77cff"],
-        ["none", 92, "#b64045"]
-      ],
-      alerts: [
-        { severity: "CRITICAL", type: "Prompt Injection", tool: "webpage", action: "BLOCK", time: "14:32:38", reason: "检测到提示注入攻击尝试，包含越权指令模式" },
-        { severity: "HIGH", type: "Tool Abuse", tool: "shell", action: "BLOCK", time: "14:32:21", reason: "检测到可疑命令执行尝试，涉及系统级操作" },
-        { severity: "MEDIUM", type: "Memory Poisoning", tool: "memory", action: "ASK", time: "14:32:07", reason: "检测到潜在记忆投毒内容，已提交人工审批" },
-        { severity: "HIGH", type: "Suspicious Sink", tool: "email", action: "BLOCK", time: "14:31:52", reason: "检测到敏感数据外发风险，命中外泄策略" },
-        { severity: "INFO", type: "Intent Drift", tool: "search", action: "ALLOW", time: "14:31:36", reason: "检测到意图偏移，已自动纠偏并继续执行" },
-        { severity: "MEDIUM", type: "Tool Abuse", tool: "write_file", action: "ASK", time: "14:31:18", reason: "写入敏感路径尝试，需人工确认" }
-      ],
-      stages: [
-        ["输入污染", 2345, "23.1%", 234, "92%"],
-        ["认知偏移", 1876, "18.5%", 187, "89%"],
-        ["决策越界", 1243, "12.2%", 142, "86%"],
-        ["工具执行", 3842, "37.8%", 326, "93%"],
-        ["数据外泄", 1126, "11.1%", 132, "95%"]
-      ],
-      rules: [
-        ["block_prompt_injection", 1842, 94.2],
-        ["suspicious_sink_guard", 1567, 92.1],
-        ["taint_output_gate", 1234, 91.0],
-        ["memory_poisoning_watch", 876, 88.3],
-        ["tool_scope_enforcer", 764, 87.6]
-      ],
-      protectionIndex: 92,
-      blockedHighRisk: 6
+      lifecycle: [["Foundation", 0, 0], ["Input Sanitization", 0, 0], ["Cognition Protection", 0, 0], ["Decision Alignment", 0, 0], ["Execution Control", 0, 0]],
+      modes: [["full（当前）", 0, "#35f29b", [0, 0, 0, 0, 0]], ["no_deterministic", 0, "#f8b84e", [0, 0, 0, 0, 0]], ["no_sentry", 0, "#ff4d5e", [0, 0, 0, 0, 0]], ["no_feedback", 0, "#a77cff", [0, 0, 0, 0, 0]], ["none", 0, "#b64045", [0, 0, 0, 0, 0]]],
+      alerts: [],
+      alertCount: 0,
+      stages: [["输入污染", 0, "0.0%", 0, "0%"], ["认知偏移", 0, "0.0%", 0, "0%"], ["决策越界", 0, "0.0%", 0, "0%"], ["工具执行", 0, "0.0%", 0, "0%"], ["数据外泄", 0, "0.0%", 0, "0%"]],
+      rules: [],
+      timeline: [],
+      timelineCounts: { block: 0, ask: 0, allow: 0, info: 0 },
+      timelineLabels: ["开始", "", "", "", "", "", "", "现在"],
+      nodes: [],
+      meshMeta: { api_calls: 0, success_rate: 0, pollution_events: 0, policy_hits: 0, decision_events: 0 },
+      protectionIndex: 0,
+      blockedHighRisk: 0,
+      summary: "",
+      recentOperations: [],
+      runs: []
     };
 
     function clone(obj) {
       return JSON.parse(JSON.stringify(obj));
     }
 
-    function jitterData(data) {
-      const d = clone(data);
-      const now = new Date();
-      d.metrics.forEach(m => {
-        const amp = m.type === "red" ? 8 : m.type === "amber" ? 16 : 42;
-        m.num = Math.max(0, m.num + Math.round((Math.random() - 0.42) * amp));
-        m.trend = Math.max(0.5, +(m.trend + (Math.random() - 0.5) * 1.2).toFixed(1));
+    function emptyData(message = "真实态势 API 暂不可用，当前不展示统计。请检查 8000 服务、SQLite 事件库和 OpenClaw 插件记录源。") {
+      const d = clone(baseData);
+      d.metrics.forEach(metric => {
+        metric.num = 0;
+        metric.trend = 0;
       });
-      d.protectionIndex = Math.max(76, Math.min(98, d.protectionIndex + Math.round((Math.random() - 0.46) * 3)));
-      d.blockedHighRisk = Math.max(2, Math.min(12, d.blockedHighRisk + (Math.random() > 0.68 ? 1 : 0)));
-
-      const candidates = [
-        ["CRITICAL", "Prompt Injection", "webpage", "BLOCK", "检测到越权指令与角色逃逸组合载荷"],
-        ["HIGH", "Suspicious Sink", "email", "BLOCK", "敏感上下文准备外发，命中 sink guard"],
-        ["HIGH", "Tool Abuse", "shell", "BLOCK", "检测到系统级命令执行尝试"],
-        ["MEDIUM", "Memory Poisoning", "memory", "ASK", "长期记忆写入内容包含异常指令"],
-        ["MEDIUM", "Intent Drift", "search", "ASK", "任务意图偏离原始授权边界"],
-        ["INFO", "Policy Allow", "api", "ALLOW", "工具调用在策略允许范围内完成"]
-      ];
-      const pick = candidates[Math.floor(Math.random() * candidates.length)];
-      const hms = now.toTimeString().slice(0, 8);
-      d.alerts.unshift({ severity: pick[0], type: pick[1], tool: pick[2], action: pick[3], time: hms, reason: pick[4] });
-      d.alerts = d.alerts.slice(0, 6);
+      d.lifecycle = d.lifecycle.map(([name]) => [name, 0, 0]);
+      d.modes = d.modes.map(([name, , color]) => [name, 0, color, [0, 0, 0, 0, 0]]);
+      d.alerts = [];
+      d.alertCount = 0;
+      d.stages = d.stages.map(([name]) => [name, 0, "0.0%", 0, "0%"]);
+      d.rules = [];
+      d.timeline = [];
+      d.timelineCounts = { block: 0, ask: 0, allow: 0, info: 0 };
+      d.timelineLabels = ["开始", "", "", "", "", "", "", "现在"];
+      d.nodes = [];
+      d.meshMeta = { api_calls: 0, success_rate: 0, pollution_events: 0, policy_hits: 0, decision_events: 0 };
+      d.protectionIndex = 0;
+      d.blockedHighRisk = 0;
+      d.summary = message;
+      d.recentOperations = [];
+      d.runs = [];
+      d.source = { local_event_count: 0, openclaw_event_count: 0, openclaw_available: false };
       return d;
     }
 
@@ -2411,6 +3049,23 @@
       const res = await fetch(url, { headers: { "Accept": "application/json" }, cache: "no-store" });
       if (!res.ok) throw new Error(url + " " + res.status);
       return res.json();
+    }
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function fetchOverviewWithRetry(attempts = 3) {
+      let lastError;
+      for (let i = 0; i < attempts; i += 1) {
+        try {
+          return await fetchJson("/api/security/overview");
+        } catch (err) {
+          lastError = err;
+          if (i < attempts - 1) await sleep(350 * (i + 1));
+        }
+      }
+      throw lastError;
     }
 
     function escapeHtml(value) {
@@ -2423,306 +3078,20 @@
       })[ch]);
     }
 
-    function listFrom(raw, keys) {
-      if (Array.isArray(raw)) return raw;
-      for (const key of keys) {
-        if (Array.isArray(raw?.[key])) return raw[key];
-      }
-      return [];
-    }
-
-    function payloadOf(item) {
-      return item?.payload && typeof item.payload === "object" ? item.payload : {};
-    }
-
-    function textOf(item) {
-      try {
-        return JSON.stringify(item || {}).toLowerCase();
-      } catch {
-        return String(item || "").toLowerCase();
-      }
-    }
-
-    function clampNum(value, min, max) {
-      return Math.max(min, Math.min(max, value));
-    }
-
-    function scoreOf(item) {
-      const p = payloadOf(item);
-      return Number(p.risk_score ?? p.score ?? p.sentry_score ?? item?.risk_score ?? 0) || 0;
-    }
-
-    function actionOfEvent(item) {
-      const p = payloadOf(item);
-      const raw = String(p.decision ?? p.verdict ?? p.action ?? p.original_decision ?? item?.decision ?? "").toLowerCase();
-      const severity = String(p.severity ?? item?.severity ?? "").toLowerCase();
-      if (/deny|block|blocked|danger/.test(raw) || severity === "danger") return "BLOCK";
-      if (/ask|approval|pending|review|require/.test(raw) || severity === "warning") return "ASK";
-      return "ALLOW";
-    }
-
-    function severityOfEvent(item) {
-      const action = actionOfEvent(item);
-      const text = textOf(item);
-      const severity = String(payloadOf(item).severity ?? item?.severity ?? "").toLowerCase();
-      const score = scoreOf(item);
-      if (text.includes("critical") || score >= 95) return "CRITICAL";
-      if (action === "BLOCK" || severity === "danger" || text.includes("high") || text.includes("高危") || score >= 80) return "HIGH";
-      if (action === "ASK" || severity === "warning" || text.includes("medium") || text.includes("中危") || score >= 45) return "MEDIUM";
-      return "INFO";
-    }
-
-    function toolOfEvent(item) {
-      const p = payloadOf(item);
-      const raw = String(p.tool ?? p.toolName ?? p.normalized_tool ?? p.sink ?? item?.tool ?? item?.tool_name ?? item?.name ?? "").trim();
-      const text = `${raw} ${textOf(item)}`.toLowerCase();
-      if (/webpage|web_page|read_web|browser|url/.test(text)) return "webpage";
-      if (/send_email|email|mail/.test(text)) return "email";
-      if (/write_file/.test(text)) return "write_file";
-      if (/read_file/.test(text)) return "read_file";
-      if (/\bfile\b|filesystem/.test(text)) return "file";
-      if (/memory|poison/.test(text)) return "memory";
-      if (/shell|bash|command|cmd/.test(text)) return "shell";
-      if (/call_api|\bapi\b|http/.test(text)) return "api";
-      if (/search/.test(text)) return "search";
-      if (/sqlite|database|event store/.test(text)) return "database";
-      return raw || "agent";
-    }
-
-    function typeOfEvent(item) {
-      const text = textOf(item);
-      if (/prompt|injection|jailbreak|override|system prompt/.test(text)) return "Prompt Injection";
-      if (/sink|secret|exfil|leak|email|外泄|敏感/.test(text)) return "Suspicious Sink";
-      if (/memory.*poison|poison.*memory|memory_poison|长期记忆/.test(text)) return "Memory Poisoning";
-      if (/drift|intent|taskspec|deviat|越权|偏离/.test(text)) return "Intent Drift";
-      if (/tool|shell|write_file|read_file|call_api|工具/.test(text)) return "Tool Abuse";
-      if (/foundation/.test(text)) return "Foundation Scan";
-      return "Policy Event";
-    }
-
-    function reasonOfEvent(item) {
-      const p = payloadOf(item);
-      const raw = p.reason
-        || p.summary
-        || (Array.isArray(p.violations) ? p.violations.join("; ") : "")
-        || (Array.isArray(p.reasons) ? p.reasons.join("; ") : "")
-        || item?.summary
-        || item?.message
-        || item?.detail
-        || item?.description
-        || item?.title
-        || item?.type
-        || "事件命中 AgentSentry 策略，已完成实时裁决";
-      const text = String(raw).replace(/\s+/g, " ").trim();
-      return text.length > 128 ? `${text.slice(0, 127)}…` : text;
-    }
-
-    function timeOfEvent(item, index = 0) {
-      const raw = item?.timestamp || item?.time || item?.created_at || payloadOf(item).created_at;
-      if (!raw) return new Date(Date.now() - index * 19000).toTimeString().slice(0, 8);
-      const date = new Date(raw);
-      if (!Number.isNaN(date.getTime())) return date.toTimeString().slice(0, 8);
-      return String(raw).slice(-8);
-    }
-
-    function layerOfEvent(item) {
-      const p = payloadOf(item);
-      const raw = String(p.layer || item?.layer || item?.type || "").toLowerCase();
-      const text = textOf(item);
-      if (raw.includes("foundation")) return "Foundation";
-      if (raw.includes("input") || /prompt|injection|sanitize/.test(text)) return "Input Sanitization";
-      if (raw.includes("cognition") || raw.includes("sentry") || /memory|assistant|response|poison/.test(text)) return "Cognition Protection";
-      if (raw.includes("decision") || /taskspec|intent|policy|alignment|approval/.test(text)) return "Decision Alignment";
-      return "Execution Control";
-    }
-
-    function ruleNameForEvent(item) {
-      const text = textOf(item);
-      const p = payloadOf(item);
-      if (p.rule || p.policy_rule) return String(p.rule || p.policy_rule);
-      if (/prompt|injection|jailbreak|override/.test(text)) return "block_prompt_injection";
-      if (/sink|secret|email|exfil|leak|confidential/.test(text)) return "suspicious_sink_guard";
-      if (/taint|untrusted|pollut|contaminated/.test(text)) return "taint_output_gate";
-      if (/memory.*poison|poison.*memory|memory_poison/.test(text)) return "memory_poisoning_watch";
-      if (/taskspec|deviat|outside|scope|tool/.test(text)) return "tool_scope_enforcer";
-      if (/foundation|hardcoded/.test(text)) return "foundation_semantic_scan";
-      if (/approval|cache/.test(text)) return "approval_cache_guard";
-      return "deterministic_policy_gate";
-    }
-
-    function normalizeEventRows(events, evals = [], cases = [], stats = null) {
-      const d = clone(baseData);
-      const rows = events.filter(Boolean);
-      const fallbackRows = rows.length ? rows : [...evals, ...cases].filter(Boolean);
-      const statTotal = Number(stats?.total || 0);
-      if (!fallbackRows.length && !statTotal) return jitterData(d);
-
-      const total = statTotal || rows.length || fallbackRows.length;
-      const blocks = rows.filter(item => actionOfEvent(item) === "BLOCK").length;
-      const asks = rows.filter(item => actionOfEvent(item) === "ASK").length;
-      const allows = rows.filter(item => actionOfEvent(item) === "ALLOW").length;
-      const high = rows.filter(item => ["CRITICAL", "HIGH"].includes(severityOfEvent(item))).length;
-      const toolCalls = rows.filter(item => /tool|call|file|email|api|webpage|shell|memory/i.test(`${item?.type || ""} ${textOf(item)}`)).length;
-      const taints = rows.filter(item => /taint|untrusted|pollut|contaminated/i.test(textOf(item))).length;
-      const drifts = rows.filter(item => /drift|intent|taskspec|deviat|越权|偏离/i.test(textOf(item))).length;
-      const memory = rows.filter(item => /memory|poison/i.test(textOf(item))).length;
-
-      d.metrics[0].num = total;
-      d.metrics[1].num = blocks || high;
-      d.metrics[2].num = toolCalls || Math.round(total * 0.48);
-      d.metrics[3].num = taints;
-      d.metrics[4].num = drifts;
-      d.metrics[5].num = memory;
-      d.metrics[6].num = allows || Math.max(0, total - blocks - asks);
-      d.metrics[7].num = asks;
-      d.metrics.forEach(metric => {
-        metric.trend = +(Math.max(0.5, Math.min(24, (metric.num / Math.max(total, 1)) * 100)).toFixed(1));
-      });
-
-      const pressure = ((blocks + asks + taints + drifts + memory) / Math.max(total, 1)) * 100;
-      d.protectionIndex = clampNum(88 + Math.round(blocks / Math.max(total, 1) * 36) - Math.round(pressure / 8), 72, 98);
-      d.blockedHighRisk = blocks || high;
-
-      const layerNames = baseData.lifecycle.map(([name]) => name);
-      d.lifecycle = layerNames.map((name, index) => {
-        const scoped = rows.filter(item => layerOfEvent(item) === name);
-        const risky = scoped.filter(item => actionOfEvent(item) !== "ALLOW" || severityOfEvent(item) !== "INFO").length;
-        const pct = scoped.length ? clampNum(96 - Math.round(risky / scoped.length * 18), 68, 99) : baseData.lifecycle[index][1];
-        return [name, pct, scoped.length];
-      });
-
-      const stageDefs = [
-        ["输入污染", /prompt|inject|taint|untrusted|webpage|input|pollut/i],
-        ["认知偏移", /cognition|assistant|response|memory|poison|drift/i],
-        ["决策越界", /decision|taskspec|policy|scope|intent|approval|越权/i],
-        ["工具执行", /tool|file|email|api|shell|webpage|call|write|read/i],
-        ["数据外泄", /sink|secret|email|exfil|leak|confidential|外泄|敏感/i]
-      ];
-      const stageRows = stageDefs.map(([name, pattern]) => {
-        const scoped = rows.filter(item => pattern.test(`${item?.type || ""} ${textOf(item)}`));
-        const blocked = scoped.filter(item => actionOfEvent(item) === "BLOCK").length;
-        const risky = scoped.filter(item => severityOfEvent(item) !== "INFO" || actionOfEvent(item) !== "ALLOW").length;
-        return { name, count: scoped.length, blocked, risky };
-      });
-      const stageTotal = stageRows.reduce((sum, item) => sum + item.count, 0) || 1;
-      d.stages = stageRows.map(item => [
-        item.name,
-        item.count,
-        `${(item.count / stageTotal * 100).toFixed(1)}%`,
-        item.risky,
-        `${clampNum(item.risky ? Math.round(item.blocked / item.risky * 100) : 96, 72, 99)}%`
-      ]);
-
-      const ruleCounts = new Map();
-      rows.forEach(item => {
-        if (actionOfEvent(item) !== "ALLOW" || /finding|alert|policy|tool|taint|foundation/i.test(String(item?.type || ""))) {
-          const name = ruleNameForEvent(item);
-          ruleCounts.set(name, (ruleCounts.get(name) || 0) + 1);
-        }
-      });
-      if (ruleCounts.size) {
-        d.rules = [...ruleCounts.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
-          .map(([name, hits], index) => [name, hits, +(clampNum(88 + hits / Math.max(total, 1) * 18 - index, 82, 99.4).toFixed(1))]);
-      }
-
-      const evalByMode = new Map();
-      evals.forEach(item => {
-        if (item?.defense_mode) evalByMode.set(item.defense_mode, item.metrics || {});
-      });
-      if (evalByMode.size) {
-        d.modes = baseData.modes.map(([label, score, color]) => {
-          const key = label.split("（")[0];
-          const metrics = evalByMode.get(key);
-          if (!metrics) return [label, score, color];
-          const risk = Math.round(Number(metrics.ASR ?? metrics["Bypass Rate"] ?? 0) * 100 + Number(metrics.FPR ?? 0) * 20);
-          return [label, clampNum(risk, 0, 99), color];
-        });
-      }
-
-      const alertRows = rows
-        .filter(item => actionOfEvent(item) !== "ALLOW" || severityOfEvent(item) !== "INFO" || /prompt|sink|poison|secret|taint|deviat|hardcoded/i.test(textOf(item)))
-        .sort((a, b) => new Date(b?.created_at || 0) - new Date(a?.created_at || 0));
-      const recent = (alertRows.length ? alertRows : rows).slice(0, 6);
-      d.alerts = recent.map((item, index) => ({
-        severity: severityOfEvent(item),
-        type: typeOfEvent(item),
-        tool: toolOfEvent(item),
-        action: actionOfEvent(item),
-        time: timeOfEvent(item, index),
-        reason: reasonOfEvent(item)
-      }));
-      d.alertCount = alertRows.length || d.alerts.length;
-      d.timelineCounts = {
-        block: Math.max(2, blocks),
-        ask: Math.max(2, asks),
-        allow: Math.max(2, allows),
-        info: Math.max(2, total - blocks - asks - allows)
-      };
-      return d;
-    }
-
-    function normalizeRealData(payloads) {
-      const [eventsRaw, evalRaw, casesRaw] = payloads;
-      const events = Array.isArray(eventsRaw) ? eventsRaw : (eventsRaw?.events || eventsRaw?.items || eventsRaw?.data || []);
-      const evals = Array.isArray(evalRaw) ? evalRaw : (evalRaw?.results || evalRaw?.items || evalRaw?.data || []);
-      const cases = Array.isArray(casesRaw) ? casesRaw : (casesRaw?.cases || casesRaw?.items || casesRaw?.data || []);
-      return normalizeEventRows(events, evals, cases);
-    }
-
-    function normalizeOpenClawData(recordsRaw, statsRaw) {
-      const records = listFrom(recordsRaw, ["records", "items", "data"]);
-      const events = records.map(record => {
-        const payload = record.payload && typeof record.payload === "object" ? record.payload : {};
-        return {
-          id: record.id,
-          run_id: record.run_id,
-          type: record.type,
-          layer: record.layer,
-          severity: record.severity,
-          title: record.title,
-          summary: record.summary,
-          created_at: record.created_at,
-          payload: {
-            ...payload,
-            layer: payload.layer || record.layer,
-            severity: record.severity,
-            title: record.title,
-            summary: record.summary,
-            reason: payload.reason || record.summary,
-            tool: payload.tool || payload.toolName || payload.normalized_tool || toolOfEvent(record)
-          }
-        };
-      });
-      const d = normalizeEventRows(events, [], [], statsRaw);
-      const severity = statsRaw?.bySeverity || {};
-      if (statsRaw?.total !== undefined) d.metrics[0].num = Number(statsRaw.total) || records.length;
-      if (severity.danger !== undefined) d.metrics[1].num = Number(severity.danger) || d.metrics[1].num;
-      if (severity.success !== undefined) d.metrics[6].num = Number(severity.success) || d.metrics[6].num;
-      if (severity.warning !== undefined) d.metrics[7].num = Number(severity.warning) || d.metrics[7].num;
-      return d;
-    }
-
     async function loadData() {
-      if (state.useDemo) {
-        state.data = jitterData(state.data || baseData);
-        renderAll(state.data);
-        return;
-      }
       try {
-        const requests = dataSource === "openclaw"
-          ? [fetchJson("/api/records?limit=2000"), fetchJson("/api/stats")]
-          : [fetchJson("/api/events?limit=1000"), fetchJson("/api/eval/results?limit=100"), fetchJson("/api/cases")];
-        const payloads = await Promise.allSettled(requests);
-        const values = payloads.map(p => p.status === "fulfilled" ? p.value : null);
-        state.data = dataSource === "openclaw"
-          ? normalizeOpenClawData(values[0] || { records: [] }, values[1] || {})
-          : normalizeRealData(values);
+        state.data = await fetchOverviewWithRetry();
         renderAll(state.data);
-        $("#runtimeMode").textContent = dataSource === "openclaw" ? "OPENCLAW PLUGIN" : "FASTAPI RUNTIME";
+        const source = state.data.source || {};
+        $("#runtimeMode").textContent = source.openclaw_available ? "OPENCLAW" : "API";
       } catch (err) {
-        state.data = jitterData(state.data || baseData);
+        if (state.data && metricValue(state.data, "total") > 0) {
+          $("#runtimeMode").textContent = "STALE";
+          renderAll(state.data);
+          return;
+        }
+        state.data = emptyData();
+        $("#runtimeMode").textContent = "NO API";
         renderAll(state.data);
       }
     }
@@ -2731,15 +3100,10 @@
       return Number(n).toLocaleString("en-US");
     }
 
-    function sparkline(seed, color) {
-      const points = [];
-      let y = 18 + (seed % 9);
-      for (let i = 0; i < 22; i++) {
-        y += (Math.random() - 0.42) * 8;
-        y = Math.max(4, Math.min(26, y));
-        points.push([i * 4.4, y]);
-      }
-      const d = points.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+    function trendLine(color, trend = 0) {
+      const startY = 15;
+      const endY = Number(trend) > 0 ? 7 : Number(trend) < 0 ? 23 : 15;
+      const d = `M0,${startY} L92,${endY}`;
       return `<svg class="spark" viewBox="0 0 92 30" preserveAspectRatio="none">
         <path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="${d} L92,30 L0,30 Z" fill="${color}" opacity="0.12"/>
@@ -2755,7 +3119,8 @@
       };
       $("#kpiStrip").innerHTML = data.metrics.map((m, i) => {
         const cls = m.type === "red" ? "red" : m.type === "amber" ? "amber" : m.type === "green" ? "green" : "";
-        const trendCls = m.type === "red" ? "red-text" : m.type === "amber" ? "amber-text" : m.type === "green" ? "green-text" : "";
+        const trendCls = Number(m.trend) < 0 ? "green-text" : m.type === "red" ? "red-text" : m.type === "amber" ? "amber-text" : m.type === "green" ? "green-text" : "";
+        const trendIcon = Number(m.trend) > 0 ? "▲" : Number(m.trend) < 0 ? "▼" : "■";
         return `<article class="kpi ${cls}">
           <div class="kpi-icon">${m.icon}</div>
           <div>
@@ -2764,8 +3129,8 @@
             <div class="kpi-label-en">${m.en}</div>
           </div>
           <div class="trend ${trendCls}">
-            <span>▲ ${m.trend}%<br><span style="color:var(--text-faint)">较昨日</span></span>
-            ${sparkline(i + state.tick, colors[m.type])}
+            <span>${trendIcon} ${Math.abs(Number(m.trend || 0)).toFixed(1)}%<br><span style="color:var(--text-faint)">近24h</span></span>
+            ${trendLine(colors[m.type], m.trend)}
           </div>
         </article>`;
       }).join("");
@@ -2803,7 +3168,7 @@
         </div>
       `).join("");
 
-      const axes = ["工具滥用", "提示注入", "数据泄漏", "越权执行", "意图漂移"];
+      const axes = ["攻击绕过", "误拦截", "危险释放", "检测缺口", "控制缺口"];
       const cx = 120, cy = 92, r = 72;
       const grid = [25, 50, 75, 100].map(v => {
         const pts = radarPolygon([v, v, v, v, v], cx, cy, r);
@@ -2819,11 +3184,28 @@
           <text x="${lx}" y="${ly}" fill="rgba(233,251,255,0.48)" font-size="10" text-anchor="middle">${a}</text>`;
       }).join("");
 
-      const shapes = data.modes.map(([, score, color], idx) => {
-        const vals = axes.map((_, i) => Math.max(8, Math.min(96, score + Math.sin(i + idx) * 14)));
+      const shapes = data.modes.map(([, score, color, vector], idx) => {
+        const vals = Array.isArray(vector) && vector.length === axes.length
+          ? vector.map(v => Math.max(0, Math.min(100, Number(v) || 0)))
+          : axes.map(() => Math.max(0, Math.min(100, score)));
         return `<polygon points="${radarPolygon(vals, cx, cy, r)}" fill="${color}" fill-opacity="${idx === 0 ? 0.20 : 0.09}" stroke="${color}" stroke-width="${idx === 0 ? 2 : 1.2}" opacity="${idx === 0 ? 0.95 : 0.62}"/>`;
       }).join("");
       $("#radarChart").innerHTML = `<svg viewBox="0 0 240 180">${grid}${axisLines}${shapes}<circle cx="${cx}" cy="${cy}" r="2" fill="var(--cyan)"/></svg>`;
+    }
+
+    function renderModeStageTable(data) {
+      const table = $("#modeStageTable");
+      const stages = Array.isArray(data.stages) ? data.stages : [];
+      if (!stages.length) {
+        table.innerHTML = `<div class="empty-cell">暂无真实阶段数据。运行实验后将展示各攻击阶段的高危事件数与拦截率。</div>`;
+        return;
+      }
+      table.style.gridTemplateColumns = `repeat(${stages.length + 1}, 1fr)`;
+      table.innerHTML = `
+        <div>阶段</div>${stages.map(s => `<div title="${escapeHtml(s[0])}">${escapeHtml(s[0])}</div>`).join("")}
+        <div>高危事件数</div>${stages.map(s => `<div class="num">${fmt(s[3] || 0)}</div>`).join("")}
+        <div>拦截成功率</div>${stages.map(s => `<div class="good">${escapeHtml(s[4] || "0%")}</div>`).join("")}
+      `;
     }
 
     function severityClass(s) {
@@ -2834,8 +3216,19 @@
       return String(a).toLowerCase() === "block" ? "block" : String(a).toLowerCase() === "ask" ? "ask" : "allow";
     }
 
+    function visibleAlertLimit() {
+      if (window.innerWidth <= 1366 || window.innerHeight <= 820) return 4;
+      if (window.innerHeight <= 900) return 5;
+      return 6;
+    }
+
     function renderAlerts(data) {
-      $("#alertStream").innerHTML = data.alerts.map(a => {
+      if (!data.alerts.length) {
+        $("#alertStream").innerHTML = `<div class="empty-screen">${escapeHtml(data.summary || "暂无真实告警。")}</div>`;
+        return;
+      }
+      const visibleAlerts = data.alerts.slice(0, visibleAlertLimit());
+      $("#alertStream").innerHTML = visibleAlerts.map(a => {
         const sc = severityClass(a.severity);
         const ac = actionClass(a.action);
         return `<article class="alert ${sc}" data-tip="${escapeHtml(a.reason)}">
@@ -2872,6 +3265,13 @@
     }
 
     function renderRules(data) {
+      if (!data.rules.length) {
+        $("#rulesList").innerHTML = `
+          <div class="rules-head"><div>规则（YAML DSL）</div><div>命中次数</div><div>命中率</div></div>
+          <div class="empty-screen">暂无真实策略命中。</div>
+        `;
+        return;
+      }
       $("#rulesList").innerHTML = `
         <div class="rules-head"><div>规则（YAML DSL）</div><div>命中次数</div><div>命中率</div></div>
         ${data.rules.map(([name, hits, rate], i) => `
@@ -2890,32 +3290,32 @@
       const svg = $("#timelineSvg");
       const w = 850, h = 150;
       const counts = data.timelineCounts || {};
+      const realPoints = Array.isArray(data.timeline) ? data.timeline : [];
       const rows = [
-        { y: 24, color: "#ff4d5e", label: "BLOCK", count: counts.block ?? 24 },
-        { y: 58, color: "#f8b84e", label: "ASK", count: counts.ask ?? 17 },
-        { y: 92, color: "#35f29b", label: "ALLOW", count: counts.allow ?? 22 },
-        { y: 126, color: "#58bfff", label: "INFO", count: counts.info ?? 16 }
+        { y: 24, color: "#ff4d5e", label: "BLOCK", count: counts.block ?? 0 },
+        { y: 58, color: "#f8b84e", label: "ASK", count: counts.ask ?? 0 },
+        { y: 92, color: "#35f29b", label: "ALLOW", count: counts.allow ?? 0 },
+        { y: 126, color: "#58bfff", label: "INFO", count: counts.info ?? 0 }
       ];
 
       const grid = rows.map(r => `<line x1="10" y1="${r.y}" x2="${w-24}" y2="${r.y}" stroke="rgba(233,251,255,0.13)"/>`).join("");
-      const times = ["14:26","14:27","14:28","14:29","14:30","14:31","14:32","现在"];
+      const times = Array.isArray(data.timelineLabels) && data.timelineLabels.length ? data.timelineLabels : ["开始", "", "", "", "", "", "", "现在"];
       const timeLabels = times.map((t, i) => {
         const x = 10 + i * ((w - 60) / (times.length - 1));
         return `<text x="${x}" y="148" fill="rgba(233,251,255,0.48)" font-size="11" text-anchor="${i === 0 ? "start" : "middle"}">${t}</text>`;
       }).join("");
-      const points = rows.map((r, rowIdx) => {
-        let html = "";
-        for (let i = 0; i < r.count; i++) {
-          const x = 24 + Math.pow(Math.random(), 0.86) * (w - 76);
-          const y = r.y + (Math.random() - 0.5) * 4;
-          const size = rowIdx === 0 && i > r.count - 5 ? 5.3 : 3.5 + Math.random() * 1.3;
-          html += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${size.toFixed(1)}" fill="${r.color}" opacity="0.88">
-            <animate attributeName="opacity" values="0.45;1;0.45" dur="${(1.8 + Math.random()).toFixed(1)}s" repeatCount="indefinite"/>
-          </circle>`;
-        }
-        html += `<circle cx="${w-30}" cy="${r.y}" r="8" fill="none" stroke="${r.color}" stroke-width="2" opacity="0.75"/>`;
-        return html;
-      }).join("");
+      const rowMap = new Map(rows.map(r => [r.label.toLowerCase(), r]));
+      const points = realPoints.length
+        ? realPoints.slice(0, 180).map((p, i) => {
+            const row = rowMap.get(String(p.row || "info").toLowerCase()) || rowMap.get("info");
+            const x = 24 + Math.max(0, Math.min(1, Number(p.x) || 0)) * (w - 76);
+            const y = row.y;
+            const size = p.severity === "CRITICAL" ? 5.5 : p.severity === "HIGH" ? 4.8 : 3.8;
+            return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${size}" fill="${row.color}" opacity="0.88">
+              <title>${escapeHtml(`${p.time || ""} ${p.source || ""} ${p.tool || ""}`)}</title>
+            </circle>`;
+          }).join("")
+        : rows.map(r => `<circle cx="${w-30}" cy="${r.y}" r="8" fill="none" stroke="${r.color}" stroke-width="2" opacity="0.75"/>`).join("");
 
       const legend = `
         <circle cx="12" cy="145" r="4" fill="#ff4d5e"/><text x="22" y="149" fill="rgba(233,251,255,0.66)" font-size="11">BLOCK</text>
@@ -2938,7 +3338,19 @@
         minute: "2-digit",
         second: "2-digit"
       }).replaceAll("/", "-");
-      $("#dateLine").textContent = "Local Runtime / " + Intl.DateTimeFormat().resolvedOptions().timeZone;
+      $("#dateLine").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    }
+
+    function metricValue(data, key) {
+      const metric = Array.isArray(data.metrics) ? data.metrics.find(item => item.key === key) : null;
+      return Number(metric?.num || 0);
+    }
+
+    function riskPosture(index, totalEvents) {
+      if (!totalEvents) return { cn: "暂无数据", en: "NO DATA", cls: "stable" };
+      if (index >= 85) return { cn: "稳定", en: "STABLE", cls: "stable" };
+      if (index >= 70) return { cn: "关注", en: "WATCH", cls: "medium" };
+      return { cn: "高风险", en: "HIGH RISK", cls: "high" };
     }
 
     function renderAll(data) {
@@ -2946,17 +3358,33 @@
       renderKpis(data);
       renderLifecycle(data);
       renderModes(data);
+      renderModeStageTable(data);
       renderAlerts(data);
       renderStages(data);
       renderRules(data);
       renderTimeline(data);
+      updateMeshLabelsFromData(data);
 
-      $("#protectionIndex").textContent = data.protectionIndex;
-      $("#meshProtection").textContent = data.protectionIndex;
-      $("#meshBlocks").textContent = data.blockedHighRisk;
-      $("#gaugeArc").setAttribute("stroke-dashoffset", (301.6 * (1 - data.protectionIndex / 100)).toFixed(1));
-      $("#riskLevel").textContent = data.protectionIndex > 88 ? "高风险" : data.protectionIndex > 78 ? "中风险" : "稳定";
-      $("#assessment").textContent = `检测到多起高危行为尝试，攻击面活跃。系统已成功拦截 ${data.blockedHighRisk} 个高危事件，关键策略命中率保持稳定。建议持续关注工具滥用、污染传播与提示注入风险。`;
+      const totalEvents = metricValue(data, "total");
+      const protection = Math.max(0, Math.min(100, Number(data.protectionIndex) || 0));
+      const blocked = Number(data.blockedHighRisk || 0);
+      const posture = riskPosture(protection, totalEvents);
+      const riskBox = $("#riskBox");
+      riskBox.classList.remove("stable", "medium", "high");
+      riskBox.classList.add(posture.cls);
+      $("#protectionIndex").textContent = protection;
+      $("#meshProtection").textContent = protection;
+      $("#meshBlocks").textContent = fmt(blocked);
+      $("#meshStateText").textContent = totalEvents ? (blocked ? "风险活动已处置" : "真实链路运行中") : "等待真实审计事件";
+      $("#gaugeArc").setAttribute("stroke-dashoffset", (301.6 * (1 - protection / 100)).toFixed(1));
+      $("#riskLevel").textContent = posture.cn;
+      $("#riskLevelEn").textContent = posture.en;
+      const meshMeta = data.meshMeta || {};
+      $("#meshApiCalls").textContent = `${fmt(meshMeta.api_calls || 0)} 次`;
+      $("#meshSuccessRate").textContent = `${Number(meshMeta.success_rate || 0).toFixed(1)}%`;
+      $("#meshPollutionEvents").textContent = fmt(meshMeta.pollution_events || 0);
+      $("#meshPolicyHits").textContent = fmt(meshMeta.policy_hits || 0);
+      $("#assessment").textContent = data.summary || `系统已基于真实日志聚合 ${data.blockedHighRisk} 个阻断事件。`;
       bindTooltips();
     }
 
@@ -2979,16 +3407,14 @@
       });
     }
 
-    function setMode(useDemo) {
-      state.useDemo = useDemo;
-      $("#demoBtn").classList.toggle("active", useDemo);
-      $("#realBtn").classList.toggle("active", !useDemo);
+    function setMode() {
+      $("#realBtn").classList.add("active");
       loadData();
     }
 
     function setPaused(paused) {
       state.paused = paused;
-      $("#pauseBtn").textContent = paused ? "恢复刷新" : "暂停刷新";
+      $("#pauseBtn").textContent = paused ? "恢复" : "暂停";
       $("#refreshState").innerHTML = paused ? `<span style="color:var(--amber)">●</span> 已暂停` : `<span class="dot"></span> 实时刷新`;
     }
 
@@ -3009,6 +3435,9 @@
       cameraTargetZ: 360,
       autoRotate: true
     };
+
+    const nodeLabelByName = new Map();
+    const nodeVisualByName = new Map();
 
     function colorHex(name) {
       return ({
@@ -3113,6 +3542,7 @@
 
       mesh3d.group.add(group);
       mesh3d.nodeObjects.push(sphere, ring);
+      nodeVisualByName.set(node.name, { group, sphere, ring, glow });
       return group;
     }
 
@@ -3211,10 +3641,10 @@
         );
         p.userData = {
           curve,
-          offset: Math.random(),
           speed: kind === "blocked" ? 0.00105 : kind === "taint" ? 0.00085 : 0.00065,
           kind
         };
+        p.userData.offset = ((i + 1) * 0.37 + mesh3d.particles.length * 0.19) % 1;
         mesh3d.group.add(p);
         mesh3d.particles.push(p);
       }
@@ -3230,6 +3660,46 @@
         : `<div class="node-name">${node.icon || "●"} ${node.name}</div><div class="node-line"><span class="node-num">${node.count}</span></div><div class="node-line risk-text">${node.riskText}</div>`;
       layer.appendChild(el);
       mesh3d.labels.push({ el, pos: node.pos.clone(), risk: node.risk || "low" });
+      nodeLabelByName.set(node.name, el);
+    }
+
+    function updateNodeVisual(node) {
+      const visual = nodeVisualByName.get(node.name);
+      if (!visual) return;
+      const risk = node.risk || "low";
+      const riskColor = risk === "high" ? colorHex("red") : risk === "medium" ? colorHex("amber") : colorHex("cyan");
+      const payload = {
+        ...visual.group.userData,
+        risk,
+        count: node.count || 0,
+        desc: `${node.name}: ${fmt(node.count || 0)} 条真实事件，阻断 ${fmt(node.blocked || 0)}，待审批 ${fmt(node.asked || 0)}，放行 ${fmt(node.allowed || 0)}`
+      };
+      visual.group.userData = payload;
+      visual.sphere.userData = payload;
+      visual.ring.userData = payload;
+      visual.sphere.material.color.setHex(riskColor);
+      visual.sphere.material.emissive.setHex(riskColor);
+      visual.sphere.material.emissiveIntensity = risk === "high" ? 0.72 : risk === "medium" ? 0.56 : 0.46;
+      visual.ring.material.color.setHex(riskColor);
+      visual.ring.material.opacity = risk === "high" ? 0.62 : risk === "medium" ? 0.56 : 0.48;
+      visual.glow.material.color.setHex(riskColor);
+      visual.glow.material.opacity = risk === "high" ? 0.36 : risk === "medium" ? 0.30 : 0.24;
+    }
+
+    function updateMeshLabelsFromData(data) {
+      const nodes = Array.isArray(data.nodes) ? data.nodes : [];
+      for (const node of nodes) {
+        updateNodeVisual(node);
+        const el = nodeLabelByName.get(node.name);
+        if (!el) continue;
+        el.classList.remove("low", "medium", "high");
+        el.classList.add(node.risk || "low");
+        const num = el.querySelector(".node-num");
+        const risk = el.querySelector(".risk-text");
+        if (num) num.textContent = fmt(node.count || 0);
+        if (risk) risk.textContent = node.riskText || "低风险";
+        el.dataset.tip = `${node.name}: ${fmt(node.count || 0)} 条真实事件，阻断 ${fmt(node.blocked || 0)}，待审批 ${fmt(node.asked || 0)}，放行 ${fmt(node.allowed || 0)}`;
+      }
     }
 
     function updateLabels() {
@@ -3238,15 +3708,21 @@
       const rect = container.getBoundingClientRect();
       const w = rect.width;
       const h = rect.height;
+      const bottomChrome = window.innerWidth <= 1366 || window.innerHeight <= 820 ? 76 : 92;
+      const topChrome = window.innerWidth <= 1366 || window.innerHeight <= 820 ? 34 : 42;
       mesh3d.labels.forEach(item => {
         const v = item.pos.clone();
         v.project(mesh3d.camera);
         const visible = v.z < 1 && v.z > -1;
-        const x = (v.x * 0.5 + 0.5) * w;
+        const rawX = (v.x * 0.5 + 0.5) * w;
         const y = (-v.y * 0.5 + 0.5) * h;
+        const horizontalGuard = item.risk === "core" ? 90 : (window.innerWidth <= 1366 ? 104 : 88);
+        const x = Math.max(horizontalGuard, Math.min(w - horizontalGuard, rawX));
         item.el.style.left = `${x}px`;
         item.el.style.top = `${y}px`;
-        item.el.style.opacity = visible ? "1" : "0";
+        const labelHalf = Math.max(24, (item.el.offsetHeight || 52) / 2);
+        const clearOfChrome = item.risk === "core" || (y > topChrome + labelHalf && y < h - bottomChrome - labelHalf);
+        item.el.style.opacity = visible && clearOfChrome ? "1" : "0";
         const depthScale = Math.max(0.82, Math.min(1.08, 1.02 - v.z * 0.12));
         item.el.style.transform = `translate(-50%, -50%) scale(${depthScale})`;
       });
@@ -3254,10 +3730,10 @@
 
     function initThreeMesh() {
       const container = $("#threeMesh");
-      const fallback = $("#threeFallback");
+      const emptyLayer = $("#threeSceneEmpty");
       if (!container) return;
       if (!window.THREE) {
-        fallback.style.display = "grid";
+        emptyLayer.style.display = "grid";
         return;
       }
 
@@ -3324,16 +3800,16 @@
       const core = createCore();
 
       const nodes = [
-        { name: "webpage", icon: "🌐", count: "2,156", risk: "low", riskText: "低风险", size: 15, pos: new THREE.Vector3(-172, 58, -28), desc: "网页读取工具：检测 Prompt Injection 与远程内容污染。" },
-        { name: "file", icon: "📁", count: "1,235", risk: "medium", riskText: "中风险", size: 14, pos: new THREE.Vector3(-246, -12, 38), desc: "文件上下文读取：可能引入 taint label 和敏感路径风险。" },
-        { name: "email", icon: "✉", count: "842", risk: "medium", riskText: "中风险", size: 13, pos: new THREE.Vector3(-230, -86, 64), desc: "邮件 sink：外发前进行 suspicious_sink_guard 检测。" },
-        { name: "api", icon: "☁", count: "2,478", risk: "low", riskText: "低风险", size: 15, pos: new THREE.Vector3(-160, -158, -5), desc: "API 工具调用：频率高，当前成功率 98.1%。" },
-        { name: "search", icon: "⌕", count: "1,842", risk: "low", riskText: "低风险", size: 14, pos: new THREE.Vector3(-6, 132, 30), desc: "搜索工具：接入意图漂移检测和结果污染识别。" },
-        { name: "memory", icon: "🧠", count: "765", risk: "high", riskText: "高风险", size: 16, pos: new THREE.Vector3(178, 92, -8), desc: "Memory：检测到记忆投毒与长期状态污染风险。" },
-        { name: "read_file", icon: "▤", count: "1,764", risk: "low", riskText: "低风险", size: 14, pos: new THREE.Vector3(242, 20, 44), desc: "read_file：读取行为可控，输出会绑定 taint label。" },
-        { name: "write_file", icon: "✎", count: "1,092", risk: "high", riskText: "高风险", size: 15, pos: new THREE.Vector3(218, -74, 30), desc: "write_file：写入敏感路径时触发 ASK/BLOCK。" },
-        { name: "shell", icon: "▸_", count: "512", risk: "high", riskText: "高风险", size: 15, pos: new THREE.Vector3(116, -164, 54), desc: "shell：高危执行工具，系统级命令已被策略拦截。" },
-        { name: "database", icon: "◎", count: "1,126", risk: "medium", riskText: "中风险", size: 13, pos: new THREE.Vector3(0, -194, -24), desc: "SQLite event store：记录事件、case 与策略命中。" }
+        { name: "webpage", icon: "🌐", count: 0, risk: "low", riskText: "暂无数据", size: 15, pos: new THREE.Vector3(-172, 58, -28), desc: "网页读取工具：检测 Prompt Injection 与远程内容污染。" },
+        { name: "file", icon: "📁", count: 0, risk: "low", riskText: "暂无数据", size: 14, pos: new THREE.Vector3(-246, -12, 38), desc: "文件上下文读取：可能引入 taint label 和敏感路径风险。" },
+        { name: "email", icon: "✉", count: 0, risk: "low", riskText: "暂无数据", size: 13, pos: new THREE.Vector3(-230, -86, 64), desc: "邮件 sink：外发前进行 suspicious_sink_guard 检测。" },
+        { name: "api", icon: "☁", count: 0, risk: "low", riskText: "暂无数据", size: 15, pos: new THREE.Vector3(-160, -158, -5), desc: "API 工具调用：记录外部接口访问、策略裁决和异常响应。" },
+        { name: "search", icon: "⌕", count: 0, risk: "low", riskText: "暂无数据", size: 14, pos: new THREE.Vector3(-6, 132, 30), desc: "搜索工具：接入意图漂移检测和结果污染识别。" },
+        { name: "memory", icon: "🧠", count: 0, risk: "low", riskText: "暂无数据", size: 16, pos: new THREE.Vector3(178, 92, -8), desc: "Memory：检测记忆投毒与长期状态污染风险。" },
+        { name: "read_file", icon: "▤", count: 0, risk: "low", riskText: "暂无数据", size: 14, pos: new THREE.Vector3(242, 20, 44), desc: "read_file：读取行为可控，输出会绑定 taint label。" },
+        { name: "write_file", icon: "✎", count: 0, risk: "low", riskText: "暂无数据", size: 15, pos: new THREE.Vector3(218, -74, 30), desc: "write_file：写入敏感路径时触发 ASK/BLOCK。" },
+        { name: "shell", icon: "▸_", count: 0, risk: "low", riskText: "暂无数据", size: 15, pos: new THREE.Vector3(116, -164, 54), desc: "shell：高危执行工具，系统级命令会被策略审计。" },
+        { name: "database", icon: "◎", count: 0, risk: "low", riskText: "暂无数据", size: 13, pos: new THREE.Vector3(0, -194, -24), desc: "SQLite event store：记录事件、case 与策略命中。" }
       ];
 
       const nodeGroups = {};
@@ -3460,13 +3936,12 @@
       $("#backBtn").addEventListener("click", () => {
         window.location.href = "/";
       });
-      $("#demoBtn").addEventListener("click", () => setMode(true));
-      $("#realBtn").addEventListener("click", () => setMode(false));
+      $("#realBtn").addEventListener("click", () => setMode());
       $("#pauseBtn").addEventListener("click", () => setPaused(!state.paused));
       $("#fullscreenBtn").addEventListener("click", async () => {
         if (!document.fullscreenElement) {
           await document.documentElement.requestFullscreen?.();
-          $("#fullscreenBtn").textContent = "退出全屏";
+          $("#fullscreenBtn").textContent = "退出";
         } else {
           await document.exitFullscreen?.();
           $("#fullscreenBtn").textContent = "全屏";
@@ -3474,7 +3949,7 @@
       });
 
       document.addEventListener("fullscreenchange", () => {
-        $("#fullscreenBtn").textContent = document.fullscreenElement ? "退出全屏" : "全屏";
+        $("#fullscreenBtn").textContent = document.fullscreenElement ? "退出" : "全屏";
       });
     }
 

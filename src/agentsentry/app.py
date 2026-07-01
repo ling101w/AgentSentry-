@@ -15,7 +15,9 @@ from .evaluation import run_ablation, run_eval
 from .export import cases_to_json, eval_results_to_csv, eval_results_to_markdown
 from .llm import OpenAICompatibleClient
 from .models import RunRequest, RunResponse, new_id
+from .openclaw_evidence import openclaw_health, openclaw_records
 from .policy import Policy
+from .security_overview import security_overview
 from .storage import Store
 from .supervisor import AgentSupervisor
 from .tools import SandboxTools
@@ -126,6 +128,42 @@ def create_app() -> FastAPI:
             "base_url": client.base_url,
             "model": client.model,
         }
+
+    @app.get("/api/health")
+    def health():
+        client = OpenAICompatibleClient()
+        openclaw = openclaw_health()
+        return {
+            "ok": True,
+            "service": "AgentSentry",
+            "runtime": {
+                "database": str(paths().database),
+                "sandbox": str(paths().sandbox),
+                "policy": str(paths().policy),
+            },
+            "llm": {
+                "configured": bool(client.api_key),
+                "base_url": client.base_url,
+                "model": client.model,
+            },
+            "openclaw": {
+                "available": openclaw.get("available", False),
+                "dashboard": openclaw.get("dashboard"),
+                "records_path": openclaw.get("records_path"),
+            },
+        }
+
+    @app.get("/api/openclaw/health")
+    def openclaw_health_api():
+        return openclaw_health()
+
+    @app.get("/api/openclaw/records")
+    def openclaw_records_api(limit: int = Query(default=500, ge=1, le=5000)):
+        return openclaw_records(limit=limit)
+
+    @app.get("/api/security/overview")
+    def security_overview_api(source: str = Query(default="combined", pattern="^(combined|openclaw|local)$")):
+        return security_overview(store(), source=source)
 
     @app.get("/api/events")
     def events(limit: int = Query(default=200, ge=1, le=1000)):

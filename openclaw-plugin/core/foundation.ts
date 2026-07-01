@@ -4,6 +4,7 @@ import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { clampText } from "./redact.ts";
 import { semanticJudgeFoundationFile } from "./semantic.ts";
+import { analyzeTrustContent } from "./trust.ts";
 
 export type FoundationScanResult = {
   workspaceDir: string;
@@ -53,6 +54,13 @@ const TEXT_EXTENSIONS = new Set([
   ".py",
   ".sh",
   ".ps1",
+  ".html",
+  ".htm",
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
 ]);
 
 const SENSITIVE_FILE_NAMES = [
@@ -65,6 +73,10 @@ const SENSITIVE_FILE_NAMES = [
   "secrets.json",
   "system_prompt.txt",
   "openclaw.json",
+  "memory.md",
+  "agents.md",
+  "soul.md",
+  "user.md",
 ];
 
 const GENERATED_SOURCE_PATH_PATTERNS = [
@@ -81,6 +93,8 @@ const MALICIOUS_SKILL_PATTERNS = [
   /(bypass|disable|override|circumvent|evade)\s+(security|safety|guardrails?|sandbox|policy|approval)/i,
   /(reveal|dump|leak|exfiltrate|steal|extract).{0,80}(system\s*prompt|developer\s*prompt|hidden\s*instructions?|api[_ -]?key|token|secret|password|credential)/i,
   /(send|post|upload|transmit).{0,80}(secret|token|credential|password|private\s*key|system\s*prompt)/i,
+  /(readFileSync|readFile|fs\.).{0,120}(openclaw\.json|\.env|id_rsa|secret|token|password)/i,
+  /(fetch|axios|curl|wget|https?\.request|XMLHttpRequest).{0,160}(token|secret|openclaw\.json|gateway|credential|password)/i,
   /(系统提示|开发者提示|内部配置|隐藏指令|工具声明).{0,40}(泄露|导出|发送|上传|打印|展示)/i,
   /(绕过|禁用|关闭|突破).{0,24}(安全|限制|护栏|策略|沙箱|审批)/i,
 ];
@@ -92,6 +106,8 @@ const RISKY_CONFIG_PATTERNS = [
   /allow(_|-)?all\s*[:=]\s*true/i,
   /dangerously[-_a-z]*\s*[:=]\s*true/i,
   /disable[_-]?(sandbox|approval|security|guardrail)\s*[:=]\s*true/i,
+  /[?&]gatewayURL\s*=\s*wss?:\/\/(?!localhost(?::|\/|$)|127\.0\.0\.1(?::|\/|$)|\[::1\](?::|\/|$))/i,
+  /\bgatewayURL\b.{0,80}\bwss?:\/\/(?!localhost(?::|\/|$)|127\.0\.0\.1(?::|\/|$)|\[::1\](?::|\/|$))/i,
 ];
 
 const STRONG_SECRET_VALUE_PATTERNS = [
@@ -145,7 +161,7 @@ export async function scanFoundation(workspaceDir: string, config: PluginConfig)
         result.skippedFiles += 1;
         continue;
       }
-      content = readFileSync(filePath, "utf8");
+      content = readCandidateContent(filePath);
       result.scannedFiles += 1;
     } catch {
       result.skippedFiles += 1;
@@ -161,6 +177,7 @@ export async function scanFoundation(workspaceDir: string, config: PluginConfig)
     if (config.foundationScan.scanSensitiveFiles) {
       result.findings.push(...scanSensitiveFile(relPath, content, config));
     }
+    result.findings.push(...scanTrustSurface(relPath, content, config));
     if (shouldSemanticScan(relPath, config)) {
       result.findings.push(...await semanticJudgeFoundationFile({
         relPath,
@@ -271,6 +288,23 @@ function scanSensitiveFile(relPath: string, content: string, config: PluginConfi
   return findings;
 }
 
+function scanTrustSurface(relPath: string, content: string, config: PluginConfig): DetectionFinding[] {
+  const analysis = analyzeTrustContent(content, {
+    path: relPath,
+    source: isSkillFile(relPath) ? "skill" : isConfigFile(relPath) ? "config" : isMemoryFile(relPath) ? "memory" : undefined,
+    previewChars: config.capture.previewChars,
+  });
+  return analysis.findings.map((item) => ({
+    ...item,
+    layer: item.layer === "Execution Control" ? "Foundation" : item.layer,
+    evidence: {
+      ...item.evidence,
+      path: relPath,
+      preview: clampText(content, config.capture.previewChars),
+    },
+  }));
+}
+
 function isGeneratedNoisePath(relPath: string): boolean {
   return GENERATED_SOURCE_PATH_PATTERNS.some((pattern) => pattern.test(relPath));
 }
@@ -304,6 +338,21 @@ function isConfigFile(relPath: string): boolean {
   return [".json", ".json5", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".env"].includes(ext)
     || name.includes("config")
     || name === "openclaw.json";
+}
+
+function isMemoryFile(relPath: string): boolean {
+  return /(^|\/)(memory\.md|agents\.md|soul\.md|user\.md)$/i.test(relPath);
+}
+
+function readCandidateContent(filePath: string): string {
+  const ext = extname(filePath).toLowerCase();
+  if ([".pdf", ".png", ".jpg", ".jpeg", ".webp"].includes(ext)) {
+    return readFileSync(filePath)
+      .toString("latin1")
+      .replace(/[^\x09\x0a\x0d\x20-\x7e]+/g, " ")
+      .replace(/\s{3,}/g, " ");
+  }
+  return readFileSync(filePath, "utf8");
 }
 
 function shouldSemanticScan(relPath: string, config: PluginConfig): boolean {

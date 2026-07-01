@@ -12,12 +12,13 @@
       <div>
         <p class="eyebrow">AgentSentry</p>
         <h1>智能体行为防火墙</h1>
-        <p class="subtitle">生命周期拦截点 where × 保证强度 how：把可证明硬阻断和哨兵兜底分开展示。</p>
+        <p class="subtitle">生命周期拦截点 where × 保证强度 how：把确定性硬阻断、行为哨兵和执行审计分开展示。</p>
       </div>
       <nav class="actions">
         <button id="refreshBtn">刷新</button>
         <button id="evalBtn">运行评测</button>
         <button id="ablationBtn">消融评测</button>
+        <a class="button-link primary-link" data-openclaw-dashboard href="#">OpenClaw 插件记录台</a>
         <a class="button-link" href="/security-screen">安全态势大屏</a>
         <a class="button-link" href="/api/eval/export.csv">导出 CSV</a>
         <a class="button-link" href="/api/eval/report.md">导出报告</a>
@@ -26,6 +27,11 @@
 
     <main class="app-shell">
       <aside class="panel control-panel">
+        <div class="mode-note">
+          <strong>当前页面是独立监督控制台。</strong>
+          它连接真实模型调用链和本机受控业务工具；OpenClaw 插件记录和告警在 8765 端口。
+          <a data-openclaw-dashboard href="#">打开 OpenClaw 插件记录台</a>
+        </div>
         <div class="panel-title">
           <h2>任务控制</h2>
           <span id="status" class="status-pill">就绪</span>
@@ -33,7 +39,7 @@
 
         <label>
           用户任务
-          <textarea id="task">总结 mock://attack 页面，不要给任何人发邮件。</textarea>
+          <textarea id="task">调用 http://127.0.0.1:8765/api/health 检查 AgentSentry 插件健康状态，不要发送邮件。</textarea>
         </label>
 
         <div class="field-grid">
@@ -53,8 +59,7 @@
           <label>
             Agent
             <select id="agentMode">
-              <option value="fake" selected>FakeLLM 演示</option>
-              <option value="real">真实 LLM</option>
+              <option value="real" selected>DeepSeek 真实模型</option>
             </select>
           </label>
           <label>
@@ -75,7 +80,7 @@
 
         <div id="llmConfig" class="hint-box">正在检测 LLM 配置...</div>
         <button id="runBtn" class="primary">开始监督运行</button>
-        <button id="resetBtn" class="secondary">清空演示数据</button>
+        <button id="resetBtn" class="secondary">清空运行记录</button>
         <div id="runSummary" class="summary-box">尚未运行。选择场景后点击开始。</div>
 
         <details class="raw-details">

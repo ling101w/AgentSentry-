@@ -8,6 +8,7 @@ import { clearFoundationScanCache, scanFoundation } from "./core/foundation.ts";
 import { computeOperationKey, formatApprovalDescription } from "./core/operation.ts";
 import {
   createPolicyState,
+  policyTrustSnapshot,
   resultFindings,
   updateAfterDecision,
   updateAfterMessage,
@@ -18,6 +19,7 @@ import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
 import { semanticJudgeMessage, semanticJudgeToolCall } from "./core/semantic.ts";
+import { systemMonitorStatus } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
 
 type SessionState = {
@@ -145,6 +147,8 @@ const plugin = {
           task_spec: state.policyState.taskSpec,
           contaminated: state.policyState.contaminated,
           foundationBlocked: state.policyState.foundationBlocked,
+          trust: policyTrustSnapshot(state.policyState),
+          system_monitor: systemMonitorStatus(),
         },
       });
     });
@@ -262,6 +266,9 @@ const plugin = {
             : "pass",
         task_spec: result.policy.task_spec,
         contaminated: state.policyState.contaminated,
+        risk_vector: result.policy.risk_vector,
+        trust: policyTrustSnapshot(state.policyState),
+        system_monitor: systemMonitorStatus(),
         findings: result.findings,
       };
 
@@ -362,7 +369,7 @@ const plugin = {
 
     api.on("after_tool_call", (event, ctx) => {
       const state = getSession(ctx);
-      const findings = resultFindings(event?.toolCallId || "", event?.result, state.policyState, plugin.config!);
+      const findings = resultFindings(event?.toolCallId || "", event?.result, state.policyState, plugin.config!, event?.toolName || "");
       const severity: RecordSeverity = event?.error ? "danger" : "success";
       plugin.store!.add({
         run_id: state.runId,
@@ -381,6 +388,8 @@ const plugin = {
           error: event?.error ? clampText(event.error, plugin.config!.capture.previewChars) : "",
           result: plugin.config!.capture.includeMessageText ? redactObject(event?.result, plugin.config!.capture.previewChars) : "[disabled]",
           label: state.policyState.toolResultLabels.get(event?.toolCallId || "") || null,
+          trust: policyTrustSnapshot(state.policyState),
+          system_monitor: systemMonitorStatus(),
           findings,
         },
       });

@@ -141,7 +141,7 @@ function normalizeSelection(keepSelection) {
   const hasSelectedSession = sessions.some((session) => session.key === state.selectedSession);
 
   if (!state.selectedSession || (!hasSelectedSession && state.selectedSession !== ALL_SESSIONS)) {
-    state.selectedSession = sessions[0]?.key || ALL_SESSIONS;
+    state.selectedSession = ALL_SESSIONS;
   }
 
   if (!keepSelection || !state.records.some((record) => record.id === state.selectedId)) {
@@ -311,7 +311,7 @@ function sessionInsight(records) {
     return { tone: "danger", title: "发现并拦截高风险工具行为", body: `${tools} 触发任务规范外调用；共有 ${alerts.length} 条告警、${deniedTools.length} 次阻断。` };
   }
   if (hardcodedSecrets.length) {
-    return { tone: "warning", title: "启动前发现硬编码敏感配置", body: `基础扫描发现 ${hardcodedSecrets.length} 个配置敏感值，建议确认是否为 demo 密钥或生产密钥。` };
+    return { tone: "warning", title: "启动前发现硬编码敏感配置", body: `基础扫描发现 ${hardcodedSecrets.length} 个配置敏感值，建议确认是否为测试密钥或生产密钥。` };
   }
   if (timeouts.length) {
     return { tone: "warning", title: "模型响应链路超时", body: "OpenClaw 已写入运行轨迹，但模型服务没有在超时时间内完成最终回复。" };
@@ -376,10 +376,7 @@ function filteredRecords() {
     return searchableText(record).includes(query);
   });
 
-  if (state.selectedSession !== ALL_SESSIONS) {
-    return records.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  }
-  return records;
+  return sortRecordsDesc(records);
 }
 
 function applyFocusMode(records) {
@@ -430,12 +427,13 @@ function groupTimelineRecords(records) {
   const firstRecordByKey = new Map();
   for (const [key, bucket] of buckets) {
     if (bucket.length < 3) continue;
-    firstRecordByKey.set(bucket[0].id, { key, bucket });
+    const latest = bucket.slice().sort(compareRecordsDesc)[0];
+    firstRecordByKey.set(latest.id, { key, bucket });
     for (const record of bucket) groupedIds.add(record.id);
   }
 
   const output = [];
-  for (const record of records) {
+  for (const record of sortRecordsDesc(records)) {
     const group = firstRecordByKey.get(record.id);
     if (group) {
       output.push(makeFoundationFindingGroup(group.key, group.bucket));
@@ -444,7 +442,7 @@ function groupTimelineRecords(records) {
     if (groupedIds.has(record.id)) continue;
     output.push(record);
   }
-  return output;
+  return sortRecordsDesc(output);
 }
 
 function isGroupableFoundationFinding(record) {
@@ -461,7 +459,8 @@ function foundationFindingKey(record) {
 }
 
 function makeFoundationFindingGroup(key, bucket) {
-  const first = bucket[0];
+  const sortedBucket = bucket.slice().sort(compareRecordsDesc);
+  const first = sortedBucket[0];
   const payload = first.payload || {};
   const reason = payload.reason || first.summary || first.title || "foundation finding";
   const paths = Array.from(new Set(bucket.map((record) => record.payload?.evidence?.path).filter(Boolean)));
@@ -484,9 +483,20 @@ function makeFoundationFindingGroup(key, bucket) {
       confidence,
       paths: paths.slice(0, 120),
       omitted_paths: Math.max(0, paths.length - 120),
-      sample_record_ids: bucket.slice(0, 10).map((record) => record.id),
+      record_ids: sortedBucket.slice(0, 10).map((record) => record.id),
     },
   };
+}
+
+function sortRecordsDesc(records) {
+  return records.slice().sort(compareRecordsDesc);
+}
+
+function compareRecordsDesc(a, b) {
+  const timeA = new Date(a.created_at || 0).getTime();
+  const timeB = new Date(b.created_at || 0).getTime();
+  if (timeA !== timeB) return timeB - timeA;
+  return String(b.id || "").localeCompare(String(a.id || ""));
 }
 
 function buildSessions() {

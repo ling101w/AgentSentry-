@@ -108,9 +108,30 @@ class Store:
             results.append(item)
         return results
 
+    def overview_snapshot(self, event_limit: int = 2000, run_limit: int = 200, eval_limit: int = 100) -> dict[str, Any]:
+        with self._connect() as conn:
+            runs = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM runs ORDER BY created_at DESC LIMIT ?",
+                    (run_limit,),
+                ).fetchall()
+            ]
+            events = []
+            for row in conn.execute("SELECT * FROM events ORDER BY created_at DESC LIMIT ?", (event_limit,)).fetchall():
+                item = dict(row)
+                item["payload"] = json.loads(item["payload"])
+                events.append(item)
+            eval_rows = conn.execute("SELECT * FROM eval_results ORDER BY created_at DESC LIMIT ?", (eval_limit,)).fetchall()
+        evals = []
+        for row in eval_rows:
+            item = dict(row)
+            item["metrics"] = json.loads(item["metrics"])
+            evals.append(item)
+        return {"runs": runs, "events": events, "evals": evals}
+
     def reset(self) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM events")
             conn.execute("DELETE FROM runs")
             conn.execute("DELETE FROM eval_results")
-

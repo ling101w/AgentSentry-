@@ -1,11 +1,12 @@
+import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, relative } from "node:path";
-import { stripTypeScriptTypes } from "node:module";
 
 const rootDir = process.cwd();
 const outDir = join(rootDir, "dist");
 const sourceDirs = ["core", "server"];
 const sourceFiles = ["config.ts", "index.ts"];
+const stripTypeScriptTypes = await resolveStripTypeScriptTypes();
 
 function rewriteRelativeImports(code) {
   return code.replace(
@@ -64,3 +65,20 @@ for (const dir of sourceDirs) {
 }
 
 copyDir(join(rootDir, "public"), join(outDir, "public"));
+
+async function resolveStripTypeScriptTypes() {
+  const moduleApi = await import("node:module");
+  if (typeof moduleApi.stripTypeScriptTypes === "function") return moduleApi.stripTypeScriptTypes;
+
+  const candidate = process.env.OPENCLAW_NODE || "/home/ubuntu/.openclaw/tools/node-v24.11.1/bin/node";
+  if (process.env.AGENTSENTRY_BUILD_REEXEC !== "1" && existsSync(candidate) && candidate !== process.execPath) {
+    const result = spawnSync(candidate, process.argv.slice(1), {
+      stdio: "inherit",
+      cwd: process.cwd(),
+      env: { ...process.env, AGENTSENTRY_BUILD_REEXEC: "1" },
+    });
+    process.exit(result.status ?? 1);
+  }
+
+  throw new Error("Node.js >=24 is required to build this plugin. Set OPENCLAW_NODE to OpenClaw's bundled node binary.");
+}

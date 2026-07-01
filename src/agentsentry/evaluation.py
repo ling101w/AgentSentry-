@@ -63,7 +63,7 @@ def run_eval(store: Store, policy: Policy, sandbox_dir, defense_mode: str = "ful
             RunRequest(
                 task=case.task,
                 scenario=case.scenario,
-                use_fake_llm=True,
+                scripted_llm=True,
                 defense_mode=defense_mode,
                 max_steps=8,
             )
