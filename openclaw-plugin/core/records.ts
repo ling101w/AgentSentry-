@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, closeSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PluginConfig } from "../config.ts";
@@ -24,6 +24,8 @@ export class RecordStore {
   readonly recordsPath: string;
   private maxRecords: number;
   private writeCount = 0;
+  private countCache: { size: number; mtimeMs: number; count: number } | null = null;
+  private statsCache = new Map<number, { size: number; mtimeMs: number; value: Record<string, unknown> }>();
 
   constructor(config: PluginConfig) {
     this.stateDir = config.storage.stateDir || process.env.OPENCLAW_STATE_DIR?.trim() || join(homedir(), ".openclaw");
@@ -49,6 +51,7 @@ export class RecordStore {
     };
     appendFileSync(this.recordsPath, `${JSON.stringify(record)}\n`, "utf8");
     this.writeCount += 1;
+    this.invalidateCachesAfterAppend();
     if (this.writeCount % 200 === 0) this.compact();
     return record;
   }
@@ -67,10 +70,20 @@ export class RecordStore {
     return records.reverse();
   }
 
+  get(id: string): AgentSentryRecord | null {
+    const safeId = String(id || "").trim();
+    if (!safeId) return null;
+    if (!existsSync(this.recordsPath)) return null;
+    return findRecordById(this.recordsPath, safeId);
+  }
+
   count(): number {
     if (!existsSync(this.recordsPath)) return 0;
     const stat = statSync(this.recordsPath);
     if (!stat.size) return 0;
+    if (this.countCache && this.countCache.size === stat.size && this.countCache.mtimeMs === stat.mtimeMs) {
+      return this.countCache.count;
+    }
     const fd = openSync(this.recordsPath, "r");
     const buffer = Buffer.allocUnsafe(1024 * 1024);
     let total = 0;
@@ -85,11 +98,18 @@ export class RecordStore {
     } finally {
       closeSync(fd);
     }
+    this.countCache = { size: stat.size, mtimeMs: stat.mtimeMs, count: total };
     return total;
   }
 
   stats(limit = 2000): Record<string, unknown> {
-    const records = this.list(limit);
+    const safeLimit = Math.max(1, Math.trunc(limit));
+    const stat = existsSync(this.recordsPath) ? statSync(this.recordsPath) : { size: 0, mtimeMs: 0 };
+    const cached = this.statsCache.get(safeLimit);
+    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+      return cached.value;
+    }
+    const records = this.list(safeLimit);
     const totalRecords = this.count();
     const byType: Record<string, number> = {};
     const bySeverity: Record<string, number> = {};
@@ -105,11 +125,11 @@ export class RecordStore {
       runs.add(record.run_id);
     }
 
-    return {
+    const value = {
       total: totalRecords,
       totalRecords,
       windowRecords: records.length,
-      windowLimit: limit,
+      windowLimit: safeLimit,
       sessions: sessions.size,
       runs: runs.size,
       byType,
@@ -118,10 +138,14 @@ export class RecordStore {
       latest: records[0]?.created_at || null,
       recordsPath: this.recordsPath,
     };
+    this.statsCache.set(safeLimit, { size: stat.size, mtimeMs: stat.mtimeMs, value });
+    return value;
   }
 
   reset(): void {
     writeFileSync(this.recordsPath, "", "utf8");
+    this.countCache = { size: 0, mtimeMs: statSync(this.recordsPath).mtimeMs, count: 0 };
+    this.statsCache.clear();
   }
 
   compact(): void {
@@ -130,8 +154,26 @@ export class RecordStore {
     writeFileSync(tmpPath, records.reverse().map((record) => JSON.stringify(record)).join("\n") + (records.length ? "\n" : ""), "utf8");
     try {
       renameSync(tmpPath, this.recordsPath);
+      const stat = statSync(this.recordsPath);
+      this.countCache = { size: stat.size, mtimeMs: stat.mtimeMs, count: records.length };
+      this.statsCache.clear();
     } catch {
       rmSync(tmpPath, { force: true });
+    }
+  }
+
+  private invalidateCachesAfterAppend(): void {
+    this.statsCache.clear();
+    if (!this.countCache) return;
+    try {
+      const stat = statSync(this.recordsPath);
+      this.countCache = {
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        count: this.countCache.count + 1,
+      };
+    } catch {
+      this.countCache = null;
     }
   }
 }
@@ -173,4 +215,44 @@ function readTailLines(path: string, limit: number): string[] {
   const text = Buffer.concat(chunks.reverse()).toString("utf8");
   const lines = text.split(/\r?\n/).filter(Boolean);
   return lines.slice(Math.max(0, lines.length - limit));
+}
+
+function findRecordById(path: string, id: string): AgentSentryRecord | null {
+  const stat = statSync(path);
+  if (!stat.size) return null;
+  const fd = openSync(path, "r");
+  const chunkSize = 256 * 1024;
+  const tailParts: string[] = [];
+  let position = stat.size;
+  try {
+    while (position > 0) {
+      const readSize = Math.min(chunkSize, position);
+      position -= readSize;
+      const buffer = Buffer.allocUnsafe(readSize);
+      const bytesRead = readSync(fd, buffer, 0, readSize, position);
+      if (bytesRead <= 0) break;
+      const chunkText = buffer.subarray(0, bytesRead).toString("utf8");
+      tailParts.unshift(chunkText);
+      const text = tailParts.join("");
+      if (!text.includes(id) && tailParts.length < 8) continue;
+      const lines = text.split(/\r?\n/);
+      const start = position === 0 ? 0 : 1;
+      for (let i = lines.length - 1; i >= start; i -= 1) {
+        const line = lines[i];
+        if (!line || !line.includes(id)) continue;
+        try {
+          const record = JSON.parse(line) as AgentSentryRecord;
+          if (record.id === id) return record;
+        } catch {
+          // Ignore malformed partial lines; keep scanning older chunks.
+        }
+      }
+      if (tailParts.length > 8) {
+        tailParts.splice(0, tailParts.length - 8);
+      }
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return null;
 }

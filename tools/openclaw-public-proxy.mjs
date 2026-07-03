@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
+import zlib from 'node:zlib';
 
 const listenPort = Number.parseInt(process.env.PUBLIC_PROXY_PORT || '18789', 10);
 const targetHost = process.env.PUBLIC_PROXY_TARGET_HOST || '127.0.0.1';
@@ -149,6 +150,48 @@ function stripHopByHopHeaders(headers) {
   return next;
 }
 
+function isHashedAssetPath(path = '') {
+  return /^\/?assets\/.+-[A-Za-z0-9_-]{6,}\.(?:js|css|mjs|woff2?|png|jpg|jpeg|svg|webp)$/i.test(path.split('?')[0] || '');
+}
+
+function isCompressibleContentType(contentType = '') {
+  return /(?:text\/|javascript|json|xml|svg|wasm)/i.test(contentType);
+}
+
+function clientAcceptsGzip(req) {
+  return /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
+}
+
+function normalizedProxyHeaders(proxyRes, req) {
+  const headers = { ...proxyRes.headers };
+  const requestPath = req.url || '/';
+  const contentType = String(headers['content-type'] || '');
+  const canGzip = clientAcceptsGzip(req)
+    && isCompressibleContentType(contentType)
+    && !headers['content-encoding']
+    && req.method !== 'HEAD';
+
+  if (canGzip) {
+    headers['content-encoding'] = 'gzip';
+    headers.vary = headers.vary ? `${headers.vary}, Accept-Encoding` : 'Accept-Encoding';
+    delete headers['content-length'];
+  }
+
+  if (isHashedAssetPath(requestPath)) {
+    headers['cache-control'] = 'public, max-age=31536000, immutable';
+  } else if (/^\/?(?:favicon|manifest|apple-touch-icon)/i.test(requestPath)) {
+    headers['cache-control'] = 'public, max-age=86400';
+  }
+
+  if (typeof headers['content-security-policy'] === 'string') {
+    headers['content-security-policy'] = headers['content-security-policy']
+      .replace(/\shttps:\/\/fonts\.googleapis\.com/g, '')
+      .replace(/\shttps:\/\/fonts\.gstatic\.com/g, '');
+  }
+
+  return { headers, canGzip };
+}
+
 const server = http.createServer((req, res) => {
   if (!isAuthorized(req.headers.authorization)) {
     unauthorized(res);
@@ -176,7 +219,6 @@ const server = http.createServer((req, res) => {
           : token
             ? `Bearer ${token}`
             : '',
-        'accept-encoding': 'identity',
         'x-forwarded-host': req.headers.host || '',
         'x-forwarded-proto': 'http',
         'x-forwarded-for': req.socket.remoteAddress || '',
@@ -184,7 +226,12 @@ const server = http.createServer((req, res) => {
       },
     },
     (proxyRes) => {
-      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+      const { headers, canGzip } = normalizedProxyHeaders(proxyRes, req);
+      res.writeHead(proxyRes.statusCode || 502, headers);
+      if (canGzip) {
+        proxyRes.pipe(zlib.createGzip()).pipe(res);
+        return;
+      }
       proxyRes.pipe(res);
     },
   );

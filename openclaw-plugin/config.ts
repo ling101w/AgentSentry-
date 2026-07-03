@@ -1,5 +1,6 @@
 export type EnforcementMode = "observe" | "approval" | "block";
 export type NotificationSeverity = "warning" | "danger";
+export type SemanticJudgeMode = "off" | "risk-tiered" | "full";
 
 export class PluginConfig {
   dashboard: {
@@ -24,9 +25,11 @@ export class PluginConfig {
   };
   semantic: {
     enabled: boolean;
+    mode: SemanticJudgeMode;
     judgeToolCalls: boolean;
     judgeMessages: boolean;
     judgeFoundation: boolean;
+    judgeMemoryWrites: boolean;
     baseUrl: string;
     model: string;
     apiKeyEnv: string;
@@ -89,9 +92,11 @@ export class PluginConfig {
     };
     this.semantic = {
       enabled: false,
+      mode: "risk-tiered",
       judgeToolCalls: true,
       judgeMessages: false,
       judgeFoundation: false,
+      judgeMemoryWrites: true,
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-4o-mini",
       apiKeyEnv: "AGENTSENTRY_API_KEY",
@@ -171,9 +176,14 @@ export class PluginConfig {
     const semantic = objectAt(obj, "semantic");
     if (semantic) {
       config.semantic.enabled = readBoolean(semantic.enabled, config.semantic.enabled);
+      const mode = readString(semantic.mode, config.semantic.mode);
+      if (mode === "off" || mode === "risk-tiered" || mode === "full") {
+        config.semantic.mode = mode;
+      }
       config.semantic.judgeToolCalls = readBoolean(semantic.judgeToolCalls, config.semantic.judgeToolCalls);
       config.semantic.judgeMessages = readBoolean(semantic.judgeMessages, config.semantic.judgeMessages);
       config.semantic.judgeFoundation = readBoolean(semantic.judgeFoundation, config.semantic.judgeFoundation);
+      config.semantic.judgeMemoryWrites = readBoolean(semantic.judgeMemoryWrites, config.semantic.judgeMemoryWrites);
       config.semantic.baseUrl = readString(semantic.baseUrl, config.semantic.baseUrl);
       config.semantic.model = readString(semantic.model, config.semantic.model);
       config.semantic.apiKeyEnv = readString(semantic.apiKeyEnv, config.semantic.apiKeyEnv);

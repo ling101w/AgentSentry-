@@ -86,6 +86,11 @@
             "type": "boolean",
             "description": "Enable OpenAI-compatible semantic judge."
           },
+          "mode": {
+            "type": "string",
+            "enum": ["off", "risk-tiered", "full"],
+            "description": "Semantic judge scheduling mode. full reviews every enabled surface; risk-tiered reviews only security-relevant calls."
+          },
           "judgeToolCalls": {
             "type": "boolean",
             "description": "Use semantic judge for high-risk tool call review."
@@ -97,6 +102,10 @@
           "judgeFoundation": {
             "type": "boolean",
             "description": "Use semantic judge for foundation files such as SKILL.md and config files."
+          },
+          "judgeMemoryWrites": {
+            "type": "boolean",
+            "description": "Use semantic judge for long-term memory write review."
           },
           "baseUrl": {
             "type": "string",
@@ -279,9 +288,17 @@
       "label": "Semantic Judge",
       "help": "Enables OpenAI-compatible semantic risk classification."
     },
+    "semantic.mode": {
+      "label": "Semantic Scheduling",
+      "help": "Choose off, risk-tiered, or full LLM-Judge scheduling."
+    },
     "semantic.judgeFoundation": {
       "label": "Semantic Foundation Scan",
       "help": "Uses the semantic judge to review SKILL.md and config files during foundation scan."
+    },
+    "semantic.judgeMemoryWrites": {
+      "label": "Semantic Memory Write Review",
+      "help": "Uses the semantic judge to review whether candidate long-term memory is safe to persist."
     },
     "semantic.model": {
       "label": "Semantic Model",

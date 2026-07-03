@@ -30,6 +30,29 @@ export type RiskVector = {
   supply_chain: number;
 };
 
+export type TaintSink =
+  | "sensitive_read"
+  | "write_file"
+  | "send_email"
+  | "call_api"
+  | "shell_exec"
+  | "memory_write"
+  | "config_write"
+  | "skill_install";
+
+export type TaintProfile = {
+  tainted: boolean;
+  source: TrustSource;
+  confidence: number;
+  blocked_sinks: TaintSink[];
+  allowed_uses: string[];
+  reasons: string[];
+  tags: string[];
+  risk_vector: RiskVector;
+  provenance_untrusted: boolean;
+  confidentiality: "public" | "internal" | "secret";
+};
+
 export type TrustLabel = {
   id: string;
   source: TrustSource;
@@ -139,7 +162,7 @@ const SENSITIVE_PATTERNS: Array<[string, RegExp]> = [
   ["slack_token", /\bxox[baprs]-[a-zA-Z0-9-]{16,}\b/],
   ["aws_access_key", /\bAKIA[0-9A-Z]{16}\b/],
   ["bearer_token", /\bbearer\s+[a-zA-Z0-9._-]{16,}\b/i],
-  ["named_secret", /\b(api[_-]?key|token|secret|password|credential|authorization)\b/i],
+  ["named_secret", /\b(api[_-]?key|token|secret|password|credential|authorization)\s*[:=]\s*["']?[a-zA-Z0-9._/-]{12,}/i],
   ["openclaw_config", /\bopenclaw\.json\b/i],
 ];
 
@@ -192,7 +215,7 @@ export function analyzeTrustContent(
   };
   matched.promptInjection.push(...matchPatterns(text, DATA_FLOW_EXFIL_PATTERNS));
   matched.promptInjection = matched.promptInjection.filter((item) => !isNegatedSafetyBoundary(item));
-  matched.memoryPoison = matched.memoryPoison.filter((item) => !isNegatedSafetyBoundary(item));
+  matched.memoryPoison = matched.memoryPoison.filter((item) => !isNegatedSafetyBoundary(item) && !isOperationalStatusBoundary(item));
   if (hasSkillDataFlow(text, lowerPath, source, options.toolName)) {
     matched.skillExfil.push("skill code reads local state and contacts an external endpoint");
   }
@@ -234,8 +257,17 @@ export function analyzeTrustContent(
     matched.promptInjection.length ? "prompt_injection" : "",
   ].filter(Boolean);
 
-  const tainted = riskMax(risk) >= 50 || source === "external_web" || source === "email_html" || source === "pdf_text" || source === "image_metadata" || source === "webhook";
+  const provenanceUntrusted = source === "external_web" || source === "email_html" || source === "pdf_text" || source === "image_metadata" || source === "webhook";
   const confidentiality = matched.sensitive.length ? "secret" : source === "config" || source === "memory" ? "internal" : "public";
+  const taintProfile = buildTaintProfile({
+    source,
+    risk,
+    tags,
+    sensitiveKinds: matched.sensitive,
+    provenanceUntrusted,
+    confidentiality,
+  });
+  const tainted = taintProfile.tainted;
   const integrity: TrustLevel = riskMax(risk) >= 80 ? "tainted" : SOURCE_DEFAULT_TRUST[source];
   const label = createTrustLabel({
     source,
@@ -249,6 +281,8 @@ export function analyzeTrustContent(
       tags,
       risk_vector: risk,
       sensitive_kinds: matched.sensitive,
+      provenance_untrusted: provenanceUntrusted,
+      taint_profile: taintProfile,
     },
   });
 
@@ -358,6 +392,30 @@ export function trustRank(level: TrustLevel): number {
 export function minimumTrustLabel(labels: TrustLabel[]): TrustLabel | null {
   if (!labels.length) return null;
   return labels.reduce((lowest, label) => trustRank(label.integrity) < trustRank(lowest.integrity) ? label : lowest, labels[0]);
+}
+
+export function taintProfileFromLabel(label: TrustLabel): TaintProfile | null {
+  const value = label.evidence?.taint_profile;
+  if (!value || typeof value !== "object") return null;
+  const profile = value as Partial<TaintProfile>;
+  if (!Array.isArray(profile.blocked_sinks) || typeof profile.confidence !== "number") return null;
+  return {
+    tainted: Boolean(profile.tainted),
+    source: profile.source || label.source,
+    confidence: clampScore(profile.confidence),
+    blocked_sinks: profile.blocked_sinks.filter(isTaintSink),
+    allowed_uses: Array.isArray(profile.allowed_uses) ? profile.allowed_uses.filter((item): item is string => typeof item === "string") : [],
+    reasons: Array.isArray(profile.reasons) ? profile.reasons.filter((item): item is string => typeof item === "string") : [],
+    tags: Array.isArray(profile.tags) ? profile.tags.filter((item): item is string => typeof item === "string") : [],
+    risk_vector: isRiskVector(profile.risk_vector) ? profile.risk_vector : createRiskVector(),
+    provenance_untrusted: Boolean(profile.provenance_untrusted),
+    confidentiality: profile.confidentiality === "secret" || profile.confidentiality === "internal" ? profile.confidentiality : "public",
+  };
+}
+
+export function taintBlockedForSink(label: TrustLabel, sink: TaintSink): boolean {
+  const profile = taintProfileFromLabel(label);
+  return Boolean(profile && profile.confidence >= 50 && profile.blocked_sinks.includes(sink));
 }
 
 export function createRiskVector(partial: Partial<RiskVector> = {}): RiskVector {
@@ -513,6 +571,10 @@ function deobfuscateSeparators(text: string): string {
 function decodedTextCandidates(text: string): string[] {
   const tokens = text.match(/[A-Za-z0-9+/_=-]{16,}|(?:[0-9A-Fa-f]{2}){8,}/g) || [];
   const out: string[] = [];
+  const percent = decodePercentText(text);
+  if (percent) out.push(percent);
+  const unicode = decodeUnicodeEscapes(text);
+  if (unicode) out.push(unicode);
   for (const token of tokens.slice(0, 28)) {
     if (token.length > 4096) continue;
     for (const candidate of encodedTokenVariants(token)) {
@@ -523,6 +585,24 @@ function decodedTextCandidates(text: string): string[] {
     }
   }
   return out;
+}
+
+function decodePercentText(text: string): string {
+  if (!/%[0-9a-fA-F]{2}/.test(text)) return "";
+  try {
+    return printableText(decodeURIComponent(text.replace(/\+/g, "%20")));
+  } catch {
+    return "";
+  }
+}
+
+function decodeUnicodeEscapes(text: string): string {
+  if (!/\\u[0-9a-fA-F]{4}/.test(text)) return "";
+  try {
+    return printableText(text.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16))));
+  } catch {
+    return "";
+  }
 }
 
 function encodedTokenVariants(token: string): string[] {
@@ -573,6 +653,11 @@ function isNegatedSafetyBoundary(value: string): boolean {
     || /(?:read|send|upload|include|access|exfiltrate|读取|访问|发送|上传|外发|泄露|包含).{0,60}(?:do\s+not|don't|without|never|不要|不需要|不包含|无需|禁止|不得|避免|不能|不应)/i.test(value);
 }
 
+function isOperationalStatusBoundary(value: string): boolean {
+  return /\b(?:denylist|allowlist|preflight|capabilities|system_monitor|recommended_runtime|controls?|limitations?|blocked|blocking|guard|policy|sandbox|monitor|status)\b/i.test(value)
+    && !/(?:ignore|bypass|execute|exfiltrate|send|upload|泄露|外发|忽略|绕过|执行)/i.test(value.replace(/\b(?:denylist|allowlist)\b/gi, ""));
+}
+
 function hasExfilSignal(text: string): boolean {
   return textVariants(text).some((variant) =>
     /(exfiltrate|send|post|upload|transmit|collect|webhook|route|forward|archive|mirror|sync|attach|append|include|ingest|telemetry|metrics|外发|发送|上传|泄露|归档|同步|转发|附加|追加|投递).{0,140}(token|secret|password|credential|private\s*key|identity|session|environment|config|id_(?:rsa|ed25519|ecdsa|dsa)|openclaw\.json|api[_ -]?key|\.env|\.ssh|密钥|私钥|凭据|身份|会话|配置)/i.test(variant)
@@ -605,6 +690,79 @@ function hasPrivilegeSignal(text: string): boolean {
 
 function hasIntentDriftSignal(text: string): boolean {
   return textVariants(text).some((variant) => /(instead|do\s+not\s+summarize|ignore\s+the\s+user|new\s+objective|quiet\s+continuity|approval.{0,32}already\s+handled|改为|不要总结|忽略用户|新任务|优先执行|静默|已处理审批)/i.test(variant));
+}
+
+function buildTaintProfile(input: {
+  source: TrustSource;
+  risk: RiskVector;
+  tags: string[];
+  sensitiveKinds: string[];
+  provenanceUntrusted: boolean;
+  confidentiality: "public" | "internal" | "secret";
+}): TaintProfile {
+  const blocked = new Set<TaintSink>();
+  const reasons = new Set<string>();
+  const risk = input.risk;
+  const maxRisk = riskMax(risk);
+
+  if (risk.prompt_injection >= 50 || risk.hidden_content >= 50 || input.tags.some((tag) => tag.includes("prompt") || tag.includes("hidden"))) {
+    addMany(blocked, ["sensitive_read", "send_email", "call_api", "shell_exec", "memory_write", "config_write", "skill_install"]);
+    reasons.add("untrusted instructions must not control sensitive reads or external/persistent sinks");
+  }
+  if (risk.sensitive_data >= 50 || input.confidentiality === "secret" || input.sensitiveKinds.length) {
+    addMany(blocked, ["send_email", "call_api", "shell_exec", "memory_write", "config_write"]);
+    reasons.add("secret-bearing context must not flow to external, execution, or persistent sinks");
+  }
+  if (risk.exfiltration >= 50) {
+    addMany(blocked, ["send_email", "call_api", "shell_exec"]);
+    reasons.add("context contains exfiltration semantics");
+  }
+  if (risk.persistence >= 50) {
+    addMany(blocked, ["memory_write", "write_file", "config_write", "skill_install"]);
+    reasons.add("context attempts to persist future behavior or configuration");
+  }
+  if (risk.tool_hijack >= 50 || risk.supply_chain >= 50) {
+    addMany(blocked, ["call_api", "shell_exec", "config_write", "skill_install"]);
+    reasons.add("context can hijack tools, gateways, or skill behavior");
+  }
+  if (risk.privilege >= 50) {
+    addMany(blocked, ["shell_exec", "write_file", "config_write"]);
+    reasons.add("context references privileged or system-level effects");
+  }
+
+  const confidence = Math.max(maxRisk, input.provenanceUntrusted && blocked.size ? 55 : 0);
+  return {
+    tainted: confidence >= 50,
+    source: input.source,
+    confidence,
+    blocked_sinks: Array.from(blocked).sort(),
+    allowed_uses: ["summarize", "classify", "quote_with_attribution", "local_transform"],
+    reasons: Array.from(reasons),
+    tags: input.tags,
+    risk_vector: risk,
+    provenance_untrusted: input.provenanceUntrusted,
+    confidentiality: input.confidentiality,
+  };
+}
+
+function addMany<T>(set: Set<T>, values: T[]): void {
+  for (const value of values) set.add(value);
+}
+
+function isTaintSink(value: unknown): value is TaintSink {
+  return value === "sensitive_read"
+    || value === "write_file"
+    || value === "send_email"
+    || value === "call_api"
+    || value === "shell_exec"
+    || value === "memory_write"
+    || value === "config_write"
+    || value === "skill_install";
+}
+
+function isRiskVector(value: unknown): value is RiskVector {
+  if (!value || typeof value !== "object") return false;
+  return "prompt_injection" in value && "sensitive_data" in value && "tool_hijack" in value;
 }
 
 function score(condition: boolean, value: number): number {

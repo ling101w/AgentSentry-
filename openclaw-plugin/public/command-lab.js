@@ -2,6 +2,7 @@ const ALL_SESSIONS = "__all__";
 
 const state = {
   records: [],
+  detailCache: new Map(),
   stats: {},
   selectedId: "",
   selectedSession: ALL_SESSIONS,
@@ -12,6 +13,15 @@ const state = {
   resetNextSubmit: true,
   streamPage: 1,
   streamPageSize: 20,
+  enforcement: null,
+  benchmarks: {
+    cases: [],
+    files: [],
+    sources: [],
+    categories: [],
+    selectedId: "",
+    loadedCase: null,
+  },
 };
 
 if (!state.clientId) {
@@ -37,6 +47,7 @@ const typeNames = {
   tool_result: "工具结果",
   guard_finding: "防护发现",
   alert: "告警",
+  approval_request: "审批请求",
   approval_resolution: "审批结果",
   approval_cache_hit: "审批缓存",
   response_cover: "响应覆盖",
@@ -48,6 +59,24 @@ const severityNames = {
   success: "通过",
   warning: "警告",
   danger: "高危",
+};
+
+const enforcementModeText = {
+  observe: {
+    label: "观察",
+    title: "观察模式",
+    text: "只记录裁决、发现和告警，不改变 OpenClaw 原生工具执行结果。适合跑无防护基线、观察误报和做对比实验。",
+  },
+  approval: {
+    label: "审批",
+    title: "审批模式",
+    text: "高风险 ask/deny 工具调用进入 OpenClaw 人工审批；选择 allow-always 后会按工具名和参数哈希缓存同一操作。",
+  },
+  block: {
+    label: "阻断",
+    title: "阻断模式",
+    text: "确定为 deny 的高风险工具调用在执行前硬阻断。适合比赛演示、高风险工具调用和真实防护验证。",
+  },
 };
 
 const layerNames = {
@@ -163,10 +192,10 @@ applyScenario($("scenarioSelect")?.value || "prompt_injection", { overwrite: tru
 init();
 state.timer = setInterval(() => {
   if (state.autoRefresh) refresh({ keepSelection: true });
-}, 2500);
+}, 5000);
 
 async function init() {
-  await detectLabApi();
+  await Promise.all([detectLabApi(), refreshEnforcementMode(), loadBenchmarks()]);
   refresh({ keepSelection: false });
 }
 
@@ -194,6 +223,73 @@ function bindEvents() {
   });
   $("limitSelect").addEventListener("change", () => refresh({ keepSelection: true }));
   $("copyPayloadBtn").addEventListener("click", copySelectedPayload);
+  $("modeSelect")?.addEventListener("change", () => setEnforcementMode($("modeSelect").value));
+  $("benchmarkSuiteSelect")?.addEventListener("change", () => renderBenchmarkCases());
+  $("benchmarkSourceSelect")?.addEventListener("change", () => renderBenchmarkCases());
+  $("benchmarkCategorySelect")?.addEventListener("change", () => renderBenchmarkCases());
+  $("benchmarkSearchInput")?.addEventListener("input", () => renderBenchmarkCases());
+  $("benchmarkCaseSelect")?.addEventListener("change", () => {
+    state.benchmarks.selectedId = $("benchmarkCaseSelect").value;
+    renderBenchmarkDetail();
+  });
+  $("loadBenchmarkBtn")?.addEventListener("click", () => loadSelectedBenchmarkCase());
+  $("runBenchmarkBtn")?.addEventListener("click", async () => {
+    if (loadSelectedBenchmarkCase()) await submitCommand({ copy: false });
+  });
+  ["scenarioSelect", "toolSelect", "targetInput", "commandInput"].forEach((id) => {
+    $(id)?.addEventListener(id === "commandInput" ? "input" : "change", () => {
+      if (state.suppressBenchmarkClear) return;
+      state.benchmarks.loadedCase = null;
+    });
+  });
+}
+
+async function refreshEnforcementMode() {
+  try {
+    const response = await fetch("/api/settings/enforcement", { cache: "no-store" }).then((res) => res.json());
+    if (!response.ok) throw new Error(response.error || "读取模式失败");
+    state.enforcement = response;
+    renderEnforcementMode();
+  } catch (error) {
+    const status = $("modeStatus");
+    if (status) status.textContent = `模式读取失败：${error.message || error}`;
+  }
+}
+
+async function setEnforcementMode(mode) {
+  const select = $("modeSelect");
+  const status = $("modeStatus");
+  if (select) select.disabled = true;
+  if (status) status.textContent = "模式保存中";
+  try {
+    const response = await fetch("/api/settings/enforcement", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }).then((res) => res.json());
+    if (!response.ok) throw new Error(response.error || "保存失败");
+    state.enforcement = response;
+    renderEnforcementMode();
+    refresh({ keepSelection: true });
+  } catch (error) {
+    if (status) status.textContent = `模式保存失败：${error.message || error}`;
+    await refreshEnforcementMode();
+  } finally {
+    if (select) select.disabled = false;
+  }
+}
+
+function renderEnforcementMode() {
+  const mode = state.enforcement?.mode || "observe";
+  const meta = enforcementModeText[mode] || enforcementModeText.observe;
+  const select = $("modeSelect");
+  if (select && select.value !== mode) select.value = mode;
+  const status = $("modeStatus");
+  if (status) status.textContent = `当前：${meta.label}`;
+  const title = $("modeHelpTitle");
+  if (title) title.textContent = meta.title;
+  const help = $("modeHelpText");
+  if (help) help.textContent = meta.text;
 }
 
 function renderPresets() {
@@ -241,6 +337,171 @@ function renderScenarioSummary(preset) {
   `;
 }
 
+async function loadBenchmarks() {
+  const count = $("benchmarkCount");
+  try {
+    const response = await fetch("/api/lab/benchmarks?limit=2000", { cache: "no-store" }).then((res) => res.json());
+    if (!response.ok) throw new Error(response.error || "读取失败");
+    state.benchmarks.cases = response.cases || [];
+    state.benchmarks.files = response.files || [];
+    state.benchmarks.sources = response.sources || [];
+    state.benchmarks.categories = response.categories || [];
+    renderBenchmarkFilters();
+    renderBenchmarkCases();
+    if (count) count.textContent = `${formatNumber(response.total || 0)} 条`;
+  } catch (error) {
+    if (count) count.textContent = "读取失败";
+    const detail = $("benchmarkDetail");
+    if (detail) detail.textContent = `读取 benchmark 样例失败：${error.message || error}`;
+  }
+}
+
+function renderBenchmarkFilters() {
+  const cases = state.benchmarks.cases || [];
+  const suites = uniqueOptions(cases, (item) => item.suite_key, (item) => item.suite || item.suite_key);
+  const sources = uniqueOptions(cases, (item) => item.source);
+  const categories = uniqueOptions(cases, (item) => item.category);
+  fillSelect("benchmarkSuiteSelect", suites, "全部样例集");
+  fillSelect("benchmarkSourceSelect", sources, "全部来源");
+  fillSelect("benchmarkCategorySelect", categories, "全部类别");
+}
+
+function renderBenchmarkCases() {
+  const cases = filteredBenchmarkCases();
+  const select = $("benchmarkCaseSelect");
+  const count = $("benchmarkCount");
+  if (count) count.textContent = `${formatNumber(cases.length)} 条`;
+  if (!select) return;
+  if (!cases.length) {
+    select.innerHTML = '<option value="">无匹配样例</option>';
+    state.benchmarks.selectedId = "";
+    renderBenchmarkDetail();
+    return;
+  }
+  if (!cases.some((item) => item.id === state.benchmarks.selectedId)) {
+    state.benchmarks.selectedId = cases[0].id;
+  }
+  select.innerHTML = cases.map((item) => `
+    <option value="${escapeHtml(item.id)}" ${item.id === state.benchmarks.selectedId ? "selected" : ""}>
+      ${escapeHtml(compactText(`${item.source} · ${item.category} · ${item.case_id}`, 118))}
+    </option>
+  `).join("");
+  renderBenchmarkDetail();
+}
+
+function filteredBenchmarkCases() {
+  const suite = $("benchmarkSuiteSelect")?.value || "";
+  const source = $("benchmarkSourceSelect")?.value || "";
+  const category = $("benchmarkCategorySelect")?.value || "";
+  const query = ($("benchmarkSearchInput")?.value || "").trim().toLowerCase();
+  return (state.benchmarks.cases || []).filter((item) => {
+    if (suite && item.suite_key !== suite) return false;
+    if (source && item.source !== source) return false;
+    if (category && item.category !== category) return false;
+    if (!query) return true;
+    return [
+      item.case_id,
+      item.source,
+      item.source_ref,
+      item.category,
+      item.scenario,
+      item.command,
+      item.tool,
+      item.target,
+      item.notes,
+      JSON.stringify(item.params || {}),
+    ].join("\n").toLowerCase().includes(query);
+  });
+}
+
+function selectedBenchmarkCase() {
+  const id = state.benchmarks.selectedId || $("benchmarkCaseSelect")?.value || "";
+  return (state.benchmarks.cases || []).find((item) => item.id === id) || null;
+}
+
+function renderBenchmarkDetail() {
+  const target = $("benchmarkDetail");
+  if (!target) return;
+  const item = selectedBenchmarkCase();
+  if (!item) {
+    target.textContent = "没有匹配的 benchmark 样例。";
+    return;
+  }
+  const result = item.result || {};
+  const resultText = result.decision_sequence
+    ? `${(result.decision_sequence || []).join(" -> ") || "无工具裁决"}${result.false_positive ? " · 误拦" : ""}${result.unsafe_release ? " · 漏放" : ""}`
+    : "尚未找到历史评测结果";
+  target.innerHTML = `
+    <div class="case-title">
+      <strong>${escapeHtml(item.case_id)}</strong>
+      <span>${escapeHtml(item.source_ref || "原始引用未记录")}</span>
+    </div>
+    <div class="benchmark-meta">
+      <span>样例集</span><strong>${escapeHtml(item.suite)}</strong>
+      <span>来源</span><strong>${escapeHtml(item.source)}</strong>
+      <span>类别</span><strong>${escapeHtml(item.category)}</strong>
+      <span>期望</span><strong>${escapeHtml(item.attack ? "攻击/应保护" : "正常/应放行")} · ${escapeHtml(item.expectation || "-")}</strong>
+      <span>工具</span><strong>${escapeHtml(displayTool(item.tool || "自动识别"))}${item.target ? ` · ${escapeHtml(item.target)}` : ""}</strong>
+      <span>上次结果</span><strong>${escapeHtml(resultText)}</strong>
+    </div>
+    <div>
+      <strong>输入</strong>
+      <div class="benchmark-json">${escapeHtml(item.command || "")}</div>
+    </div>
+    ${item.params ? `<div><strong>工具参数</strong><div class="benchmark-json">${escapeHtml(JSON.stringify(item.params, null, 2))}</div></div>` : ""}
+    ${item.notes ? `<div><strong>备注</strong><div class="benchmark-json">${escapeHtml(item.notes)}</div></div>` : ""}
+  `;
+}
+
+function loadSelectedBenchmarkCase() {
+  const item = selectedBenchmarkCase();
+  if (!item) {
+    setCommandState("未选择样例", "bad");
+    return false;
+  }
+  state.suppressBenchmarkClear = true;
+  const scenario = scenarioDefaults[item.scenario] ? item.scenario : "manual";
+  $("scenarioSelect").value = scenario;
+  $("toolSelect").value = item.tool || "";
+  $("targetInput").value = item.target || "";
+  $("commandInput").value = item.command || "";
+  state.resetNextSubmit = item.reset_session !== false;
+  state.benchmarks.loadedCase = item;
+  renderScenarioSummary({
+    label: `${item.source} benchmark`,
+    summary: `${item.attack ? "攻击/应保护" : "正常/应放行"} · ${item.category} · ${item.case_id}`,
+    tool: item.tool || "自动识别",
+    target: item.target || "",
+  });
+  state.suppressBenchmarkClear = false;
+  setCommandState("已载入 benchmark 样例", "");
+  $("commandInput").focus();
+  return true;
+}
+
+function fillSelect(id, options, allLabel) {
+  const select = $(id);
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = [
+    `<option value="">${escapeHtml(allLabel)}</option>`,
+    ...options.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`),
+  ].join("");
+  if (options.some((item) => item.value === current)) select.value = current;
+}
+
+function uniqueOptions(items, valueFn, labelFn = valueFn) {
+  const map = new Map();
+  for (const item of items) {
+    const value = String(valueFn(item) || "");
+    if (!value || map.has(value)) continue;
+    map.set(value, String(labelFn(item) || value));
+  }
+  return [...map.entries()]
+    .map(([value, label]) => ({ value, label }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
 async function submitCommand({ copy }) {
   const command = $("commandInput").value.trim();
   if (!command) {
@@ -260,18 +521,27 @@ async function submitCommand({ copy }) {
 
   setCommandState(copy ? "标记中" : "记录中", "loading");
   try {
+    const benchmark = state.benchmarks.loadedCase;
+    const exactBenchmark = benchmark
+      && command === benchmark.command
+      && ($("toolSelect")?.value || "") === (benchmark.tool || "")
+      && ($("targetInput")?.value.trim() || "") === (benchmark.target || "");
+    const requestBody = {
+      command,
+      copied,
+      scenario: $("scenarioSelect").value,
+      tool: $("toolSelect")?.value || "",
+      target: $("targetInput")?.value.trim() || "",
+      clientId: exactBenchmark ? (benchmark.client_id || state.clientId) : state.clientId,
+      resetSession: exactBenchmark ? benchmark.reset_session !== false : state.resetNextSubmit,
+      benchmarkCaseId: exactBenchmark ? benchmark.case_id : undefined,
+      benchmarkSource: exactBenchmark ? benchmark.source : undefined,
+      params: exactBenchmark && benchmark.params ? benchmark.params : undefined,
+    };
     const response = await fetch("/api/lab/command", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        command,
-        copied,
-        scenario: $("scenarioSelect").value,
-        tool: $("toolSelect")?.value || "",
-        target: $("targetInput")?.value.trim() || "",
-        clientId: state.clientId,
-        resetSession: state.resetNextSubmit,
-      }),
+      body: JSON.stringify(requestBody),
     });
     const body = await response.json();
     if (!response.ok || !body.ok) throw new Error(body.error || "记录失败");
@@ -279,8 +549,8 @@ async function submitCommand({ copy }) {
     state.selectedSession = body.record?.session_key || ALL_SESSIONS;
     state.selectedId = body.record?.id || "";
     const decision = strongestDecision(body.decisions || []);
-    setCommandState(commandStateText({ copied, decision }), commandStateTone(decision));
     await refresh({ keepSelection: true });
+    setCommandState(commandStateText({ copied, decision }), commandStateTone(decision));
   } catch (error) {
     setCommandState(copied ? "已复制 · 写入失败" : "写入失败", "bad");
   }
@@ -301,8 +571,8 @@ async function refresh({ keepSelection = true } = {}) {
   try {
     const limit = $("limitSelect")?.value || "500";
     const [recordsResponse, statsResponse] = await Promise.all([
-      fetch(`/api/records?limit=${encodeURIComponent(limit)}`).then((res) => res.json()),
-      fetch("/api/stats").then((res) => res.json()),
+      fetch(`/api/records?compact=1&limit=${encodeURIComponent(limit)}`).then((res) => res.json()),
+      fetch(`/api/stats?limit=${encodeURIComponent(Math.min(Number(limit) || 500, 1000))}`).then((res) => res.json()),
     ]);
     state.records = [...(recordsResponse.records || [])]
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
@@ -488,30 +758,63 @@ function renderDetail(record) {
   }
   button.disabled = false;
   button.dataset.recordId = record.id;
+  const fullRecord = fullDetailRecord(record.id) || record;
   $("detailBody").className = "detail-body";
   $("detailBody").innerHTML = `
     <section class="detail-summary">
-      <strong>${escapeHtml(titleText(record))}</strong>
-      <div>${escapeHtml(summaryText(record))}</div>
+      <strong>${escapeHtml(titleText(fullRecord))}</strong>
+      <div>${escapeHtml(summaryText(fullRecord))}</div>
     </section>
     <section class="detail-grid">
-      <span>类型</span><strong>${escapeHtml(typeName(record))}</strong>
-      <span>层级</span><strong>${escapeHtml(layerNames[record.layer] || record.layer || "-")}</strong>
-      <span>级别</span><strong>${escapeHtml(severityNames[record.severity] || record.severity || "-")}</strong>
-      <span>会话</span><strong>${escapeHtml(record.session_key || "-")}</strong>
-      <span>运行</span><strong>${escapeHtml(record.run_id || "-")}</strong>
-      <span>时间</span><strong>${escapeHtml(formatDate(record.created_at))}</strong>
+      <span>类型</span><strong>${escapeHtml(typeName(fullRecord))}</strong>
+      <span>层级</span><strong>${escapeHtml(layerNames[fullRecord.layer] || fullRecord.layer || "-")}</strong>
+      <span>级别</span><strong>${escapeHtml(severityNames[fullRecord.severity] || fullRecord.severity || "-")}</strong>
+      <span>会话</span><strong>${escapeHtml(fullRecord.session_key || "-")}</strong>
+      <span>运行</span><strong>${escapeHtml(fullRecord.run_id || "-")}</strong>
+      <span>时间</span><strong>${escapeHtml(formatDate(fullRecord.created_at))}</strong>
     </section>
-    <pre>${escapeHtml(JSON.stringify(record.payload || {}, null, 2))}</pre>
+    ${record.payload?.__compact && !state.detailCache.has(record.id) ? '<div class="detail-empty detail-loading">正在读取完整 payload...</div>' : ""}
+    <pre>${escapeHtml(JSON.stringify(fullRecord.payload || {}, null, 2))}</pre>
   `;
+  if (record.payload?.__compact && !state.detailCache.has(record.id)) {
+    void loadRecordDetail(record.id);
+  }
 }
 
 async function copySelectedPayload() {
-  const record = state.records.find((item) => item.id === $("copyPayloadBtn").dataset.recordId);
+  const record = await ensureRecordDetail($("copyPayloadBtn").dataset.recordId);
   if (!record) return;
   const ok = await copyText(JSON.stringify(record, null, 2));
   $("copyPayloadBtn").textContent = ok ? "已复制" : "复制失败";
   setTimeout(() => ($("copyPayloadBtn").textContent = "复制 JSON"), 1100);
+}
+
+function fullDetailRecord(id) {
+  return state.detailCache.get(id) || null;
+}
+
+async function ensureRecordDetail(id) {
+  if (!id) return null;
+  if (state.detailCache.has(id)) return state.detailCache.get(id);
+  const record = state.records.find((item) => item.id === id);
+  if (record && !record.payload?.__compact) return record;
+  return loadRecordDetail(id);
+}
+
+async function loadRecordDetail(id) {
+  try {
+    const response = await fetch(`/api/records/${encodeURIComponent(id)}`, { cache: "no-store" }).then((res) => res.json());
+    if (!response.ok || !response.record) throw new Error(response.error || "record not found");
+    state.detailCache.set(id, response.record);
+    if (state.selectedId === id) renderDetail(response.record);
+    return response.record;
+  } catch (error) {
+    if (state.selectedId === id) {
+      const loading = document.querySelector(".detail-loading");
+      if (loading) loading.textContent = `读取完整 payload 失败：${error.message || error}`;
+    }
+    return null;
+  }
 }
 
 function stageFor(record) {

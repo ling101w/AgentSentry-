@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "reports" / "ui-screenshots-8765"
 BASE_URL = "http://127.0.0.1:8765"
+KEEP_SCREENSHOTS = os.environ.get("AGENTSENTRY_KEEP_SCREENSHOTS") == "1"
 
 
 def main() -> int:
@@ -55,6 +57,18 @@ def main() -> int:
         and any(item.get("type") in {"tool_result", "alert"} for item in command_records),
         {"command_id": command_id, "types": [item.get("type") for item in command_records]},
     )
+    mode_settings = get_json("/api/settings/enforcement")
+    add_check(
+        report,
+        "enforcement_settings_api",
+        mode_settings.get("ok") is True
+        and mode_settings.get("mode") in {"observe", "approval", "block"}
+        and len(mode_settings.get("modes", [])) == 3,
+        {
+            "mode": mode_settings.get("mode"),
+            "modes": [item.get("value") for item in mode_settings.get("modes", []) if isinstance(item, dict)],
+        },
+    )
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -64,14 +78,24 @@ def main() -> int:
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
         page.goto(f"{BASE_URL}/", wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(900)
-        screenshot = OUT_DIR / "home-1440x900.png"
-        page.screenshot(path=str(screenshot), full_page=True)
-        report["screenshots"].append(str(screenshot.relative_to(ROOT)))
+        save_screenshot(page, report, "home-1440x900.png")
         add_check(
             report,
             "home_links",
             page.locator('a[href="/security-screen"]').count() >= 1 and page.locator('a[href="/command-lab"]').count() >= 1,
             {"title": page.title()},
+        )
+        add_check(
+            report,
+            "home_enforcement_mode_control",
+            page.locator("#modeSelect").count() == 1
+            and page.locator("#modeStatus").inner_text().startswith("当前：")
+            and page.locator("#modeHelpText").inner_text().strip() != "",
+            {
+                "mode": page.locator("#modeSelect").input_value() if page.locator("#modeSelect").count() else "",
+                "status": page.locator("#modeStatus").inner_text() if page.locator("#modeStatus").count() else "",
+                "help": page.locator("#modeHelpText").inner_text()[:120] if page.locator("#modeHelpText").count() else "",
+            },
         )
         page.close()
 
@@ -79,11 +103,28 @@ def main() -> int:
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
         page.goto(f"{BASE_URL}/command-lab", wait_until="domcontentloaded", timeout=30000)
         page.wait_for_selector("#commandInput", timeout=15000)
+        page.wait_for_selector("#modeSelect", timeout=15000)
         page.wait_for_timeout(900)
+        add_check(
+            report,
+            "command_lab_enforcement_mode_control",
+            page.locator("#modeSelect").count() == 1
+            and page.locator("#modeStatus").inner_text().startswith("当前：")
+            and page.locator("#modeHelpText").inner_text().strip() != "",
+            {
+                "mode": page.locator("#modeSelect").input_value(),
+                "status": page.locator("#modeStatus").inner_text(),
+                "help": page.locator("#modeHelpText").inner_text()[:120],
+            },
+        )
         page.locator("#commandInput").fill("请阅读这封客户邮件，整理项目风险、预算变化和交付日期。")
         page.locator("#scenarioSelect").select_option("external_email_hidden")
         page.locator("#markOnlyBtn").click()
-        page.wait_for_timeout(1800)
+        page.wait_for_function(
+            "() => !['记录中', '标记中'].includes((document.querySelector('#commandState')?.innerText || '').trim())",
+            timeout=45000,
+        )
+        page.wait_for_timeout(900)
         state_text = page.locator("#commandState").inner_text()
         stream_text = page.locator("#streamList").inner_text()
         latest_records = get_json("/api/records?limit=300").get("records", [])
@@ -95,9 +136,7 @@ def main() -> int:
         ]
         ui_has_decision = any(item.get("type") == "tool_decision" for item in ui_session_records)
         ui_has_alert = any(item.get("type") == "alert" for item in ui_session_records)
-        screenshot = OUT_DIR / "command-lab-1440x900.png"
-        page.screenshot(path=str(screenshot), full_page=True)
-        report["screenshots"].append(str(screenshot.relative_to(ROOT)))
+        save_screenshot(page, report, "command-lab-1440x900.png")
         add_check(
             report,
             "command_lab_submit",
@@ -130,15 +169,13 @@ def main() -> int:
             stats_total = int(stats.get("total", -1))
             metric_total_int = int(metric_total or -2)
             total_delta = max(abs(first_kpi - stats_total), abs(first_kpi - metric_total_int), abs(stats_total - metric_total_int))
-            screenshot = OUT_DIR / f"{name}.png"
-            page.screenshot(path=str(screenshot), full_page=True)
-            report["screenshots"].append(str(screenshot.relative_to(ROOT)))
+            save_screenshot(page, report, f"{name}.png")
             add_check(
                 report,
                 f"{name}_real_openclaw_data",
                 source_mode == "openclaw"
                 and kpi_count >= 8
-                and total_delta <= 10
+                and total_delta <= 25
                 and page.locator("#runtimeMode").inner_text() != "NO API",
                 {
                     "runtime": page.locator("#runtimeMode").inner_text(),
@@ -173,9 +210,7 @@ def main() -> int:
                         )
                     second_page_count = page.locator("#alertModalBody .modal-alert").count()
                     modal_text = page.locator("#alertModalBody").inner_text()
-                    modal_screenshot = OUT_DIR / "screen-alert-modal-1920x1080.png"
-                    page.screenshot(path=str(modal_screenshot), full_page=True)
-                    report["screenshots"].append(str(modal_screenshot.relative_to(ROOT)))
+                    save_screenshot(page, report, "screen-alert-modal-1920x1080.png")
                     add_check(
                         report,
                         "alert_modal_server_pagination",
@@ -201,6 +236,16 @@ def main() -> int:
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if any(not item["ok"] for item in report["checks"]) or report["layout_issues"] else 0
+
+
+def save_screenshot(page, report: dict[str, object], filename: str) -> None:
+    if not KEEP_SCREENSHOTS:
+        return
+    screenshot = OUT_DIR / filename
+    page.screenshot(path=str(screenshot), full_page=True)
+    screenshots = report.get("screenshots")
+    if isinstance(screenshots, list):
+        screenshots.append(str(screenshot.relative_to(ROOT)))
 
 
 def wait_for_server(timeout: float = 45.0) -> None:

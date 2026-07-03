@@ -35,9 +35,8 @@ REPORT_DIR = ROOT / "reports"
 RESULT_JSON = REPORT_DIR / "competition_experiment_results.json"
 RESULT_CSV = REPORT_DIR / "competition_case_results.csv"
 SUMMARY_CSV = REPORT_DIR / "competition_summary.csv"
-REPORT_MD = REPORT_DIR / "competition_report.md"
-GUIDE_MD = REPORT_DIR / "reproduction_guide.md"
-ATTACK_SCRIPTS_MD = REPORT_DIR / "agent_attack_scripts.md"
+OFFLINE_REPORT_MD = REPORT_DIR / "offline_competition_report.md"
+OFFLINE_ATTACK_SCRIPTS_MD = REPORT_DIR / "offline_agent_attack_scripts.md"
 ADVERSARIAL_JSONL = REPORT_DIR / "adversarial_testset.jsonl"
 OPENCLAW_EXPORT = ROOT / "runtime" / "openclaw-agentsentry-records.json"
 OPENCLAW_DASHBOARD = "http://127.0.0.1:8765"
@@ -460,9 +459,8 @@ def write_outputs(case_results: list[dict[str, Any]], summary_rows: list[dict[st
     _write_case_csv(case_results)
     _write_summary_csv(summary_rows)
     _write_adversarial_jsonl(payload)
-    REPORT_MD.write_text(render_report(payload), encoding="utf-8")
-    GUIDE_MD.write_text(render_reproduction_guide(payload), encoding="utf-8")
-    ATTACK_SCRIPTS_MD.write_text(render_attack_scripts(payload), encoding="utf-8")
+    OFFLINE_REPORT_MD.write_text(render_report(payload), encoding="utf-8")
+    OFFLINE_ATTACK_SCRIPTS_MD.write_text(render_attack_scripts(payload), encoding="utf-8")
 
 
 def _compact_case(row: dict[str, Any]) -> dict[str, Any]:
@@ -851,7 +849,7 @@ def render_reproduction_guide(payload: dict[str, Any]) -> str:
             "",
             "## 交付文件",
             "",
-            "- `reports/competition_report.md`：正式报告。",
+            "- `reports/offline_competition_report.md`：8000 离线对比实验报告。",
             "- `reports/competition_experiment_results.json`：完整机器可读结果。",
             "- `reports/competition_summary.csv`：汇总指标。",
             "- `reports/competition_case_results.csv`：逐用例结果。",
@@ -888,7 +886,7 @@ def main() -> None:
     print("AgentSentry competition experiments complete.")
     print(f"Results: {RESULT_JSON.relative_to(ROOT)}")
     print(f"Summary: {SUMMARY_CSV.relative_to(ROOT)}")
-    print(f"Report: {REPORT_MD.relative_to(ROOT)}")
+    print(f"Offline report: {OFFLINE_REPORT_MD.relative_to(ROOT)}")
     for row in summary_rows:
         print(
             f"{row['mode']}: ASR={row['ASR']} TPR={row['TPR']} FPR={row['FPR']} "

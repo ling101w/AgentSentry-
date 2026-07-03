@@ -1,25 +1,48 @@
+# Python / local environments
 .venv/
 __pycache__/
 .pytest_cache/
-.playwright-mcp/
 .mypy_cache/
 .ruff_cache/
 *.pyc
 *.pyo
+
+# Node / frontend builds
+node_modules/
+dist/
+build/
+
+# Local tools and browser automation state
+.playwright-mcp/
+
+# Secrets and local runtime state
+.env
 *.db
 *.sqlite
 *.sqlite3
-runtime/
-dist/
-build/
-node_modules/
-.env
+*.pid
+*.log
+runtime/*
+!runtime/README.md
+
+# OpenClaw local workspace may contain credentials and machine-local state.
+openclaw-workspace/
+
+# External research repos are large and not required for runtime deployment.
 AgentWard-main/
 AgentWard-main.zip
+third_party/benchmarks/*
+!third_party/benchmarks/README.md
+
+# Generated frontend alternates kept out of source control.
 src/agentsentry/static/security-screen.css
 src/agentsentry/static/security-screen.js
-openclaw-workspace/
+
+# Generated reports and one-off artifacts.
 reports/**/*.png
+reports/**/*.docx
+reports/benchmark_eval/
+reports/tool_attack_benchmark/
 reports/full_acceptance/full_acceptance_report_*.md
 reports/full_acceptance/full_acceptance_results_*.json
 reports/supervision_ablation/baseline-escaped-writes/
@@ -27,3 +50,8 @@ reports/supervision_ablation/*-outbox.jsonl
 reports/supervision_ablation/*-shell-exec.jsonl
 reports/supervision_ablation/*-memory.json
 reports/supervision_ablation/*-sensitive-read.jsonl
+
+# Output keeps the README and compressed deliverables, not expanded build trees.
+output/*
+!output/README.md
+!output/*.tar.gz

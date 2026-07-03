@@ -1,4 +1,10 @@
-# AgentSentry
+# 玄鉴 / AgentSentry
+
+参赛作品名称：
+
+> 玄鉴：面向智能体工具调用链的实时行为监督与风险拦截系统
+
+`AgentSentry` 是当前仓库和 OpenClaw 插件内部沿用的工程代码名。答辩、报告和演示建议统一使用“玄鉴”。
 
 AgentSentry is a runnable M2 prototype for an LLM-agent behavior firewall:
 
@@ -11,6 +17,16 @@ AgentSentry is a runnable M2 prototype for an LLM-agent behavior firewall:
 - Built-in benign/attack evaluation suite with ablations.
 
 Current scope: the deterministic layer enforces TaskSpec tool bounds, allowed target URLs, taint-to-sink checks, recipient/path/API allowlists, and fail-closed sink rules. The sentry layer is a lightweight rule/feature baseline that emits heuristic or `learned`-typed findings for residual-risk telemetry; it is not a trained IsolationForest/GNN model. The built-in evaluation suite is deterministic and offline by default; AgentDojo/InjecAgent integration remains adapter/future-work territory.
+
+## 推荐入口
+
+- 文档入口：`reports/START_HERE.md`
+- OpenClaw 插件主控制台：`http://127.0.0.1:8765/`
+- 业务测试台和 benchmark 逐条复测：`http://127.0.0.1:8765/command-lab`
+- 安全态势大屏：`http://127.0.0.1:8765/security-screen`
+- OpenClaw Control UI：`http://127.0.0.1:18789/`
+
+`8000` 是早期 FastAPI 离线原型和辅助研究入口；当前比赛展示与真实 OpenClaw 插件链路以 `8765` 为准。
 
 ## Quick Start
 
@@ -38,7 +54,7 @@ After installing, use `/agentsentry` in OpenClaw. The dashboard defaults to http
 The plugin dashboard includes:
 
 - `/` records console with JSON/CSV export.
-- `/command-lab` business request console that maps adversarial instructions to controlled business tools, runs the same policy decision path, executes allowed requests, and writes `tool_decision`, `guard_finding`, `alert`, and `tool_result` records.
+- `/command-lab` business request console that maps adversarial instructions and public benchmark cases to controlled business tools, runs the same policy decision path, executes allowed requests, and writes `tool_decision`, `guard_finding`, `alert`, and `tool_result` records.
 - `/security-screen` situation screen. Its default KPI scope is OpenClaw plugin records, so the top-left total matches `GET /api/stats`. Use `/api/security/overview?source=combined` only for the combined research view.
 
 The plugin defaults to observe-only mode. To actively gate risky tool calls, change `enforcement.mode` in the OpenClaw plugin config to `approval` or `block`. In approval mode, an OpenClaw `allow-always` resolution caches the exact tool name and parameter hash in `~/.openclaw/agentsentry/approval-cache.json`; clear it with `/agentsentry approvals reset`.
@@ -65,7 +81,7 @@ Useful runtime commands:
 To use a real OpenAI-compatible endpoint, set:
 
 ```powershell
-$env:OPENAI_API_KEY="sk-your-key"
+$env:OPENAI_API_KEY="YOUR_API_KEY"
 $env:OPENAI_BASE_URL="https://api.wushuang233.com/v1"
 $env:OPENAI_MODEL="gpt-5.5"
 ```
@@ -75,7 +91,7 @@ The dashboard is configured for the real model path. The scenario selector chang
 PowerShell example:
 
 ```powershell
-$env:OPENAI_API_KEY="sk-..."
+$env:OPENAI_API_KEY="YOUR_API_KEY"
 $env:OPENAI_BASE_URL="https://api.openai.com/v1"
 $env:OPENAI_MODEL="gpt-4o-mini"
 python -m uvicorn --app-dir src agentsentry.app:app --host 127.0.0.1 --port 8000
@@ -110,12 +126,13 @@ python scripts/run_competition_experiments.py
 Competition materials:
 
 - Chinese case suite: `cases/agentsentry_cases.yaml`
+- Start here: `reports/START_HERE.md`
 - System functionality document: `reports/system_functionality.md`
-- Report outline: `docs/report_outline.md`
-- Reproduction guide: `reports/operator_guide.md`
-- Operator guide: `reports/operator_guide.md`
+- Reproduction guide and operator guide: `reports/operator_guide.md`
+- Current benchmark cases: `reports/benchmark_risk_tiered/benchmark_cases.risk_tiered.jsonl` and `reports/benchmark_risk_tiered/tool_attack_cases.risk_tiered.jsonl`
+- Current benchmark results: `reports/benchmark_risk_tiered/benchmark_eval_results.risk_tiered.json` and `reports/benchmark_risk_tiered/tool_attack_benchmark_results.risk_tiered.json`
 - OpenClaw UI proof: `python scripts/check_openclaw_ui.py`
-- UI layout proof: `reports/ui-screenshots/layout-check.json`
+- UI layout proof: `reports/ui-screenshots-8765/per-viewport-check.json`
 
 ## Tests
 

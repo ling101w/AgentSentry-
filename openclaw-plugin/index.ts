@@ -8,6 +8,7 @@ import { clearFoundationScanCache, scanFoundation } from "./core/foundation.ts";
 import { computeOperationKey, formatApprovalDescription } from "./core/operation.ts";
 import {
   createPolicyState,
+  normalizeAction,
   policyTrustSnapshot,
   resultFindings,
   updateAfterDecision,
@@ -18,7 +19,7 @@ import {
 import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
-import { semanticJudgeMessage, semanticJudgeToolCall } from "./core/semantic.ts";
+import { semanticJudgeMemoryWrite, semanticJudgeMessage, semanticJudgeToolCall } from "./core/semantic.ts";
 import { systemMonitorStatus } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
 
@@ -54,7 +55,12 @@ const plugin = {
       id: "agent-sentry-dashboard",
       start: async () => {
         if (!plugin.config!.dashboard.enabled) return;
-        plugin.dashboard = await startDashboard(plugin.config!, plugin.store!, api.logger);
+        plugin.dashboard = await startDashboard(plugin.config!, plugin.store!, api.logger, {
+          getConfig: () => plugin.config!,
+          setConfig: (nextConfig) => {
+            plugin.config = nextConfig;
+          },
+        });
         recordRuntime("AgentSentry dashboard started", plugin.dashboard.url, { url: plugin.dashboard.url });
       },
       stop: async () => {
@@ -237,7 +243,13 @@ const plugin = {
       state.toolCount += 1;
       const params = (event?.params || {}) as Record<string, unknown>;
       const operationKey = computeOperationKey(event.toolName, params);
-      const semanticFindings = await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!);
+      const normalizedTool = normalizeAction(event.toolName, params).tool;
+      const semanticFindings = [
+        ...await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!),
+        ...(normalizedTool === "memory_write"
+          ? await semanticJudgeMemoryWrite(params, state.policyState.currentTask, plugin.config!)
+          : []),
+      ];
       const result = detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings);
       const cachedApproval = plugin.approvalCache!.has(operationKey) && result.decision === "ask" && !result.policy.deterministic_block;
       const effectiveDecision = cachedApproval ? "allow" : result.decision;
@@ -251,6 +263,7 @@ const plugin = {
         params: serializeToolParams(params, plugin.config!),
         decision: effectiveDecision,
         original_decision: result.decision,
+        enforcement_mode: plugin.config!.enforcement.mode,
         operation_key: operationKey,
         approval_cache_hit: cachedApproval,
         approval_cache_size: plugin.approvalCache!.size(),
@@ -332,6 +345,28 @@ const plugin = {
           reasons: result.policy.reasons,
           violations: result.policy.violations,
           maxChars: 240,
+        });
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "approval_request",
+          layer: "Execution Control",
+          severity: "warning",
+          title: `Approval requested: ${event.toolName}`,
+          summary: description,
+          payload: {
+            toolName: event.toolName,
+            toolCallId: event.toolCallId || "",
+            decision: effectiveDecision,
+            original_decision: result.decision,
+            enforcement_mode: plugin.config!.enforcement.mode,
+            operation_key: operationKey,
+            risk_score: result.risk_score,
+            deterministic_block: result.policy.deterministic_block,
+            reasons: result.policy.reasons,
+            violations: result.policy.violations,
+            summary: result.summary,
+          },
         });
         return {
           requireApproval: {

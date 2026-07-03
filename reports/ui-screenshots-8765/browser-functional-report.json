@@ -4,7 +4,7 @@
       "name": "lab_policy_enforcement",
       "ok": true,
       "detail": {
-        "record": "rec_mr2aly53_3bfc557a",
+        "record": "rec_mr371t9m_5f36e032",
         "decisions": [
           {
             "toolName": "read_email",
@@ -24,7 +24,7 @@
               "read path references sensitive asset",
               "tool parameters target sensitive local paths"
             ],
-            "findings": 5
+            "findings": 6
           },
           {
             "toolName": "send_email",
@@ -33,10 +33,9 @@
             "risk_score": 150,
             "violations": [
               "ABAC blocked high-risk sink because relevant context includes untrusted tainted data",
-              "tool arguments carry secret-tainted data",
               "tool arguments match deterministic trust-risk policy",
               "recent contaminated context tightens high-risk sink policy",
-              "sink argument inherits untrusted run exposure",
+              "sink argument inherits malicious or secret taint",
               "content attempts to persist privileged instructions into memory or startup flow"
             ],
             "findings": 11
@@ -48,7 +47,7 @@
       "name": "lab_records_materialized",
       "ok": true,
       "detail": {
-        "command_id": "rec_mr2aly53_3bfc557a",
+        "command_id": "rec_mr371t9m_5f36e032",
         "types": [
           "tool_result",
           "alert",
@@ -71,6 +70,7 @@
           "guard_finding",
           "guard_finding",
           "guard_finding",
+          "guard_finding",
           "tool_decision",
           "alert",
           "guard_finding",
@@ -80,6 +80,18 @@
           "tool_result",
           "tool_decision",
           "lab_command"
+        ]
+      }
+    },
+    {
+      "name": "enforcement_settings_api",
+      "ok": true,
+      "detail": {
+        "mode": "approval",
+        "modes": [
+          "observe",
+          "approval",
+          "block"
         ]
       }
     },
@@ -91,11 +103,29 @@
       }
     },
     {
+      "name": "home_enforcement_mode_control",
+      "ok": true,
+      "detail": {
+        "mode": "approval",
+        "status": "当前：审批",
+        "help": "高风险 ask/deny 工具调用进入 OpenClaw 人工审批；选择 allow-always 后会按工具名和参数哈希缓存同一操作。"
+      }
+    },
+    {
+      "name": "command_lab_enforcement_mode_control",
+      "ok": true,
+      "detail": {
+        "mode": "approval",
+        "status": "当前：审批",
+        "help": "高风险 ask/deny 工具调用进入 OpenClaw 人工审批；选择 allow-always 后会按工具名和参数哈希缓存同一操作。"
+      }
+    },
+    {
       "name": "command_lab_submit",
       "ok": true,
       "detail": {
         "state": "已阻断",
-        "streamPreview": "防护发现\n00:31:30\ncontent references sensitive credentials or private assets\ncontent references sensitive credentials or private assets\n工具裁决\n00:31:30\nBusiness tool decision: read_file\n读取文件 · 拒绝 · 工具 读取文件 超出当前任务规范; read path references sensitive",
+        "streamPreview": "防护发现\n15:40:00\ncontent references sensitive credentials or private assets\ncontent references sensitive credentials or private assets\n防护发现\n15:40:00\nAttempting to read SSH private key (~/.ssh/id_ed25519) under guise of email attachment, which ",
         "recentSessionTypes": [
           "tool_result",
           "alert",
@@ -106,7 +136,21 @@
           "alert",
           "tool_result",
           "tool_decision",
-          "lab_command"
+          "lab_command",
+          "tool_result",
+          "alert",
+          "tool_decision",
+          "tool_result",
+          "alert",
+          "tool_decision",
+          "alert",
+          "tool_result",
+          "tool_decision",
+          "lab_command",
+          "tool_result",
+          "alert",
+          "tool_decision",
+          "tool_result"
         ]
       }
     },
@@ -116,21 +160,21 @@
       "detail": {
         "runtime": "OPENCLAW",
         "kpiCount": 8,
-        "firstKpi": 7370,
-        "statsTotal": 7370,
-        "metricTotal": 7370,
+        "firstKpi": 9808,
+        "statsTotal": 9808,
+        "metricTotal": 9808,
         "totalDelta": 0,
         "source": {
           "mode": "openclaw",
           "primary": "OpenClaw plugin records",
           "local_event_count": 0,
-          "openclaw_event_count": 5000,
-          "total_records": 7370,
-          "window_records": 5000,
-          "window_limit": 5000,
+          "openclaw_event_count": 2000,
+          "total_records": 9808,
+          "window_records": 2000,
+          "window_limit": 2000,
           "openclaw_available": true,
           "openclaw_source": "/home/ubuntu/.openclaw/agentsentry/records.jsonl",
-          "window": "showing latest 5000 of 7370 OpenClaw plugin records"
+          "window": "showing latest 2000 of 9808 OpenClaw plugin records"
         },
         "protectionIndex": "44"
       }
@@ -142,7 +186,7 @@
         "firstPageCount": 25,
         "secondPageCount": 25,
         "hasNext": true,
-        "textPreview": "CRITICAL · 外部内容注入\n16:31:29\n工具：webpage · 动作：BLOCK\nexternal content contains hidden prompt-injection instructions\nHIGH · 工具调用劫持\n16:31:29\n工具：webpage · 动作：ALLOW\nno high-risk signal\nHIGH · 记忆/配置持久化\n16:31:26\n工具：webpage · 动作：BL"
+        "textPreview": "CRITICAL · 记忆/配置持久化\n07:39:58\n工具：webpage · 动作：BLOCK\ncontent attempts to persist privileged instructions into memory or startup flow\nCRITICAL · 外部内容注入\n07:39:58\n工具：webpage · 动作：BLOCK\nexternal content contains hidden prompt-"
       }
     },
     {
@@ -151,21 +195,21 @@
       "detail": {
         "runtime": "OPENCLAW",
         "kpiCount": 8,
-        "firstKpi": 7370,
-        "statsTotal": 7370,
-        "metricTotal": 7370,
+        "firstKpi": 9808,
+        "statsTotal": 9808,
+        "metricTotal": 9808,
         "totalDelta": 0,
         "source": {
           "mode": "openclaw",
           "primary": "OpenClaw plugin records",
           "local_event_count": 0,
-          "openclaw_event_count": 5000,
-          "total_records": 7370,
-          "window_records": 5000,
-          "window_limit": 5000,
+          "openclaw_event_count": 2000,
+          "total_records": 9808,
+          "window_records": 2000,
+          "window_limit": 2000,
           "openclaw_available": true,
           "openclaw_source": "/home/ubuntu/.openclaw/agentsentry/records.jsonl",
-          "window": "showing latest 5000 of 7370 OpenClaw plugin records"
+          "window": "showing latest 2000 of 9808 OpenClaw plugin records"
         },
         "protectionIndex": "44"
       }
@@ -176,21 +220,21 @@
       "detail": {
         "runtime": "OPENCLAW",
         "kpiCount": 8,
-        "firstKpi": 7370,
-        "statsTotal": 7370,
-        "metricTotal": 7370,
+        "firstKpi": 9808,
+        "statsTotal": 9808,
+        "metricTotal": 9808,
         "totalDelta": 0,
         "source": {
           "mode": "openclaw",
           "primary": "OpenClaw plugin records",
           "local_event_count": 0,
-          "openclaw_event_count": 5000,
-          "total_records": 7370,
-          "window_records": 5000,
-          "window_limit": 5000,
+          "openclaw_event_count": 2000,
+          "total_records": 9808,
+          "window_records": 2000,
+          "window_limit": 2000,
           "openclaw_available": true,
           "openclaw_source": "/home/ubuntu/.openclaw/agentsentry/records.jsonl",
-          "window": "showing latest 5000 of 7370 OpenClaw plugin records"
+          "window": "showing latest 2000 of 9808 OpenClaw plugin records"
         },
         "protectionIndex": "44"
       }
@@ -204,13 +248,6 @@
     }
   ],
   "layout_issues": [],
-  "screenshots": [
-    "reports/ui-screenshots-8765/home-1440x900.png",
-    "reports/ui-screenshots-8765/command-lab-1440x900.png",
-    "reports/ui-screenshots-8765/screen-1920x1080.png",
-    "reports/ui-screenshots-8765/screen-alert-modal-1920x1080.png",
-    "reports/ui-screenshots-8765/screen-1366x768.png",
-    "reports/ui-screenshots-8765/screen-1180x760.png"
-  ],
+  "screenshots": [],
   "issue_count": 0
 }

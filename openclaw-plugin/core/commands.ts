@@ -111,7 +111,7 @@ export function formatStatus(config: PluginConfig, runtime: CommandRuntime): str
     `Enforcement: ${config.enforcement.mode}`,
     `Foundation scan: ${config.foundationScan.enabled ? "enabled" : "disabled"}`,
     `Detection: ${config.detection.enabled ? "enabled" : "disabled"}`,
-    `Semantic judge: ${config.semantic.enabled ? `${config.semantic.model} (${config.semantic.apiKeyEnv})` : "disabled"}`,
+    `Semantic judge: ${config.semantic.enabled ? `${config.semantic.model} (${config.semantic.apiKeyEnv}, ${config.semantic.mode})` : "disabled"}`,
     `Notifications: ${config.notifications.enableProactiveNotifications ? config.notifications.minSeverity : "disabled"}`,
     `Response cover: ${config.responseCover.enabled ? "enabled" : "disabled"}`,
     "Commands:",

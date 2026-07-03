@@ -3,19 +3,33 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AgentSentry 业务测试台</title>
+    <title>玄鉴业务测试台</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/command-lab.css?v=20260701-4" />
+    <link rel="stylesheet" href="/command-lab.css?v=20260703-2" />
   </head>
   <body>
     <main class="lab-shell">
       <header class="lab-header">
         <section class="brand">
-          <p class="eyebrow">AgentSentry for OpenClaw</p>
+          <p class="eyebrow">XuanJian for OpenClaw</p>
           <h1>业务测试台</h1>
-          <p class="subtitle">真实测试请求 · AgentSentry 插件数据流实时观测</p>
+          <p class="subtitle">真实测试请求 · 玄鉴插件数据流实时观测</p>
         </section>
         <nav class="actions">
+          <div class="mode-control" aria-label="AgentSentry 运行模式">
+            <label for="modeSelect">模式</label>
+            <select id="modeSelect">
+              <option value="block">阻断</option>
+              <option value="approval">审批</option>
+              <option value="observe">观察</option>
+            </select>
+            <button class="help-dot" type="button" aria-label="查看模式说明">?</button>
+            <div class="help-popover" role="tooltip">
+              <strong id="modeHelpTitle">运行模式</strong>
+              <span id="modeHelpText">读取当前运行配置中。</span>
+            </div>
+          </div>
+          <span id="modeStatus" class="mode-status">模式读取中</span>
           <a class="button-link" href="/">返回控制台</a>
           <a class="button-link" href="/security-screen">态势大屏</a>
           <button id="refreshBtn" type="button">刷新</button>
@@ -95,6 +109,49 @@
             <div class="preset-list" id="presetList"></div>
           </section>
 
+          <section class="panel benchmark-panel">
+            <div class="panel-title">
+              <div>
+                <span class="kicker">Benchmark Cases</span>
+                <h2>公开样例库</h2>
+              </div>
+              <span id="benchmarkCount" class="panel-note">读取中</span>
+            </div>
+            <div class="benchmark-controls">
+              <label class="field mini">
+                样例集
+                <select id="benchmarkSuiteSelect">
+                  <option value="">全部</option>
+                </select>
+              </label>
+              <label class="field mini">
+                来源
+                <select id="benchmarkSourceSelect">
+                  <option value="">全部</option>
+                </select>
+              </label>
+              <label class="field mini">
+                类别
+                <select id="benchmarkCategorySelect">
+                  <option value="">全部</option>
+                </select>
+              </label>
+              <label class="field mini wide">
+                关键词
+                <input id="benchmarkSearchInput" spellcheck="false" placeholder="case_id / payload / 工具 / 类别" />
+              </label>
+              <label class="field mini wide">
+                样例
+                <select id="benchmarkCaseSelect"></select>
+              </label>
+            </div>
+            <div id="benchmarkDetail" class="benchmark-detail">正在读取公开 benchmark 映射样例。</div>
+            <div class="benchmark-actions">
+              <button id="loadBenchmarkBtn" type="button">载入样例</button>
+              <button id="runBenchmarkBtn" class="primary" type="button">运行样例</button>
+            </div>
+          </section>
+
           <section class="panel">
             <div class="panel-title">
               <div>
@@ -109,10 +166,10 @@
             <label class="field">
               记录数量
               <select id="limitSelect">
-                <option value="200">200</option>
+                <option value="200" selected>200</option>
                 <option value="500">500</option>
                 <option value="1000">1000</option>
-                <option value="2000" selected>2000</option>
+                <option value="2000">2000</option>
                 <option value="5000">5000</option>
               </select>
             </label>
@@ -161,6 +218,6 @@
       </section>
     </main>
 
-    <script type="module" src="/command-lab.js?v=20260701-4"></script>
+    <script type="module" src="/command-lab.js?v=20260703-2"></script>
   </body>
 </html>

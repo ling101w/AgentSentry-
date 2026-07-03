@@ -2,6 +2,7 @@ const ALL_SESSIONS = "__all__";
 
 const state = {
   records: [],
+  detailCache: new Map(),
   stats: null,
   selectedId: "",
   selectedRecord: null,
@@ -11,6 +12,7 @@ const state = {
   timelinePage: 1,
   timelinePageSize: 30,
   timer: null,
+  enforcement: null,
 };
 
 const layerNames = {
@@ -39,6 +41,7 @@ const typeNames = {
   tool_result: "工具结果",
   guard_finding: "防护发现",
   alert: "告警",
+  approval_request: "审批请求",
   approval_resolution: "审批结果",
   approval_cache_hit: "审批缓存",
   response_cover: "响应覆盖",
@@ -57,6 +60,24 @@ const decisionNames = {
   ask: "待确认",
   deny: "拒绝",
   block: "阻断",
+};
+
+const enforcementModeText = {
+  observe: {
+    label: "观察",
+    title: "观察模式",
+    text: "只记录裁决、发现和告警，不改变 OpenClaw 原生工具执行结果。适合跑无防护基线、观察误报和做对比实验。",
+  },
+  approval: {
+    label: "审批",
+    title: "审批模式",
+    text: "高风险 ask/deny 工具调用进入 OpenClaw 人工审批；选择 allow-always 后会按工具名和参数哈希缓存同一操作。",
+  },
+  block: {
+    label: "阻断",
+    title: "阻断模式",
+    text: "确定为 deny 的高风险工具调用在执行前硬阻断。适合比赛演示、高风险工具调用和真实防护验证。",
+  },
 };
 
 const roleNames = {
@@ -127,8 +148,8 @@ async function refresh({ keepSelection = true } = {}) {
   try {
     const limit = $("limitSelect").value;
     const [recordsResponse, statsResponse] = await Promise.all([
-      fetch(`/api/records?limit=${encodeURIComponent(limit)}`).then((res) => res.json()),
-      fetch("/api/stats").then((res) => res.json()),
+      fetch(`/api/records?compact=1&limit=${encodeURIComponent(limit)}`).then((res) => res.json()),
+      fetch(`/api/stats?limit=${encodeURIComponent(Math.min(Number(limit) || 500, 1000))}`).then((res) => res.json()),
     ]);
 
     state.records = recordsResponse.records || [];
@@ -145,6 +166,54 @@ async function refresh({ keepSelection = true } = {}) {
     setStatus("连接失败", "bad");
     $("timeline").innerHTML = `<div class="empty">读取记录失败：${escapeHtml(error.message || error)}</div>`;
   }
+}
+
+async function refreshEnforcementMode() {
+  try {
+    const response = await fetch("/api/settings/enforcement", { cache: "no-store" }).then((res) => res.json());
+    if (!response.ok) throw new Error(response.error || "读取模式失败");
+    state.enforcement = response;
+    renderEnforcementMode();
+  } catch (error) {
+    const status = $("modeStatus");
+    if (status) status.textContent = `模式读取失败：${error.message || error}`;
+  }
+}
+
+async function setEnforcementMode(mode) {
+  const select = $("modeSelect");
+  const status = $("modeStatus");
+  if (select) select.disabled = true;
+  if (status) status.textContent = "模式保存中";
+  try {
+    const response = await fetch("/api/settings/enforcement", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }).then((res) => res.json());
+    if (!response.ok) throw new Error(response.error || "保存失败");
+    state.enforcement = response;
+    renderEnforcementMode();
+    refresh({ keepSelection: true });
+  } catch (error) {
+    if (status) status.textContent = `模式保存失败：${error.message || error}`;
+    await refreshEnforcementMode();
+  } finally {
+    if (select) select.disabled = false;
+  }
+}
+
+function renderEnforcementMode() {
+  const mode = state.enforcement?.mode || "observe";
+  const meta = enforcementModeText[mode] || enforcementModeText.observe;
+  const select = $("modeSelect");
+  if (select && select.value !== mode) select.value = mode;
+  const status = $("modeStatus");
+  if (status) status.textContent = `当前：${meta.label}`;
+  const title = $("modeHelpTitle");
+  if (title) title.textContent = meta.title;
+  const help = $("modeHelpText");
+  if (help) help.textContent = meta.text;
 }
 
 function normalizeSelection(keepSelection) {
@@ -405,7 +474,7 @@ function resetTimelinePage() {
 function applyFocusMode(records) {
   if (state.focusMode === "all") return records;
   if (state.focusMode === "tools") {
-    return records.filter((record) => ["tool_decision", "tool_result", "alert", "approval_resolution", "approval_cache_hit"].includes(record.type));
+    return records.filter((record) => ["tool_decision", "tool_result", "alert", "approval_request", "approval_resolution", "approval_cache_hit"].includes(record.type));
   }
   if (state.focusMode === "foundation") {
     return records.filter((record) => record.layer === "Foundation" || record.type === "foundation_scan");
@@ -415,7 +484,7 @@ function applyFocusMode(records) {
 
 function isImportantRecord(record) {
   if (record.severity === "danger") return true;
-  if (["tool_decision", "tool_result", "alert", "response_cover", "approval_resolution", "approval_cache_hit"].includes(record.type)) return true;
+  if (["tool_decision", "tool_result", "alert", "response_cover", "approval_request", "approval_resolution", "approval_cache_hit"].includes(record.type)) return true;
   if (record.type === "message_write") {
     const role = record.payload?.role;
     return role === "user" || role === "assistant";
@@ -618,17 +687,22 @@ function renderDetail(record) {
   $("detailMeta").textContent = `${severityNames[record.severity] || record.severity} · ${formatDate(record.created_at)}`;
   $("copyPayloadBtn").disabled = false;
   $("copyPayloadBtn").dataset.recordId = record.id;
+  const fullRecord = fullDetailRecord(record.id) || record;
 
   $("detailBody").innerHTML = `
-    <section class="detail-summary ${escapeHtml(record.severity)}">
-      <h3>${escapeHtml(titleText(record))}</h3>
-      <p>${escapeHtml(summaryText(record))}</p>
+    <section class="detail-summary ${escapeHtml(fullRecord.severity)}">
+      <h3>${escapeHtml(titleText(fullRecord))}</h3>
+      <p>${escapeHtml(summaryText(fullRecord))}</p>
     </section>
-    ${quickFacts(record)}
-    ${decisionSummary(record)}
-    ${groupSummary(record)}
-    <pre>${escapeHtml(JSON.stringify(record, null, 2))}</pre>
+    ${quickFacts(fullRecord)}
+    ${decisionSummary(fullRecord)}
+    ${groupSummary(fullRecord)}
+    ${record.payload?.__compact && !state.detailCache.has(record.id) ? '<div class="empty detail-loading">正在读取完整 payload...</div>' : ""}
+    <pre>${escapeHtml(JSON.stringify(fullRecord, null, 2))}</pre>
   `;
+  if (record.payload?.__compact && !state.detailCache.has(record.id)) {
+    void loadRecordDetail(record.id);
+  }
 }
 
 function renderEmptyDetail() {
@@ -664,7 +738,7 @@ function quickFacts(record) {
 
 function decisionSummary(record) {
   const payload = record.payload || {};
-  if (!["tool_decision", "approval_resolution", "approval_cache_hit", "response_cover", "alert"].includes(record.type)) return "";
+  if (!["tool_decision", "approval_request", "approval_resolution", "approval_cache_hit", "response_cover", "alert"].includes(record.type)) return "";
 
   const findings = Array.isArray(payload.findings) ? payload.findings : [];
   const rows = [
@@ -831,7 +905,7 @@ function escapeHtml(value) {
 
 async function copySelectedPayload() {
   const id = $("copyPayloadBtn").dataset.recordId;
-  const record = state.selectedRecord?.id === id ? state.selectedRecord : state.records.find((item) => item.id === id);
+  const record = await ensureRecordDetail(id);
   if (!record) return;
   const text = JSON.stringify(record, null, 2);
   try {
@@ -841,6 +915,34 @@ async function copySelectedPayload() {
   } catch {
     $("copyPayloadBtn").textContent = "复制失败";
     setTimeout(() => ($("copyPayloadBtn").textContent = "复制 JSON"), 1200);
+  }
+}
+
+function fullDetailRecord(id) {
+  return state.detailCache.get(id) || null;
+}
+
+async function ensureRecordDetail(id) {
+  if (!id) return null;
+  if (state.detailCache.has(id)) return state.detailCache.get(id);
+  const record = state.selectedRecord?.id === id ? state.selectedRecord : state.records.find((item) => item.id === id);
+  if (record && !record.payload?.__compact) return record;
+  return loadRecordDetail(id);
+}
+
+async function loadRecordDetail(id) {
+  try {
+    const response = await fetch(`/api/records/${encodeURIComponent(id)}`, { cache: "no-store" }).then((res) => res.json());
+    if (!response.ok || !response.record) throw new Error(response.error || "record not found");
+    state.detailCache.set(id, response.record);
+    if (state.selectedId === id) renderDetail(response.record);
+    return response.record;
+  } catch (error) {
+    if (state.selectedId === id) {
+      const loading = document.querySelector(".detail-loading");
+      if (loading) loading.textContent = `读取完整 payload 失败：${error.message || error}`;
+    }
+    return null;
   }
 }
 
@@ -866,6 +968,7 @@ $("focusModeGroup").addEventListener("click", (event) => {
 $("exportJsonBtn").addEventListener("click", () => downloadExport("json"));
 $("exportCsvBtn").addEventListener("click", () => downloadExport("csv"));
 $("copyPayloadBtn").addEventListener("click", copySelectedPayload);
+$("modeSelect")?.addEventListener("change", () => setEnforcementMode($("modeSelect").value));
 $("resetBtn").addEventListener("click", async () => {
   if (!confirm("确认清空 AgentSentry 本地记录？")) return;
   await fetch("/api/reset", { method: "POST" });
@@ -891,4 +994,5 @@ $("limitSelect").addEventListener("change", () => {
 });
 
 scheduleAutoRefresh();
+refreshEnforcementMode();
 refresh({ keepSelection: false });

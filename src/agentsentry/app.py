@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from .config import RuntimePaths, ensure_runtime
 from .cases import load_cases
@@ -24,6 +25,23 @@ from .tools import SandboxTools
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+class CachedStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            suffix = Path(path).suffix.lower()
+            if suffix == ".html":
+                response.headers["Cache-Control"] = "no-cache"
+            elif path.startswith("vendor/"):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            elif suffix in {".js", ".mjs", ".css", ".svg", ".png", ".jpg", ".jpeg", ".webp", ".pdf"}:
+                response.headers["Cache-Control"] = "public, max-age=3600, stale-while-revalidate=86400"
+            else:
+                response.headers.setdefault("Cache-Control", "no-cache")
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        return response
 
 
 @lru_cache
@@ -43,19 +61,29 @@ def store() -> Store:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="AgentSentry", version="0.1.0")
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    app.mount("/static", CachedStaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", response_class=HTMLResponse)
-    def dashboard() -> str:
-        return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    def dashboard() -> HTMLResponse:
+        return HTMLResponse(
+            (STATIC_DIR / "index.html").read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @app.get("/security-screen", response_class=HTMLResponse)
-    def security_screen() -> str:
-        return (STATIC_DIR / "security-screen.html").read_text(encoding="utf-8")
+    def security_screen() -> HTMLResponse:
+        return HTMLResponse(
+            (STATIC_DIR / "security-screen.html").read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @app.get("/screen", response_class=HTMLResponse)
-    def screen_alias() -> str:
-        return (STATIC_DIR / "security-screen.html").read_text(encoding="utf-8")
+    def screen_alias() -> HTMLResponse:
+        return HTMLResponse(
+            (STATIC_DIR / "security-screen.html").read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @app.post("/api/runs", response_model=RunResponse)
     def start_run(request: RunRequest) -> RunResponse:

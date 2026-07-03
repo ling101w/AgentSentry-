@@ -15,6 +15,20 @@
         <p class="subtitle">按会话追踪 OpenClaw 提示、工具调用、拦截决策和响应结果。</p>
       </div>
       <div class="actions">
+        <div class="mode-control" aria-label="AgentSentry 运行模式">
+          <label for="modeSelect">模式</label>
+          <select id="modeSelect">
+            <option value="block">阻断</option>
+            <option value="approval">审批</option>
+            <option value="observe">观察</option>
+          </select>
+          <button class="help-dot" type="button" aria-label="查看模式说明">?</button>
+          <div class="help-popover" role="tooltip">
+            <strong id="modeHelpTitle">运行模式</strong>
+            <span id="modeHelpText">读取当前运行配置中。</span>
+          </div>
+        </div>
+        <span id="modeStatus" class="mode-status">模式读取中</span>
         <a class="button-link primary-link" href="/security-screen">安全态势大屏</a>
         <a class="button-link" href="/command-lab">命令实验室</a>
         <button id="refreshBtn" type="button">刷新</button>

@@ -9,8 +9,11 @@ import {
   minimumTrustLabel,
   riskMax,
   sourceFromTool,
-  trustRank,
+  taintBlockedForSink,
+  taintProfileFromLabel,
   type RiskVector,
+  type TaintProfile,
+  type TaintSink,
   type TrustSource,
   type TrustLabel,
 } from "./trust.ts";
@@ -36,9 +39,12 @@ export type Label = {
   integrity: "trusted" | "untrusted";
   confidentiality: "public" | "internal" | "secret";
   tainted: boolean;
+  provenance_untrusted?: boolean;
+  influence?: "none" | "matched" | "payload_default";
   trust_label?: TrustLabel;
   risk_vector?: RiskVector;
   tags?: string[];
+  taint_profile?: TaintProfile;
 };
 
 export type PolicyState = {
@@ -59,12 +65,31 @@ export type PolicyState = {
     label: Label;
   }>;
   apiCallCounts: Map<string, number>;
+  behaviorProfiles: Map<string, BehaviorProfile>;
   trustLabels: TrustLabel[];
   aggregateRisk: RiskVector;
   taintedSources: string[];
+  taintFlows: Array<{
+    label_id: string;
+    source: string;
+    sink: TaintSink;
+    blocked: boolean;
+    confidence: number;
+    reason: string;
+    tags: string[];
+  }>;
 };
 
 type ActionClass = "read" | "write" | "external_sink" | "execution" | "memory" | "network" | "unknown";
+
+type BehaviorProfile = {
+  calls: number;
+  hosts: string[];
+  recipients: string[];
+  pathRoots: string[];
+  maxParamBytes: number;
+  maxParamKeys: number;
+};
 
 type ActionAssessment = {
   class: ActionClass;
@@ -143,9 +168,11 @@ export function createPolicyState(): PolicyState {
     toolResultLabels: new Map(),
     exposures: [],
     apiCallCounts: new Map(),
+    behaviorProfiles: new Map(),
     trustLabels: [],
     aggregateRisk: createRiskVector(),
     taintedSources: [],
+    taintFlows: [],
   };
 }
 
@@ -181,12 +208,19 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
     let exposure = match?.exposure || null;
     let mode = match?.mode || "";
     if (!exposure && isSinkPayloadArg(action.tool, key)) {
-      exposure = combinedExposure(state.exposures);
-      mode = "run_exposure_default";
+      const defaultExposure = combinedExposure(state.exposures);
+      if (shouldDefaultPropagateExposure(defaultExposure)) {
+        exposure = defaultExposure;
+        mode = "run_exposure_default";
+      }
     }
     if (!exposure) continue;
-    args[key] = { value, label: exposure.label };
-    findings.push(finding("Execution Control", "deterministic", "block", "sink argument inherits untrusted run exposure", 100, {
+    const inheritedLabel: Label = {
+      ...exposure.label,
+      influence: mode === "run_exposure_default" ? "payload_default" : "matched",
+    };
+    args[key] = { value, label: inheritedLabel };
+    findings.push(finding("Execution Control", "deterministic", "block", "sink argument inherits malicious or secret taint", 100, {
       tool: action.tool,
       arg: key,
       source: exposure.source,
@@ -253,15 +287,18 @@ export function decideAction(
     const trajectoryFindings = trajectoryFindingsFor(action, state, config);
     findings.push(...trajectoryFindings);
 
+    const behaviorFindings = behaviorAnomalyFindingsFor(action, state, config);
+    findings.push(...behaviorFindings);
+
     const trustFindings = trustFindingsFor(action, state);
     findings.push(...trustFindings);
   }
 
   const actionRisk = riskVectorFromFindings(findings);
   const combinedRisk = mergeRiskVectors(state.aggregateRisk, actionRisk);
-  const lowestTrust = minimumTrustLabel(state.trustLabels);
-  if (riskScoringEnabled && lowestTrust && isTrustSensitiveSink(action, assessment) && trustRank(lowestTrust.integrity) <= trustRank("external")) {
-    risk += 35;
+  const blockedTaintForRisk = config.policy.taintFeedback ? taintFlowForAction(action, assessment, state) : null;
+  if (riskScoringEnabled && blockedTaintForRisk) {
+    risk += Math.min(35, Math.max(15, Math.trunc(blockedTaintForRisk.confidence / 3)));
   }
   if (riskScoringEnabled && (assessment.highRisk || isTrustSensitiveSink(action, assessment))) {
     risk += Math.min(45, Math.trunc(riskMax(combinedRisk) / 2));
@@ -316,6 +353,7 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
   if (decision.findings.some((finding) => finding.layer === "Input Sanitization" || finding.layer === "Cognition Protection")) {
     state.contaminated = true;
   }
+  if (decision.decision === "allow") updateBehaviorProfile(state, decision.action);
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, decision.risk_vector);
   mergeFindingTrust(state, decision.findings);
 }
@@ -334,20 +372,26 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
     toolName,
     previewChars: config.capture.previewChars,
   });
-  const taintsByDefault = !toolName || ["external_web", "email_html", "pdf_text", "image_metadata", "webhook"].includes(source);
+  const provenanceUntrusted = !toolName || ["external_web", "email_html", "pdf_text", "image_metadata", "webhook"].includes(source);
+  const maliciousTaint = analysis.label.tainted || hasInjectionSignal(text) || riskMax(analysis.risk_vector) >= 50;
   const label: Label = {
     source: toolCallId ? `tool:${toolCallId}` : "tool:unknown",
     integrity: "untrusted",
     confidentiality: "public",
     tainted: false,
+    provenance_untrusted: provenanceUntrusted,
+    influence: "none",
     trust_label: analysis.label,
     risk_vector: analysis.risk_vector,
     tags: analysis.tags,
+    taint_profile: taintProfileFromLabel(analysis.label) || undefined,
   };
-  if (taintsByDefault || analysis.label.tainted || hasInjectionSignal(text)) {
+  if (maliciousTaint) {
     label.integrity = "untrusted";
     label.tainted = true;
     state.contaminated = true;
+  } else if (!provenanceUntrusted) {
+    label.integrity = "trusted";
   }
   if (analysis.label.confidentiality === "secret" || config.policy.sensitiveAssets.some((asset) => asset && text.toLowerCase().includes(asset.toLowerCase()))) {
     label.confidentiality = "secret";
@@ -384,6 +428,7 @@ export function resultFindings(toolCallId: string, result: unknown, state: Polic
       trust_label: label.trust_label || null,
       risk_vector: label.risk_vector || createRiskVector(),
       tags: label.tags || [],
+      taint_profile: label.taint_profile || null,
     }),
   ];
 }
@@ -395,6 +440,7 @@ export function policyTrustSnapshot(state: PolicyState): Record<string, unknown>
     contaminated: state.contaminated,
     aggregate_risk: state.aggregateRisk,
     tainted_sources: state.taintedSources.slice(-12),
+    taint_flows: state.taintFlows.slice(-12),
     lowest_trust: lowest
       ? {
         source: lowest.source,
@@ -444,7 +490,26 @@ export function deriveTaskSpec(task: string, sensitiveAssets: string[]): TaskSpe
   if (containsAny(lowered, ["网页", "网站", "url", "http", "邮件", "外部内容", "pdf", "图片", "图像", "简历", "文档", "页面"])) {
     allowed.push("read_webpage", "call_api");
   }
-  if (containsAny(lowered, ["memory", "remember", "记住", "记忆"])) {
+  if (containsAny(lowered, [
+    "memory",
+    "remember",
+    "preference",
+    "experience",
+    "knowledge base",
+    "long-term note",
+    "记住",
+    "记忆",
+    "长期经验",
+    "经验库",
+    "长期偏好",
+    "普通偏好",
+    "记录经验",
+    "记录一条",
+    "记录一个",
+    "写入长期",
+    "写入经验",
+    "保存经验",
+  ])) {
     allowed.push("memory_read", "memory_write");
     removeItem(forbidden, "memory_write");
   }
@@ -481,8 +546,6 @@ function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, 
     toolName: action.originalTool,
     previewChars: config.capture.previewChars,
   });
-  const lowestTrust = minimumTrustLabel(state.trustLabels);
-
   if (action.tool === "read_webpage") {
     const url = readFirstString(action.args, ["url", "href", "endpoint", "target"]);
     if (!targetAllowed(url, taskSpec.allowed_targets)) {
@@ -490,8 +553,9 @@ function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, 
     }
   }
 
-  if (isTrustSensitiveSink(action, assessment) && lowestTrust && lowestTrust.tainted && trustRank(lowestTrust.integrity) <= trustRank("external")) {
-    violations.push("ABAC blocked high-risk sink because relevant context includes untrusted tainted data");
+  const blockedTaint = config.policy.taintFeedback ? taintFlowForAction(action, assessment, state) : null;
+  if (blockedTaint) {
+    violations.push(`ABAC blocked high-risk sink because taint profile disallows flow to ${blockedTaint.sink}`);
   }
   if (isTrustSensitiveSink(action, assessment) && argsAnalysis.label.confidentiality === "secret") {
     violations.push("tool arguments carry secret-tainted data");
@@ -585,10 +649,6 @@ function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, 
     }
   }
 
-  if (config.policy.taintFeedback && state.contaminated && isTrustSensitiveSink(action, assessment)) {
-    violations.push("recent contaminated context tightens high-risk sink policy");
-  }
-
   return unique(violations);
 }
 
@@ -612,8 +672,13 @@ function trajectoryFindingsFor(action: AgentSentryAction, state: PolicyState, co
     findings.push(finding("Sentry Trajectory", "heuristic", "require_approval", "tool frequency is unusually high", 20, { tool: action.tool, count: count + 1 }));
   }
   const assessment = assessAction(action, config);
-  if (config.policy.taintFeedback && state.contaminated && isTrustSensitiveSink(action, assessment)) {
-    findings.push(finding("Sentry Trajectory", "heuristic", "require_approval", "recent contaminated context tightens high-risk sink policy", 20, { tool: action.tool }));
+  const blockedTaint = config.policy.taintFeedback ? taintFlowForAction(action, assessment, state) : null;
+  if (blockedTaint) {
+    findings.push(finding("Sentry Trajectory", "heuristic", "require_approval", "taint profile tightens this high-risk sink", 20, {
+      tool: action.tool,
+      sink: blockedTaint.sink,
+      taint: blockedTaint,
+    }));
   }
   const readOnlyTask = /summari[sz]e|总结|概括|查看|阅读|看看|分析/.test(state.currentTask.toLowerCase())
     && !/(发送|发邮件|email|mail|写入|保存|执行|运行|记住|memory|remember|shell|command)/i.test(state.currentTask);
@@ -628,24 +693,65 @@ function trajectoryFindingsFor(action: AgentSentryAction, state: PolicyState, co
   return findings;
 }
 
+function behaviorAnomalyFindingsFor(action: AgentSentryAction, state: PolicyState, config: PluginConfig): DetectionFinding[] {
+  const profile = state.behaviorProfiles.get(action.tool);
+  if (!profile || profile.calls < 2) return [];
+  const current = behaviorSnapshot(action);
+  const findings: DetectionFinding[] = [];
+  const assessment = assessAction(action, config);
+  if (current.host && profile.hosts.length && !profile.hosts.includes(current.host) && (action.tool === "call_api" || assessment.externalSink)) {
+    findings.push(finding("Behavior Baseline", "learned", "require_approval", "tool target host deviates from learned session baseline", 35, {
+      tool: action.tool,
+      host: current.host,
+      learned_hosts: profile.hosts.slice(-6),
+    }));
+  }
+  if (current.recipient && profile.recipients.length && !profile.recipients.includes(current.recipient) && action.tool === "send_email") {
+    findings.push(finding("Behavior Baseline", "learned", "require_approval", "email recipient deviates from learned session baseline", 35, {
+      tool: action.tool,
+      recipient: current.recipient,
+      learned_recipients: profile.recipients.slice(-6),
+    }));
+  }
+  if (current.pathRoot && profile.pathRoots.length && !profile.pathRoots.includes(current.pathRoot) && (action.tool === "read_file" || action.tool === "write_file")) {
+    findings.push(finding("Behavior Baseline", "learned", "require_approval", "file path root deviates from learned session baseline", 25, {
+      tool: action.tool,
+      root: current.pathRoot,
+      learned_roots: profile.pathRoots.slice(-6),
+    }));
+  }
+  if (profile.maxParamBytes > 0 && current.paramBytes > Math.max(profile.maxParamBytes * 4, profile.maxParamBytes + 4096)) {
+    findings.push(finding("Behavior Baseline", "learned", "require_approval", "tool parameter size is anomalous for this session", 25, {
+      tool: action.tool,
+      param_bytes: current.paramBytes,
+      learned_max_param_bytes: profile.maxParamBytes,
+    }));
+  }
+  if (profile.maxParamKeys > 0 && current.paramKeys > Math.max(profile.maxParamKeys * 3, profile.maxParamKeys + 8)) {
+    findings.push(finding("Behavior Baseline", "learned", "require_approval", "tool parameter shape is anomalous for this session", 20, {
+      tool: action.tool,
+      param_keys: current.paramKeys,
+      learned_max_param_keys: profile.maxParamKeys,
+    }));
+  }
+  return findings;
+}
+
 function trustFindingsFor(action: AgentSentryAction, state: PolicyState): DetectionFinding[] {
   const findings: DetectionFinding[] = [];
-  const lowest = minimumTrustLabel(state.trustLabels);
   const assessment = assessActionWithSensitiveAssets(action, []);
-  if (!lowest || !isTrustSensitiveSink(action, assessment)) return findings;
-  if (lowest.tainted && trustRank(lowest.integrity) <= trustRank("external")) {
-    findings.push(finding("ABAC Session Policy", "deterministic", "block", "high-risk tool call requires trusted context, but session contains untrusted taint", 100, {
+  const blockedTaint = taintFlowForAction(action, assessment, state);
+  if (blockedTaint) {
+    findings.push(finding("ABAC Session Policy", "deterministic", "block", "high-risk tool call requires trusted context, but taint profile blocks this sink", 100, {
       tool: action.tool,
-      lowest_trust: {
-        source: lowest.source,
-        integrity: lowest.integrity,
-        confidentiality: lowest.confidentiality,
-        tainted: lowest.tainted,
-      },
+      sink: blockedTaint.sink,
+      taint: blockedTaint,
       aggregate_risk: state.aggregateRisk,
       tainted_sources: state.taintedSources.slice(-8),
     }));
   }
+  const lowest = minimumTrustLabel(state.trustLabels);
+  if (!lowest || !isTrustSensitiveSink(action, assessment)) return findings;
   if (lowest.confidentiality === "secret" && (action.tool === "send_email" || action.tool === "call_api" || action.tool === "shell_exec")) {
     findings.push(finding("ABAC Session Policy", "deterministic", "block", "secret-tainted context cannot flow into external sink", 100, {
       tool: action.tool,
@@ -660,10 +766,73 @@ function taintRisk(action: AgentSentryAction, state: PolicyState, config: Plugin
   let risk = 0;
   const assessment = assessAction(action, config);
   const argsText = safeStringify(action.args).toLowerCase();
-  if (config.policy.sensitiveAssets.some((asset) => asset && argsText.includes(asset.toLowerCase()))) risk += 45;
-  if (config.policy.taintFeedback && state.contaminated && isTrustSensitiveSink(action, assessment)) risk += 25;
+  const blockedTaint = config.policy.taintFeedback ? taintFlowForAction(action, assessment, state) : null;
+  if (action.tool !== "memory_write" && config.policy.sensitiveAssets.some((asset) => asset && argsText.includes(asset.toLowerCase()))) risk += 45;
+  if (blockedTaint) risk += Math.min(45, Math.max(20, Math.trunc(blockedTaint.confidence / 2)));
+  else if (config.policy.taintFeedback && state.contaminated && isTrustSensitiveSink(action, assessment)) risk += 10;
   if (assessment.highRisk || isTrustSensitiveSink(action, assessment)) risk += Math.min(40, Math.trunc(riskMax(state.aggregateRisk) / 3));
   return Math.min(risk, 80);
+}
+
+function updateBehaviorProfile(state: PolicyState, action: AgentSentryAction): void {
+  const snapshot = behaviorSnapshot(action);
+  const existing = state.behaviorProfiles.get(action.tool) || {
+    calls: 0,
+    hosts: [],
+    recipients: [],
+    pathRoots: [],
+    maxParamBytes: 0,
+    maxParamKeys: 0,
+  };
+  existing.calls += 1;
+  if (snapshot.host) pushCapped(existing.hosts, snapshot.host, 12);
+  if (snapshot.recipient) pushCapped(existing.recipients, snapshot.recipient, 12);
+  if (snapshot.pathRoot) pushCapped(existing.pathRoots, snapshot.pathRoot, 12);
+  existing.maxParamBytes = Math.max(existing.maxParamBytes, snapshot.paramBytes);
+  existing.maxParamKeys = Math.max(existing.maxParamKeys, snapshot.paramKeys);
+  state.behaviorProfiles.set(action.tool, existing);
+  if (state.behaviorProfiles.size > 24) {
+    const first = state.behaviorProfiles.keys().next().value;
+    if (first) state.behaviorProfiles.delete(first);
+  }
+}
+
+function behaviorSnapshot(action: AgentSentryAction): {
+  host: string;
+  recipient: string;
+  pathRoot: string;
+  paramBytes: number;
+  paramKeys: number;
+} {
+  const url = readFirstString(action.args, ["url", "href", "endpoint", "target"]);
+  const path = readFirstString(action.args, ["path", "file", "filename", "target"]);
+  return {
+    host: hostFromUrl(url),
+    recipient: readFirstString(action.args, ["recipient", "to", "email", "target"]).toLowerCase(),
+    pathRoot: rootFromPath(path),
+    paramBytes: safeStringify(action.args).length,
+    paramKeys: countKeys(action.args),
+  };
+}
+
+function rootFromPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized) return "";
+  if (/^[a-z]:\//i.test(normalized)) return normalized.slice(0, 2).toLowerCase();
+  if (path.startsWith("/")) return `/${normalized.split("/", 1)[0]}`;
+  return normalized.split("/", 1)[0] || ".";
+}
+
+function countKeys(value: unknown): number {
+  if (!value || typeof value !== "object") return 0;
+  if (Array.isArray(value)) return value.reduce((total, item) => total + countKeys(item), 0);
+  return Object.entries(value as Record<string, unknown>).reduce((total, [, item]) => total + 1 + countKeys(item), 0);
+}
+
+function pushCapped(items: string[], value: string, limit: number): void {
+  if (!value || items.includes(value)) return;
+  items.push(value);
+  if (items.length > limit) items.splice(0, items.length - limit);
 }
 
 function assessAction(action: AgentSentryAction, config: PluginConfig): ActionAssessment {
@@ -755,6 +924,52 @@ function isTrustSensitiveSink(action: AgentSentryAction, assessment: ActionAsses
   return false;
 }
 
+function sinkForAction(action: AgentSentryAction, assessment: ActionAssessment): TaintSink | null {
+  if (action.tool === "send_email") return "send_email";
+  if (action.tool === "call_api" && assessment.externalSink) return "call_api";
+  if (action.tool === "shell_exec" && assessment.highRisk) return "shell_exec";
+  if (action.tool === "memory_write") return "memory_write";
+  if (action.tool === "read_file" && assessment.sensitive) return "sensitive_read";
+  if (action.tool === "write_file") {
+    if (assessment.persistence || assessment.systemMutation) return "config_write";
+    if (assessment.sensitive) return "write_file";
+  }
+  return null;
+}
+
+function taintFlowForAction(
+  action: AgentSentryAction,
+  assessment: ActionAssessment,
+  state: PolicyState,
+): PolicyState["taintFlows"][number] | null {
+  const sink = sinkForAction(action, assessment);
+  if (!sink) return null;
+  const selected = state.trustLabels
+    .filter((label) => taintBlockedForSink(label, sink))
+    .map((label) => ({ label, profile: taintProfileFromLabel(label)! }))
+    .sort((left, right) => right.profile.confidence - left.profile.confidence)[0];
+  if (!selected) return null;
+  const flow = {
+    label_id: selected.label.id,
+    source: `${selected.label.source}:${selected.label.evidence?.path || selected.label.evidence?.toolName || selected.label.id}`,
+    sink,
+    blocked: true,
+    confidence: selected.profile.confidence,
+    reason: selected.profile.reasons.join("; ") || "taint profile blocks this sink",
+    tags: selected.profile.tags,
+  };
+  rememberTaintFlow(state, flow);
+  return flow;
+}
+
+function rememberTaintFlow(state: PolicyState, flow: PolicyState["taintFlows"][number]): void {
+  const key = `${flow.label_id}:${flow.sink}:${flow.blocked}`;
+  if (!state.taintFlows.some((item) => `${item.label_id}:${item.sink}:${item.blocked}` === key)) {
+    state.taintFlows.push(flow);
+  }
+  if (state.taintFlows.length > 80) state.taintFlows = state.taintFlows.slice(-80);
+}
+
 function isSensitivePath(path: string, config: PluginConfig): boolean {
   return isSensitivePathWithAssets(path, config.policy.sensitiveAssets);
 }
@@ -763,6 +978,7 @@ function isSensitivePathWithAssets(path: string, sensitiveAssets: string[]): boo
   const normalized = path.replace(/\\/g, "/").toLowerCase();
   if (!normalized) return false;
   if (isSafeSystemReadPath(normalized)) return false;
+  if (isDocumentationPath(normalized)) return false;
   if (SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(normalized))) return true;
   return sensitiveAssets.some((asset) => {
     const item = asset.trim().replace(/\\/g, "/").toLowerCase();
@@ -787,6 +1003,13 @@ function isSystemMutationPath(path: string): boolean {
 function isSafeSystemReadPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").toLowerCase();
   return SAFE_SYSTEM_READ_PATHS.includes(normalized);
+}
+
+function isDocumentationPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  if (!/\.(?:md|markdown|txt|rst|adoc)$/i.test(normalized)) return false;
+  return /(^|\/)(docs?|examples?|samples?)(\/|$)/i.test(normalized)
+    || /(^|\/)(readme|security|changelog|license)(?:\.[a-z0-9]+)?$/i.test(normalized);
 }
 
 function hasSensitiveValue(text: string): boolean {
@@ -1059,7 +1282,7 @@ function riskVectorFromFindings(findings: DetectionFinding[]): RiskVector {
     if (isRiskVector(riskVector)) vector = mergeRiskVectors(vector, riskVector);
     if (item.layer === "Cognition Protection") vector = addRisk(vector, createRiskVector({ persistence: item.score }));
     if (item.layer === "Input Sanitization") vector = addRisk(vector, createRiskVector({ prompt_injection: item.score }));
-    if (item.layer === "System Preflight") vector = addRisk(vector, createRiskVector({ privilege: item.score }));
+    if (item.layer === "System Preflight" || item.layer === "Runtime Isolation") vector = addRisk(vector, createRiskVector({ privilege: item.score }));
     if (item.layer === "Foundation") vector = addRisk(vector, createRiskVector({ supply_chain: item.score }));
   }
   return vector;
@@ -1160,6 +1383,8 @@ function combinedExposure(exposures: PolicyState["exposures"]): PolicyState["exp
     : exposures.some((item) => item.label.confidentiality === "internal")
       ? "internal"
       : "public";
+  const trustLabel = exposures.map((item) => item.label.trust_label).find(Boolean);
+  const taintProfile = exposures.map((item) => item.label.taint_profile).find(Boolean);
   return {
     source: sources,
     text: "",
@@ -1168,8 +1393,23 @@ function combinedExposure(exposures: PolicyState["exposures"]): PolicyState["exp
       integrity: "untrusted",
       confidentiality,
       tainted: true,
+      provenance_untrusted: true,
+      influence: "payload_default",
+      trust_label: trustLabel,
+      taint_profile: taintProfile,
     },
   };
+}
+
+function shouldDefaultPropagateExposure(exposure: PolicyState["exposures"][number]): boolean {
+  if (exposure.label.confidentiality === "secret") return true;
+  const risk = exposure.label.risk_vector || createRiskVector();
+  return risk.sensitive_data >= 50
+    || risk.exfiltration >= 50
+    || risk.persistence >= 50
+    || risk.tool_hijack >= 50
+    || risk.privilege >= 50
+    || risk.prompt_injection >= 80;
 }
 
 function isSinkPayloadArg(tool: string, name: string): boolean {

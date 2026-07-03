@@ -1,46 +1,98 @@
-# AgentSentry 比赛展示与复现实验说明
+# 玄鉴 演示与复现实验指南
 
-## 两个端口怎么用
+更新时间：2026-07-03
 
-- `http://<服务器IP>:8000`：AgentSentry 独立原型控制台。用于稳定展示攻击用例、评测指标、污点传播和策略裁决。
-- `http://<服务器IP>:8765`：OpenClaw 插件记录台。用于展示真实 OpenClaw 智能体工具调用被插件审计、告警和阻断。`/command-lab` 可直接提交对抗指令，`/security-screen` 默认只统计 OpenClaw 插件记录。
+## 主入口
 
-比赛答辩时建议先看 8000 讲清机制和指标，再打开 8765 证明它确实接进了 OpenClaw。
+比赛展示以 `8765` 为主：
 
-## 当前实验结论
+- `http://<服务器IP>:8765/command-lab`：业务测试台。
+- `http://<服务器IP>:8765/records`：运行记录与风险观测。
+- `http://<服务器IP>:8765/security-screen`：安全态势大屏。
+- `http://<服务器IP>:18789/`：OpenClaw Control UI。
 
-- 无监督基线 ASR：0.833，不安全工具释放数：9。
-- AgentSentry full ASR：0.0，TPR：1.0，FPR：0.0，业务完成率：1.0。
+`8000` 是历史离线原型和辅助入口，不建议作为主展示入口。
 
-## 复现步骤
+## 推荐展示顺序
+
+1. 打开 `8765/command-lab`，先运行普通健康 API、普通文件写入或普通记忆写入，说明系统不是一刀切。
+2. 运行外部内容注入样例，展示邮件/网页/PDF/图片中的隐藏内容如何污染上下文。
+3. 展示被污染上下文流向敏感文件、外部邮件或 API 时被阻断。
+4. 运行长期记忆投毒，说明普通偏好可写，越权持久化不可写。
+5. 运行恶意 Skill 或网关劫持样例，说明工具调用劫持被识别。
+6. 切到 `8765/records` 查看每步 `tool_decision`、`guard_finding`、`alert`。
+7. 切到 `8765/security-screen` 展示实时统计、拓扑、告警和规则命中。
+8. 打开 `reports/project_name_and_benchmark_summary.md` 展示公开 benchmark 结果。
+9. 打开 `reports/technical_design_and_algorithms.md` 讲清楚 TaskSpec、污点传播、语义动作图、Memory Guard 和 LLM-Judge 的算法设计。
+
+## 复现命令
 
 ```bash
 cd /home/ubuntu/AgentSentry-
-source .venv/bin/activate
-python scripts/run_competition_experiments.py
-pytest -q
-python scripts/check_ui_layout.py
-python scripts/check_openclaw_ui.py
-systemctl --user status openclaw-gateway.service --no-pager
-systemctl status agentsentry.service --no-pager
+
+npm --prefix openclaw-plugin run test:policy
+.venv/bin/python -m pytest -q
+
+python3 scripts/run_benchmark_eval.py \
+  --max-cases 520 \
+  --llm-judge-rate -1 \
+  --llm-judge-timeout-ms 15000 \
+  --timeout 35 \
+  --sleep 0.02 \
+  --profile-note xuanjian-risk-tiered
+
+python3 scripts/run_tool_attack_benchmark_eval.py \
+  --max-cases 320 \
+  --max-agentdefense-attack 120 \
+  --max-agentdefense-benign 50 \
+  --max-basharena 24 \
+  --max-agentharm 80 \
+  --max-toolemu 80 \
+  --llm-judge-rate -1 \
+  --llm-judge-timeout-ms 15000 \
+  --timeout 35 \
+  --sleep 0.02
 ```
 
-## 控制台展示顺序
+`--llm-judge-rate -1` 表示不由脚本抽样开关 LLM，而是使用服务端当前调度。当前推荐配置是 `semantic.mode=risk-tiered`。
 
-1. 在 8000 选择 DeterministicLLM，运行“良性网页总结”和“正常白名单邮件”，说明良性业务可完成。
-2. 运行“间接提示注入”，说明用户请求只是网页/邮件总结，但外部内容中的隐藏编码路由被标记为不可信，`read_file` 和非白名单外部邮件被阻断。
-3. 运行“工具返回污染”，说明 API 返回夹带的写启动项指令被 `write_file` 策略阻断。
-4. 运行“Rita 风格提示词抽取”，说明系统提示读取被 TaskSpec 和敏感资产策略阻断。
-5. 运行“记忆投毒”或“自适应慢速投毒”，说明业务化长期 profile 会被记忆审计识别，非白名单外部路由被阻断。
-6. 打开 `8765/command-lab`，选择“外部内容注入：隐藏邮件”或“恶意第三方 Skill”预设，保持默认正常业务请求，点击运行，观察隐藏载荷引发的污点、告警和阻断记录。
-7. 打开 `8765/security-screen`，确认总事件数等于 `8765/api/stats.total`，右侧 Live Alerts 出现刚才的阻断记录。
+## 服务检查
 
-## 交付文件
+```bash
+systemctl --user status openclaw-gateway.service --no-pager
+curl -sS http://127.0.0.1:8765/api/health | python3 -m json.tool
+curl -sS http://127.0.0.1:8765/api/stats | python3 -m json.tool
+curl -sS http://127.0.0.1:8765/api/security/overview | python3 -m json.tool | sed -n '1,120p'
+```
 
-- `reports/competition_report.md`：正式报告。
-- `reports/competition_experiment_results.json`：完整机器可读结果。
-- `reports/competition_summary.csv`：汇总指标。
-- `reports/competition_case_results.csv`：逐用例结果。
-- `reports/reproduction_guide.md`：展示脚本和复现说明。
-- `reports/ui-screenshots/`：大屏和控制台截图以及布局自动检查结果。
-- `reports/ui-screenshots-8765/browser-functional-report.json`：OpenClaw 8765 端口功能与大屏布局验收结果。
+## 最新输出
+
+- 综合回归报告：`reports/benchmark_risk_tiered/benchmark_eval_report.risk_tiered.md`
+- 综合回归原始结果：`reports/benchmark_risk_tiered/benchmark_eval_results.risk_tiered.json`
+- 工具专项报告：`reports/benchmark_risk_tiered/tool_attack_benchmark_report.risk_tiered.md`
+- 工具专项原始结果：`reports/benchmark_risk_tiered/tool_attack_benchmark_results.risk_tiered.json`
+- risk-tiered 长文本留档：`reports/benchmark_risk_tiered/xuanjian_benchmark_risk_tiered_record.txt`
+- 技术架构与算法说明：`reports/technical_design_and_algorithms.md`
+- 开启/关闭对比：`reports/supervision_ablation/supervision_ablation_explained.md`
+- 完整验收：`reports/full_acceptance/full_acceptance_report.latest.md`
+
+## 审批模式演示
+
+系统支持三种模式：
+
+- `observe`：只记录，不阻断，适合作为无防护基线。
+- `approval`：高风险动作进入人工审批。
+- `block`：高风险动作执行前阻断，适合比赛主展示。
+
+可在网页右上角切换，也可用 OpenClaw 命令：
+
+```text
+/agentsentry config set enforcement.mode approval
+/agentsentry config set enforcement.mode block
+```
+
+## 注意事项
+
+- 危险 shell 样例不会真正破坏主机；实验验证的是执行前裁决。
+- 邮件发送使用本机 outbox 受控实现。
+- eBPF 当前因权限不可用，健康检查会如实显示 unavailable。
