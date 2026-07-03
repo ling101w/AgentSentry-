@@ -20,7 +20,7 @@ import { createPolicyState, normalizeAction, policyTrustSnapshot, resultFindings
 import type { PolicyState } from "../core/policy.ts";
 import type { AgentSentryRecord, RecordSeverity, RecordStore } from "../core/records.ts";
 import { semanticJudgeMemoryWrite, semanticJudgeMessage, semanticJudgeToolCall } from "../core/semantic.ts";
-import { systemMonitorStatus } from "../core/system-monitor.ts";
+import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfRuntimeAudit } from "../core/system-monitor.ts";
 
 export type DashboardServer = {
   url: string;
@@ -122,12 +122,14 @@ async function handleRequest(
         "taint_tracking",
         "abac_session_policy",
         "system_preflight",
+        "kernel_runtime_gate",
         "multi_turn_lab_session",
         "session_taint_propagation",
         "memory_guard_passports",
         "memory_integrity_check",
         "memory_quarantine",
       ],
+      runtime_isolation: config.runtimeIsolation,
       system_monitor: systemMonitorStatus(),
     });
     return;
@@ -1936,33 +1938,56 @@ async function executeLabActions(input: {
       const executionFindings = Array.isArray(execution.findings) ? execution.findings as Array<Record<string, unknown>> : [];
       if (executionFindings.length) {
         updateAfterMessage(policyState, executionFindings as never);
+        const runtimeFindings = executionFindings.filter((finding) => String(finding.layer || "") === "Runtime Isolation");
+        const nonRuntimeFindings = executionFindings.filter((finding) => String(finding.layer || "") !== "Runtime Isolation");
         for (const finding of executionFindings) {
           addLabFinding(input.store, config, input.runId, input.sessionKey, finding, {
             toolName: normalizedAction.toolName,
             toolCallId,
             command_id: input.commandId,
             scenario: input.scenario,
-            source: "memory-guard-storage",
+            source: String(finding.layer || "") === "Runtime Isolation" ? "ebpf-runtime-audit" : "memory-guard-storage",
             semantic_judge: semanticProfile,
           });
         }
-        input.store.add({
-          run_id: input.runId,
-          session_key: input.sessionKey,
-          type: "alert",
-          layer: "Cognition Protection",
-          severity: executionFindings.some((finding) => finding.verdict === "block") ? "danger" : "warning",
-          title: `Memory Guard finding: ${normalizedAction.toolName}`,
-          summary: executionFindings.map((finding) => String(finding.reason || "memory guard finding")).join("; "),
-          payload: {
-            toolName: normalizedAction.toolName,
-            toolCallId,
-            command_id: input.commandId,
-            scenario: input.scenario,
-            memory_guard: execution.memory_guard,
-            findings: executionFindings,
-          },
-        });
+        if (nonRuntimeFindings.length) {
+          input.store.add({
+            run_id: input.runId,
+            session_key: input.sessionKey,
+            type: "alert",
+            layer: "Cognition Protection",
+            severity: nonRuntimeFindings.some((finding) => finding.verdict === "block") ? "danger" : "warning",
+            title: `Memory Guard finding: ${normalizedAction.toolName}`,
+            summary: nonRuntimeFindings.map((finding) => String(finding.reason || "memory guard finding")).join("; "),
+            payload: {
+              toolName: normalizedAction.toolName,
+              toolCallId,
+              command_id: input.commandId,
+              scenario: input.scenario,
+              memory_guard: execution.memory_guard,
+              findings: nonRuntimeFindings,
+            },
+          });
+        }
+        if (runtimeFindings.length) {
+          input.store.add({
+            run_id: input.runId,
+            session_key: input.sessionKey,
+            type: "alert",
+            layer: "Runtime Isolation",
+            severity: "warning",
+            title: `eBPF runtime audit finding: ${normalizedAction.toolName}`,
+            summary: runtimeFindings.map((finding) => String(finding.reason || "runtime audit finding")).join("; "),
+            payload: {
+              toolName: normalizedAction.toolName,
+              toolCallId,
+              command_id: input.commandId,
+              scenario: input.scenario,
+              runtime_audit: execution.runtime_audit,
+              findings: runtimeFindings,
+            },
+          });
+        }
       }
       if (execution.ok) {
         const resultContent = execution.output ?? execution;
@@ -2033,6 +2058,7 @@ type BusinessExecution = {
   status?: number;
   findings?: unknown[];
   memory_guard?: Record<string, unknown>;
+  runtime_audit?: EbpfRuntimeAudit | null;
 };
 
 function addToolResultRecord(
@@ -2082,20 +2108,40 @@ function addToolResultRecord(
 }
 
 async function executeBusinessTool(action: LabAction, config: PluginConfig, context = ""): Promise<BusinessExecution> {
+  const checkpoint = config.runtimeIsolation.auditAfterExecution ? ebpfLogCheckpoint() : null;
+  let execution: BusinessExecution;
   try {
-    if (action.toolName === "send_email") return executeEmail(action);
-    if (action.toolName === "read_file") return executeReadFile(action, config);
-    if (action.toolName === "write_file") return executeWriteFile(action);
-    if (action.toolName === "call_api" || action.toolName === "read_webpage") return executeHttpRequest(action, config);
-    if (action.toolName === "memory_write") return executeMemoryWrite(action, config, context);
-    if (action.toolName === "memory_read") return executeMemoryRead(action, config, context);
-    if (action.toolName === "shell_exec") {
-      return { ok: false, error: "shell execution is disabled for browser-originated test requests" };
-    }
-    return { ok: false, error: `unsupported business tool ${action.toolName}` };
+    if (action.toolName === "send_email") execution = executeEmail(action);
+    else if (action.toolName === "read_file") execution = executeReadFile(action, config);
+    else if (action.toolName === "write_file") execution = executeWriteFile(action);
+    else if (action.toolName === "call_api" || action.toolName === "read_webpage") execution = await executeHttpRequest(action, config);
+    else if (action.toolName === "memory_write") execution = executeMemoryWrite(action, config, context);
+    else if (action.toolName === "memory_read") execution = executeMemoryRead(action, config, context);
+    else if (action.toolName === "shell_exec") execution = { ok: false, error: "shell execution is disabled for browser-originated test requests" };
+    else execution = { ok: false, error: `unsupported business tool ${action.toolName}` };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    execution = { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+  return attachRuntimeAudit(execution, action, config, checkpoint);
+}
+
+function attachRuntimeAudit(
+  execution: BusinessExecution,
+  action: LabAction,
+  config: PluginConfig,
+  checkpoint: ReturnType<typeof ebpfLogCheckpoint>,
+): BusinessExecution {
+  if (!config.runtimeIsolation.auditAfterExecution) return execution;
+  const audit = auditRuntimeEventsSince(checkpoint, action.toolName, action.params, { previewChars: config.capture.previewChars });
+  const auditFindings = audit.findings || [];
+  return {
+    ...execution,
+    runtime_audit: audit,
+    findings: [
+      ...(Array.isArray(execution.findings) ? execution.findings : []),
+      ...auditFindings,
+    ],
+  };
 }
 
 function executeEmail(action: LabAction): BusinessExecution {

@@ -1,13 +1,26 @@
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import type { RuntimeIsolationUnavailableAction } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { clampText, safeStringify } from "./redact.ts";
 import { createRiskVector, finding, type RiskVector } from "./trust.ts";
+
+export type EbpfObserverStatus = {
+  service: string;
+  active: boolean;
+  detected_by: "systemd" | "process" | "none";
+  script_path: string;
+  log_path: string;
+  log_exists: boolean;
+  log_mtime?: string;
+  recent_events?: number;
+};
 
 export type SystemMonitorStatus = {
   pre_exec_policy: "active";
   ebpf: "attached" | "available" | "unavailable";
   reason: string;
+  observer: EbpfObserverStatus;
   isolation: {
     mode: "kernel-assisted" | "pre-exec";
     controls: string[];
@@ -20,6 +33,23 @@ export type SystemPreflightResult = {
   findings: DetectionFinding[];
   risk_vector: RiskVector;
   status: SystemMonitorStatus;
+};
+
+export type EbpfLogCheckpoint = {
+  log_path: string;
+  size: number;
+  created_at: string;
+  monitor: SystemMonitorStatus;
+};
+
+export type EbpfRuntimeAudit = {
+  enabled: boolean;
+  monitor: SystemMonitorStatus;
+  checkpoint: EbpfLogCheckpoint | null;
+  scanned_bytes: number;
+  event_count: number;
+  interesting_events: Array<Record<string, unknown>>;
+  findings: DetectionFinding[];
 };
 
 const EXFIL_COMMAND_PATTERNS = [
@@ -72,10 +102,18 @@ const HOST_ESCAPE_COMMAND_PATTERNS = [
   /\/dev\/(?:mem|kmem|kmsg)\b/i,
 ];
 
+const EBPF_OBSERVER_SERVICE = "agentsentry-ebpf-observer.service";
+const EBPF_OBSERVER_SCRIPT = "/home/ubuntu/AgentSentry-/tools/agentsentry-ebpf-observer.bt";
+const EBPF_OBSERVER_LOG = "/var/log/agentsentry-ebpf.jsonl";
+
 export function systemPreflight(
   toolName: string,
   params: Record<string, unknown>,
-  options: { previewChars?: number } = {},
+  options: {
+    previewChars?: number;
+    requireKernelObserverForHighRisk?: boolean;
+    unavailableAction?: RuntimeIsolationUnavailableAction;
+  } = {},
 ): SystemPreflightResult {
   const previewChars = options.previewChars ?? 1200;
   const normalized = toolName.toLowerCase();
@@ -85,6 +123,7 @@ export function systemPreflight(
   const urls = collectUrls(params);
   const findings: DetectionFinding[] = [];
   const risk = createRiskVector();
+  const monitor = systemMonitorStatus();
 
   if (/shell|command|exec|terminal|powershell|cmd/.test(normalized) || command) {
     const safeRead = command ? isLowRiskShellRead(command) : false;
@@ -98,7 +137,7 @@ export function systemPreflight(
       findings.push(finding("System Preflight", "deterministic", "block", "command can read or transmit sensitive local assets", 100, {
         command: clampText(command || text, previewChars),
         matched: exfilMatches,
-        monitor: systemMonitorStatus(),
+        monitor,
         isolation_plan: isolationPlan("block"),
       }));
     }
@@ -107,7 +146,7 @@ export function systemPreflight(
       findings.push(finding("System Preflight", "deterministic", "block", "command requests privileged or persistent system changes", 95, {
         command: clampText(command || text, previewChars),
         matched: privilegeMatches,
-        monitor: systemMonitorStatus(),
+        monitor,
         isolation_plan: isolationPlan("block"),
       }));
     }
@@ -116,7 +155,7 @@ export function systemPreflight(
       findings.push(finding("Runtime Isolation", "deterministic", "block", "command attempts host escape or container boundary bypass", 100, {
         command: clampText(command || text, previewChars),
         matched: escapeMatches,
-        monitor: systemMonitorStatus(),
+        monitor,
         isolation_plan: isolationPlan("block"),
       }));
     }
@@ -125,7 +164,7 @@ export function systemPreflight(
       findings.push(finding("Runtime Isolation", "heuristic", "require_approval", "command performs network egress and requires sandbox egress review", 45, {
         command: clampText(command || text, previewChars),
         urls: egressUrls.slice(0, 8),
-        monitor: systemMonitorStatus(),
+        monitor,
         isolation_plan: isolationPlan("review"),
       }));
     }
@@ -136,7 +175,7 @@ export function systemPreflight(
     risk.sensitive_data = Math.max(risk.sensitive_data, 85);
     findings.push(finding("System Preflight", "deterministic", "block", "tool parameters target sensitive local paths", 90, {
       paths: sensitivePaths.slice(0, 8),
-      monitor: systemMonitorStatus(),
+      monitor,
       isolation_plan: isolationPlan("block"),
     }));
   }
@@ -146,7 +185,7 @@ export function systemPreflight(
     risk.persistence = 90;
     findings.push(finding("System Preflight", "deterministic", "block", "tool parameters target memory, startup, or OpenClaw configuration paths", 95, {
       paths: persistencePaths.slice(0, 8),
-      monitor: systemMonitorStatus(),
+      monitor,
       isolation_plan: isolationPlan("block"),
     }));
   }
@@ -156,19 +195,100 @@ export function systemPreflight(
     risk.tool_hijack = 100;
     findings.push(finding("System Preflight", "deterministic", "block", "Control UI gateway URL override detected before network call", 100, {
       urls: gatewayUrls.slice(0, 6),
-      monitor: systemMonitorStatus(),
+      monitor,
       isolation_plan: isolationPlan("block"),
     }));
   }
 
+  findings.push(...kernelRuntimeGateFindings({
+    toolName,
+    normalized,
+    command,
+    paths,
+    urls,
+    sensitivePaths,
+    persistencePaths,
+    monitor,
+    requireKernelObserver: Boolean(options.requireKernelObserverForHighRisk),
+    unavailableAction: options.unavailableAction || "require_approval",
+    previewChars,
+  }));
+
   return {
     findings: dedupeFindings(findings),
     risk_vector: risk,
-    status: systemMonitorStatus(),
+    status: monitor,
   };
 }
 
+function kernelRuntimeGateFindings(input: {
+  toolName: string;
+  normalized: string;
+  command: string;
+  paths: string[];
+  urls: string[];
+  sensitivePaths: string[];
+  persistencePaths: string[];
+  monitor: SystemMonitorStatus;
+  requireKernelObserver: boolean;
+  unavailableAction: RuntimeIsolationUnavailableAction;
+  previewChars: number;
+}): DetectionFinding[] {
+  if (!input.requireKernelObserver) return [];
+  const externalUrls = input.urls.filter((url) => isExternalUrl(url));
+  const highRiskShell = Boolean(input.command && /shell|command|exec|terminal|powershell|cmd/.test(input.normalized) && !isLowRiskShellRead(input.command));
+  const riskyFileMutation = /write|delete|remove|move|chmod|chown/.test(input.normalized)
+    && input.paths.some((path) => path.startsWith("/") || path.includes("..") || SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(path)) || PERSISTENCE_PATH_PATTERNS.some((pattern) => pattern.test(path)));
+  const guardedSurfaces = [
+    highRiskShell ? "shell_exec" : "",
+    externalUrls.length ? "network_egress" : "",
+    input.sensitivePaths.length ? "sensitive_file_access" : "",
+    input.persistencePaths.length ? "persistence_surface" : "",
+    riskyFileMutation ? "file_mutation" : "",
+  ].filter(Boolean);
+  if (!guardedSurfaces.length) return [];
+
+  const evidence = {
+    toolName: input.toolName,
+    guarded_surfaces: guardedSurfaces,
+    command: input.command ? clampText(input.command, input.previewChars) : "",
+    paths: input.paths.slice(0, 8),
+    urls: externalUrls.slice(0, 8),
+    monitor: input.monitor,
+    runtime_gate: {
+      required: true,
+      reason: "high-risk runtime surface requires kernel-assisted audit before execution",
+      unavailable_action: input.unavailableAction,
+    },
+  };
+
+  if (input.monitor.ebpf === "attached") {
+    return [finding("Runtime Isolation", "deterministic", "pass", "kernel eBPF observer attached for high-risk runtime surface", 0, evidence)];
+  }
+
+  const hardSurface = highRiskShell || input.sensitivePaths.length > 0 || input.persistencePaths.length > 0 || riskyFileMutation;
+  const verdict: DetectionFinding["verdict"] = input.unavailableAction === "block" || hardSurface ? "block" : "require_approval";
+  return [finding(
+    "Runtime Isolation",
+    "deterministic",
+    verdict,
+    "kernel eBPF observer is required before high-risk runtime surface can execute",
+    verdict === "block" ? 95 : 45,
+    evidence,
+  )];
+}
+
 export function systemMonitorStatus(): SystemMonitorStatus {
+  const observer = ebpfObserverStatus();
+  if (observer.active) {
+    return withIsolation({
+      pre_exec_policy: "active",
+      ebpf: "attached",
+      reason: `AgentSentry eBPF observer is active via ${observer.detected_by}; kernel exec/open/connect events are written to ${observer.log_path}`,
+      observer,
+    });
+  }
+
   const bpffs = existsSync("/sys/fs/bpf");
   const bpftoolPath = commandPath("bpftool", ["/usr/sbin/bpftool", "/sbin/bpftool", "/usr/bin/bpftool"]);
   const bpftool = bpftoolPath ? spawnSync(bpftoolPath, ["version"], { stdio: "ignore" }) : { status: 127 };
@@ -176,19 +296,233 @@ export function systemMonitorStatus(): SystemMonitorStatus {
   const tracingReadable = canAccess("/sys/kernel/tracing") || canAccess("/sys/kernel/debug/tracing");
   const unprivileged = readKernelFlag("/proc/sys/kernel/unprivileged_bpf_disabled");
   if (bpffs && bpftool.status === 0 && typeof process.getuid === "function" && process.getuid() === 0 && bpfWritable && tracingReadable) {
-    return withIsolation({ pre_exec_policy: "active", ebpf: "available", reason: "bpffs, tracefs and bpftool are available; root can attach probes" });
+    return withIsolation({ pre_exec_policy: "active", ebpf: "available", reason: "bpffs, tracefs and bpftool are available; root can attach probes", observer });
   }
   if (bpffs && bpftool.status === 0 && !bpfWritable) {
     return withIsolation({
       pre_exec_policy: "active",
       ebpf: "unavailable",
-      reason: `bpffs and bpftool exist, but /sys/fs/bpf is not accessible to this user service${unprivileged ? `; unprivileged_bpf_disabled=${unprivileged}` : ""}`,
+      reason: `bpffs and bpftool exist, but /sys/fs/bpf is not accessible to this user service and ${EBPF_OBSERVER_SERVICE} is not active${unprivileged ? `; unprivileged_bpf_disabled=${unprivileged}` : ""}`,
+      observer,
     });
   }
   if (bpffs && bpftool.status === 0 && !tracingReadable) {
-    return withIsolation({ pre_exec_policy: "active", ebpf: "unavailable", reason: "bpftool exists, but tracefs/debugfs is not accessible to this user service" });
+    return withIsolation({ pre_exec_policy: "active", ebpf: "unavailable", reason: `bpftool exists, but tracefs/debugfs is not accessible to this user service and ${EBPF_OBSERVER_SERVICE} is not active`, observer });
   }
-  return withIsolation({ pre_exec_policy: "active", ebpf: "unavailable", reason: "kernel eBPF attachment tools are not available in this runtime" });
+  return withIsolation({ pre_exec_policy: "active", ebpf: "unavailable", reason: "kernel eBPF attachment tools are not available in this runtime", observer });
+}
+
+export function ebpfLogCheckpoint(): EbpfLogCheckpoint | null {
+  const monitor = systemMonitorStatus();
+  if (monitor.ebpf !== "attached" || !monitor.observer.log_exists) return null;
+  try {
+    const stats = statSync(EBPF_OBSERVER_LOG);
+    return {
+      log_path: EBPF_OBSERVER_LOG,
+      size: stats.size,
+      created_at: new Date().toISOString(),
+      monitor,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function auditRuntimeEventsSince(
+  checkpoint: EbpfLogCheckpoint | null,
+  toolName: string,
+  params: Record<string, unknown>,
+  options: { previewChars?: number; maxBytes?: number; maxEvents?: number } = {},
+): EbpfRuntimeAudit {
+  const monitor = systemMonitorStatus();
+  const previewChars = options.previewChars ?? 1200;
+  const maxBytes = Math.max(4096, options.maxBytes ?? 512 * 1024);
+  const maxEvents = Math.max(10, options.maxEvents ?? 400);
+  if (!checkpoint || monitor.ebpf !== "attached") {
+    return {
+      enabled: false,
+      monitor,
+      checkpoint,
+      scanned_bytes: 0,
+      event_count: 0,
+      interesting_events: [],
+      findings: [],
+    };
+  }
+
+  const { events, scannedBytes } = readEbpfEventsSince(checkpoint, maxBytes, maxEvents);
+  const audit = auditEbpfEvents(events, toolName, params, monitor, previewChars);
+  return {
+    enabled: true,
+    monitor,
+    checkpoint,
+    scanned_bytes: scannedBytes,
+    event_count: events.length,
+    interesting_events: audit.interestingEvents,
+    findings: audit.findings,
+  };
+}
+
+function readEbpfEventsSince(
+  checkpoint: EbpfLogCheckpoint,
+  maxBytes: number,
+  maxEvents: number,
+): { events: Array<Record<string, unknown>>; scannedBytes: number } {
+  if (checkpoint.log_path !== EBPF_OBSERVER_LOG || !existsSync(EBPF_OBSERVER_LOG)) return { events: [], scannedBytes: 0 };
+  try {
+    const stats = statSync(EBPF_OBSERVER_LOG);
+    if (stats.size <= checkpoint.size) return { events: [], scannedBytes: 0 };
+    const available = stats.size - checkpoint.size;
+    const length = Math.min(available, maxBytes);
+    const offset = stats.size - length;
+    const buffer = Buffer.alloc(length);
+    const fd = openSync(EBPF_OBSERVER_LOG, "r");
+    try {
+      readSync(fd, buffer, 0, length, offset);
+    } finally {
+      closeSync(fd);
+    }
+    const lines = buffer.toString("utf8").split(/\r?\n/).filter((line) => line.trim().startsWith("{"));
+    const parsed: Array<Record<string, unknown>> = [];
+    for (const line of lines.slice(-maxEvents)) {
+      try {
+        const item = JSON.parse(line);
+        if (item && typeof item === "object" && !Array.isArray(item)) parsed.push(item as Record<string, unknown>);
+      } catch {
+        // Ignore malformed observer lines; bpftrace can be interrupted mid-write.
+      }
+    }
+    return { events: parsed, scannedBytes: length };
+  } catch {
+    return { events: [], scannedBytes: 0 };
+  }
+}
+
+function auditEbpfEvents(
+  events: Array<Record<string, unknown>>,
+  toolName: string,
+  params: Record<string, unknown>,
+  monitor: SystemMonitorStatus,
+  previewChars: number,
+): { findings: DetectionFinding[]; interestingEvents: Array<Record<string, unknown>> } {
+  const normalized = toolName.toLowerCase();
+  const command = readFirstString(params, ["command", "cmd", "script", "shell", "input"]);
+  const expectedPaths = collectPathLike(params);
+  const shellTool = /shell|command|exec|terminal|powershell|cmd/.test(normalized);
+  const lowRiskShell = shellTool && command ? isLowRiskShellRead(command) : false;
+  const interestingEvents: Array<Record<string, unknown>> = [];
+  const findings: DetectionFinding[] = [];
+
+  const sensitiveOpenEvents = events
+    .filter((event) => String(event.event || "") === "openat")
+    .filter((event) => isRelevantComm(String(event.comm || "")))
+    .map((event) => ({ event, filename: String(event.filename || "") }))
+    .filter(({ filename }) => filename && !isBenignRuntimePath(filename) && isSensitiveRuntimePath(filename))
+    .filter(({ filename }) => !expectedPaths.some((expected) => sameRuntimePathIntent(expected, filename)))
+    .slice(0, 12);
+
+  if (sensitiveOpenEvents.length) {
+    interestingEvents.push(...sensitiveOpenEvents.map((item) => item.event));
+    findings.push(finding("Runtime Isolation", "deterministic", "require_approval", "eBPF observed unexpected sensitive file access after tool was allowed", 80, {
+      toolName,
+      expected_paths: expectedPaths.slice(0, 8),
+      observed_paths: sensitiveOpenEvents.map((item) => item.filename).slice(0, 8),
+      monitor,
+      runtime_audit: {
+        source: "ebpf",
+        event: "openat",
+        policy: "high-confidence sensitive path only",
+      },
+    }));
+  }
+
+  const execEvents = events
+    .filter((event) => String(event.event || "") === "execve")
+    .filter((event) => isRelevantComm(String(event.comm || "")))
+    .map((event) => ({ event, text: execEventText(event) }))
+    .filter(({ text }) => isDangerousRuntimeExec(text))
+    .slice(0, 12);
+
+  const unexpectedExecEvents = execEvents.filter(({ text }) => !shellTool || (lowRiskShell && command && !text.includes(command)));
+  if (unexpectedExecEvents.length) {
+    interestingEvents.push(...unexpectedExecEvents.map((item) => item.event));
+    findings.push(finding("Runtime Isolation", "deterministic", "require_approval", "eBPF observed unexpected process execution after non-shell or low-risk tool was allowed", 85, {
+      toolName,
+      command: command ? clampText(command, previewChars) : "",
+      observed_exec: unexpectedExecEvents.map((item) => clampText(item.text, 240)).slice(0, 8),
+      monitor,
+      runtime_audit: {
+        source: "ebpf",
+        event: "execve",
+        policy: "dangerous exec only; normal node/library activity ignored",
+      },
+    }));
+  }
+
+  return {
+    findings: dedupeFindings(findings),
+    interestingEvents: interestingEvents.slice(0, 20),
+  };
+}
+
+function ebpfObserverStatus(): EbpfObserverStatus {
+  const systemdActive = systemctlIsActive(EBPF_OBSERVER_SERVICE);
+  const processActive = processIsActive("bpftrace .*agentsentry-ebpf-observer\\.bt");
+  const log = observerLogInfo(EBPF_OBSERVER_LOG);
+  return {
+    service: EBPF_OBSERVER_SERVICE,
+    active: systemdActive || processActive,
+    detected_by: systemdActive ? "systemd" : processActive ? "process" : "none",
+    script_path: EBPF_OBSERVER_SCRIPT,
+    log_path: EBPF_OBSERVER_LOG,
+    ...log,
+  };
+}
+
+function systemctlIsActive(service: string): boolean {
+  const systemctl = commandPath("systemctl", ["/usr/bin/systemctl", "/bin/systemctl"]);
+  if (!systemctl) return false;
+  try {
+    return spawnSync(systemctl, ["is-active", "--quiet", service], { stdio: "ignore" }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function processIsActive(pattern: string): boolean {
+  const pgrep = commandPath("pgrep", ["/usr/bin/pgrep", "/bin/pgrep"]);
+  if (!pgrep) return false;
+  try {
+    return spawnSync(pgrep, ["-f", pattern], { stdio: "ignore" }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function observerLogInfo(path: string): Pick<EbpfObserverStatus, "log_exists" | "log_mtime" | "recent_events"> {
+  if (!existsSync(path)) return { log_exists: false };
+  try {
+    const stats = statSync(path);
+    const maxRead = 64 * 1024;
+    const length = Math.min(stats.size, maxRead);
+    const offset = Math.max(0, stats.size - length);
+    const buffer = Buffer.alloc(length);
+    const fd = openSync(path, "r");
+    try {
+      readSync(fd, buffer, 0, length, offset);
+    } finally {
+      closeSync(fd);
+    }
+    const tail = buffer.toString("utf8");
+    const recentEvents = tail.split(/\r?\n/).filter((line) => line.trim().startsWith("{")).length;
+    return {
+      log_exists: true,
+      log_mtime: stats.mtime.toISOString(),
+      recent_events: recentEvents,
+    };
+  } catch {
+    return { log_exists: true };
+  }
 }
 
 function withIsolation(status: Omit<SystemMonitorStatus, "isolation">): SystemMonitorStatus {
@@ -322,6 +656,57 @@ function isLowRiskShellRead(command: string): boolean {
     /^wc\s+[-\w\s./~*]+$/i,
   ];
   return safePatterns.some((pattern) => pattern.test(trimmed));
+}
+
+function isRelevantComm(comm: string): boolean {
+  return /^(node|bash|sh|zsh|python|python3|curl|wget|nc|ncat|socat)$/i.test(comm.trim());
+}
+
+function isBenignRuntimePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  return !normalized
+    || normalized === "/dev/null"
+    || normalized.startsWith("/usr/lib/")
+    || normalized.startsWith("/lib/")
+    || normalized.startsWith("/usr/share/locale/")
+    || normalized.startsWith("/usr/share/nodejs/")
+    || normalized.startsWith("/home/ubuntu/.openclaw/tools/node-")
+    || normalized.includes("/node_modules/")
+    || normalized.includes("/.codex/shell_snapshots/")
+    || normalized === "/etc/ld.so.cache"
+    || /\/LC_[A-Z_]+$/.test(normalized);
+}
+
+function isSensitiveRuntimePath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  return SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(normalized))
+    || /(?:^|\/)\.ssh(?:\/|$)/i.test(normalized)
+    || /(?:^|\/)(?:openclaw\.json|runtime-config\.json|exec-approvals\.json)$/i.test(normalized)
+    || /(?:^|\/)(?:\.env|\.npmrc|\.pypirc|credentials|credential|secrets?)(?:\.|$|\/)/i.test(normalized);
+}
+
+function sameRuntimePathIntent(expected: string, observed: string): boolean {
+  if (!expected) return false;
+  const normalizedExpected = expected.replace(/^file:\/\//, "").replace(/\\/g, "/");
+  const normalizedObserved = observed.replace(/\\/g, "/");
+  if (normalizedExpected === normalizedObserved) return true;
+  if (!normalizedExpected.startsWith("/") && normalizedObserved.endsWith(`/${normalizedExpected.replace(/^\/+/, "")}`)) return true;
+  return false;
+}
+
+function execEventText(event: Record<string, unknown>): string {
+  return [event.argv0, event.argv1, event.argv2]
+    .map((value) => typeof value === "string" ? value : "")
+    .filter(Boolean)
+    .join(" ");
+}
+
+function isDangerousRuntimeExec(text: string): boolean {
+  return /\b(?:curl|wget)\b[\s\S]{0,160}\|\s*(?:bash|sh|zsh|python|node)\b/i.test(text)
+    || /\b(?:curl|wget|nc|ncat|socat|scp|rsync)\b[\s\S]{0,180}(?:\.env|id_rsa|id_ed25519|openclaw\.json|token|secret|credential)/i.test(text)
+    || /\b(?:bash|sh|zsh|python|python3|node)\s+-c\b/i.test(text)
+    || /\b(?:sudo|chmod|chown|systemctl|service|crontab|iptables|ufw|docker)\b/i.test(text)
+    || /\brm\s+-rf\b/i.test(text);
 }
 
 function canAccess(path: string): boolean {

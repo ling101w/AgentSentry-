@@ -20,7 +20,7 @@ import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
 import { semanticJudgeMemoryWrite, semanticJudgeMessage, semanticJudgeToolCall } from "./core/semantic.ts";
-import { systemMonitorStatus } from "./core/system-monitor.ts";
+import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
 
 type SessionState = {
@@ -30,6 +30,7 @@ type SessionState = {
   toolCount: number;
   coverNextAssistantResponse: boolean;
   policyState: PolicyState;
+  runtimeCheckpoints: Map<string, { checkpoint: EbpfLogCheckpoint | null; toolName: string; params: Record<string, unknown> }>;
 };
 
 const plugin = {
@@ -285,6 +286,16 @@ const plugin = {
         findings: result.findings,
       };
 
+      if (plugin.config!.runtimeIsolation.auditAfterExecution && effectiveDecision === "allow") {
+        const checkpointKey = runtimeCheckpointKey(event.toolCallId || "", event.toolName);
+        state.runtimeCheckpoints.set(checkpointKey, {
+          checkpoint: ebpfLogCheckpoint(),
+          toolName: event.toolName,
+          params,
+        });
+        trimRuntimeCheckpoints(state);
+      }
+
       plugin.store!.add({
         run_id: state.runId,
         session_key: state.sessionKey,
@@ -405,18 +416,31 @@ const plugin = {
     api.on("after_tool_call", (event, ctx) => {
       const state = getSession(ctx);
       const findings = resultFindings(event?.toolCallId || "", event?.result, state.policyState, plugin.config!, event?.toolName || "");
+      const checkpointKey = runtimeCheckpointKey(event?.toolCallId || "", event?.toolName || "");
+      const runtimeCheckpoint = state.runtimeCheckpoints.get(checkpointKey) || null;
+      if (runtimeCheckpoint) state.runtimeCheckpoints.delete(checkpointKey);
+      const runtimeAudit = plugin.config!.runtimeIsolation.auditAfterExecution
+        ? auditRuntimeEventsSince(
+          runtimeCheckpoint?.checkpoint || null,
+          runtimeCheckpoint?.toolName || event?.toolName || "",
+          runtimeCheckpoint?.params || {},
+          { previewChars: plugin.config!.capture.previewChars },
+        )
+        : null;
+      const runtimeFindings = runtimeAudit?.findings || [];
+      const allFindings = [...findings, ...runtimeFindings];
       const severity: RecordSeverity = event?.error ? "danger" : "success";
       plugin.store!.add({
         run_id: state.runId,
         session_key: state.sessionKey,
         type: "tool_result",
-        layer: findings.length ? "Input Sanitization" : "Tool Result",
-        severity: findings.length ? "warning" : severity,
+        layer: runtimeFindings.length ? "Runtime Isolation" : findings.length ? "Input Sanitization" : "Tool Result",
+        severity: allFindings.length ? "warning" : severity,
         title: event?.error ? "Tool call failed" : "Tool call completed",
         summary: event?.error
           ? clampText(event.error, plugin.config!.capture.previewChars)
-          : findings.length
-            ? findings.map((finding) => finding.reason).join("; ")
+          : allFindings.length
+            ? allFindings.map((finding) => finding.reason).join("; ")
             : "tool result returned",
         payload: {
           toolCallId: event?.toolCallId || "",
@@ -425,12 +449,23 @@ const plugin = {
           label: state.policyState.toolResultLabels.get(event?.toolCallId || "") || null,
           trust: policyTrustSnapshot(state.policyState),
           system_monitor: systemMonitorStatus(),
-          findings,
+          runtime_audit: runtimeAudit ? {
+            enabled: runtimeAudit.enabled,
+            scanned_bytes: runtimeAudit.scanned_bytes,
+            event_count: runtimeAudit.event_count,
+            interesting_events: runtimeAudit.interesting_events.slice(0, 8),
+            checkpoint: runtimeAudit.checkpoint ? {
+              log_path: runtimeAudit.checkpoint.log_path,
+              size: runtimeAudit.checkpoint.size,
+              created_at: runtimeAudit.checkpoint.created_at,
+            } : null,
+          } : null,
+          findings: allFindings,
         },
       });
 
-      updateAfterMessage(state.policyState, findings);
-      for (const finding of findings) {
+      updateAfterMessage(state.policyState, allFindings);
+      for (const finding of allFindings) {
         addFinding(state, finding, { toolCallId: event?.toolCallId || "" });
       }
       if (findings.length) {
@@ -438,6 +473,15 @@ const plugin = {
           state.coverNextAssistantResponse = true;
         }
         sendProactiveNotification(ctx, "warning", "Tool result contamination detected", findings.map((finding) => finding.reason).join("; "));
+      }
+      if (runtimeFindings.length) {
+        addAlert(state, "eBPF runtime audit finding", runtimeFindings.map((finding) => finding.reason).join("; "), {
+          toolName: event?.toolName || "",
+          toolCallId: event?.toolCallId || "",
+          runtime_audit: runtimeAudit,
+          findings: runtimeFindings,
+        });
+        sendProactiveNotification(ctx, "warning", "eBPF runtime audit finding", runtimeFindings.map((finding) => finding.reason).join("; "));
       }
     });
 
@@ -452,10 +496,24 @@ const plugin = {
           toolCount: 0,
           coverNextAssistantResponse: false,
           policyState: createPolicyState(),
+          runtimeCheckpoints: new Map(),
         };
         plugin.sessions.set(sessionKey, state);
       }
       return state;
+    }
+
+    function runtimeCheckpointKey(toolCallId: string, toolName: string): string {
+      return toolCallId || `last:${toolName || "unknown"}`;
+    }
+
+    function trimRuntimeCheckpoints(state: SessionState): void {
+      const limit = 80;
+      while (state.runtimeCheckpoints.size > limit) {
+        const first = state.runtimeCheckpoints.keys().next().value;
+        if (!first) break;
+        state.runtimeCheckpoints.delete(first);
+      }
     }
 
     function addFinding(state: SessionState, finding: Record<string, unknown>, extra: Record<string, unknown>): void {

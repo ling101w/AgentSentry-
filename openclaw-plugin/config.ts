@@ -1,6 +1,7 @@
 export type EnforcementMode = "observe" | "approval" | "block";
 export type NotificationSeverity = "warning" | "danger";
 export type SemanticJudgeMode = "off" | "risk-tiered" | "full";
+export type RuntimeIsolationUnavailableAction = "require_approval" | "block";
 
 export class PluginConfig {
   dashboard: {
@@ -53,6 +54,11 @@ export class PluginConfig {
     allowlistedApiHosts: string[];
     allowedWriteRoots: string[];
     sensitiveAssets: string[];
+  };
+  runtimeIsolation: {
+    requireKernelObserverForHighRisk: boolean;
+    unavailableAction: RuntimeIsolationUnavailableAction;
+    auditAfterExecution: boolean;
   };
   enforcement: {
     mode: EnforcementMode;
@@ -120,6 +126,11 @@ export class PluginConfig {
       allowlistedApiHosts: [],
       allowedWriteRoots: [],
       sensitiveAssets: ["secret.txt", "api_key", "token", "password", "system_prompt.txt", ".env", "id_rsa"],
+    };
+    this.runtimeIsolation = {
+      requireKernelObserverForHighRisk: false,
+      unavailableAction: "require_approval",
+      auditAfterExecution: true,
     };
     this.enforcement = {
       mode: "observe",
@@ -211,6 +222,22 @@ export class PluginConfig {
       config.policy.allowlistedApiHosts = readStringArray(policy.allowlistedApiHosts, config.policy.allowlistedApiHosts);
       config.policy.allowedWriteRoots = readStringArray(policy.allowedWriteRoots, config.policy.allowedWriteRoots);
       config.policy.sensitiveAssets = readStringArray(policy.sensitiveAssets, config.policy.sensitiveAssets);
+    }
+
+    const runtimeIsolation = objectAt(obj, "runtimeIsolation");
+    if (runtimeIsolation) {
+      config.runtimeIsolation.requireKernelObserverForHighRisk = readBoolean(
+        runtimeIsolation.requireKernelObserverForHighRisk,
+        config.runtimeIsolation.requireKernelObserverForHighRisk,
+      );
+      const unavailableAction = readString(runtimeIsolation.unavailableAction, config.runtimeIsolation.unavailableAction);
+      if (unavailableAction === "require_approval" || unavailableAction === "block") {
+        config.runtimeIsolation.unavailableAction = unavailableAction;
+      }
+      config.runtimeIsolation.auditAfterExecution = readBoolean(
+        runtimeIsolation.auditAfterExecution,
+        config.runtimeIsolation.auditAfterExecution,
+      );
     }
 
     const enforcement = objectAt(obj, "enforcement");

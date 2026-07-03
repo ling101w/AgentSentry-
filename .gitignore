@@ -4,6 +4,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 *.pyc
 *.pyo
 
@@ -11,19 +13,35 @@ __pycache__/
 node_modules/
 dist/
 build/
+coverage/
 
 # Local tools and browser automation state
 .playwright-mcp/
+.cache/
+.tmp/
+tmp/
 
 # Secrets and local runtime state
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
 *.db
 *.sqlite
 *.sqlite3
 *.pid
 *.log
+*.jsonl
+*.local.json
 runtime/*
 !runtime/README.md
+.openclaw/
 
 # OpenClaw local workspace may contain credentials and machine-local state.
 openclaw-workspace/

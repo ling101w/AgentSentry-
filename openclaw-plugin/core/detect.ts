@@ -127,7 +127,11 @@ export function detectToolCall(
     findings.push(...memoryGuard.findings);
   }
 
-  const preflight = systemPreflight(toolName, params, { previewChars: config.capture.previewChars });
+  const preflight = systemPreflight(toolName, params, {
+    previewChars: config.capture.previewChars,
+    requireKernelObserverForHighRisk: config.runtimeIsolation.requireKernelObserverForHighRisk,
+    unavailableAction: config.runtimeIsolation.unavailableAction,
+  });
   findings.push(...preflight.findings);
   risk += Math.min(70, Math.trunc(riskMax(preflight.risk_vector) * 0.7));
 
