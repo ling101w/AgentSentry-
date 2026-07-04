@@ -22,7 +22,7 @@
 - “测试用例模板”：适合快速演示比赛要求中的三大场景，如外部内容注入、记忆持久化、工具劫持。
 - “公开样例库”：适合从已接入的公开 benchmark 中选择单条样例复测。
 
-公开样例库支持按样例集、来源、类别和关键词筛选。点“载入样例”只把输入填入表单，便于先阅读；点“运行样例”会真实调用 `/api/lab/command`，产生新的五层数据流、工具裁决、告警和工具结果。
+公开样例库支持按样例集、来源、类别和关键词筛选。点“载入样例”只把输入填入表单，便于先阅读；点“运行样例”会真实调用 `/api/lab/command`，产生新的四域一环数据流、工具裁决、告警和工具结果。
 
 公开 benchmark 文件对应关系：
 
@@ -68,7 +68,7 @@
 
 | LLM-Judge 调度 | 含义 | 适合场景 |
 |---|---|---|
-| off | 不调用 LLM，只走规则、TaskSpec、污点、ABAC、Memory Guard、System Preflight | 无模型基线 |
+| off | 不调用 LLM，只走规则、TaskSpec、污点、ABAC、Memory Guard、工具边界域的 System Preflight | 无模型基线 |
 | full | 所有启用面都调用 LLM-Judge | 离线评测、复现 full Judge 结果 |
 | risk-tiered | 低风险请求跳过 LLM，高风险工具/记忆/外部污染/基础文件才调用 LLM-Judge | 当前推荐模式 |
 
@@ -144,7 +144,7 @@ python3 scripts/run_tool_attack_benchmark_eval.py \
 1. 先看动作是否在 TaskSpec 内。
 2. 再看参数是否形成敏感源到外部 sink、持久化或提权。
 3. 再看是否有低信任污点影响高风险 sink。
-4. 再看 Memory Guard 和 System Preflight 是否命中。
+4. 再看 Memory Guard 和 工具边界域的 System Preflight 是否命中。
 5. 最后看 LLM-Judge 是否补充了语义风险。
 
 ## 故障排查

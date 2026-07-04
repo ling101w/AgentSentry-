@@ -5,7 +5,8 @@ export function clampText(value: unknown, maxChars: number): string {
   const text = typeof value === "string" ? value : safeStringify(value);
   const redacted = redactSecrets(text);
   if (redacted.length <= maxChars) return redacted;
-  return `${redacted.slice(0, Math.max(0, maxChars - 1))}...`;
+  if (maxChars <= 3) return ".".repeat(Math.max(0, maxChars));
+  return `${redacted.slice(0, Math.max(0, maxChars - 3))}...`;
 }
 
 export function redactObject(value: unknown, maxChars: number): unknown {

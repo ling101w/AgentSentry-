@@ -1,10 +1,13 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { ConfigSchema, PluginConfig } from "./config.ts";
 import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
 import { handleAgentSentryCommand } from "./core/commands.ts";
 import { detectMessageContent, detectToolCall, serializeToolParams } from "./core/detect.ts";
-import { clearFoundationScanCache, scanFoundation } from "./core/foundation.ts";
+import { clearProvenanceScanCache, scanProvenance } from "./core/provenance.ts";
 import { computeOperationKey, formatApprovalDescription } from "./core/operation.ts";
 import {
   createPolicyState,
@@ -19,7 +22,7 @@ import {
 import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
-import { semanticJudgeMemoryWrite, semanticJudgeMessage, semanticJudgeToolCall } from "./core/semantic.ts";
+import { semanticJudgeMemoryWrite, semanticJudgeToolCall } from "./core/semantic.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
 
@@ -87,7 +90,7 @@ const plugin = {
           sessionCount: plugin.sessions.size,
           approvalCacheCount: plugin.approvalCache!.size(),
           resetRecords: () => plugin.store!.reset(),
-          clearFoundationCache: () => clearFoundationScanCache(),
+          clearProvenanceCache: () => clearProvenanceScanCache(),
           clearApprovalCache: () => {
             plugin.approvalCache!.reset();
           },
@@ -106,45 +109,60 @@ const plugin = {
       state.messageCount = messageCount;
       updateTaskSpec(state.policyState, event?.messages, plugin.config!);
       const workspaceDir = typeof ctx.workspaceDir === "string" ? ctx.workspaceDir : "";
-      const foundation = workspaceDir ? await scanFoundation(workspaceDir, plugin.config!) : null;
-      if (foundation) {
-        state.policyState.foundationBlocked = foundation.blocked;
-        state.policyState.foundationFindings = foundation.findings;
-        const foundationSeverity = foundation.blocked ? "danger" : foundation.findings.length ? "warning" : "success";
-        plugin.store!.add({
-          run_id: state.runId,
-          session_key: state.sessionKey,
-          type: "foundation_scan",
-          layer: "Foundation",
-          severity: foundationSeverity,
-          title: foundation.blocked ? "Foundation scan blocked workspace" : "Foundation scan completed",
-          summary: `${foundation.findings.length} findings; ${foundation.scannedFiles} files scanned${foundation.cached ? "; cached" : ""}`,
-          payload: {
-            workspaceDir,
-            scannedFiles: foundation.scannedFiles,
-            skippedFiles: foundation.skippedFiles,
-            cached: foundation.cached,
-            blocked: foundation.blocked,
-            findings: foundation.findings,
-          },
+      const provenanceScans = [];
+      for (const scanRoot of provenanceRootsFor(workspaceDir)) {
+        const scan = await scanProvenance(scanRoot, plugin.config!);
+        provenanceScans.push({
+          ...scan,
+          findings: scan.findings.map((finding) => ({
+            ...finding,
+            evidence: { ...finding.evidence, scan_root: scan.workspaceDir },
+          })),
         });
-        for (const finding of foundation.findings) {
-          addFinding(state, finding, { workspaceDir });
-        }
-        if (foundation.blocked) {
-          addAlert(state, "Foundation scan found blocking workspace risk", foundation.findings.map((finding) => finding.reason).join("; "), {
-            workspaceDir,
-            findings: foundation.findings,
+      }
+      if (provenanceScans.length) {
+        state.policyState.provenanceFindings = provenanceScans.flatMap((scan) => scan.findings);
+        state.policyState.provenanceBlocked = provenanceScans.some((scan) => scan.blocked);
+        for (const provenance of provenanceScans) {
+          if (provenance.cached) continue;
+          const provenanceSeverity = provenance.blocked ? "danger" : provenance.findings.length ? "warning" : "success";
+          plugin.store!.add({
+            run_id: state.runId,
+            session_key: state.sessionKey,
+            type: "provenance_scan",
+            layer: "Context Provenance",
+            severity: provenanceSeverity,
+            title: provenance.blocked ? "Provenance scan blocked a source root" : "Provenance scan completed",
+            summary: `${provenance.findings.length} findings; ${provenance.scannedFiles} files scanned`,
+            payload: {
+              workspaceDir,
+              scanRoot: provenance.workspaceDir,
+              scannedFiles: provenance.scannedFiles,
+              skippedFiles: provenance.skippedFiles,
+              cached: provenance.cached,
+              blocked: provenance.blocked,
+              findings: provenance.findings,
+            },
           });
-          sendProactiveNotification(ctx, "danger", "Foundation scan found blocking workspace risk", foundation.findings.map((finding) => finding.reason).join("; "));
+          for (const finding of provenance.findings) {
+            addFinding(state, finding, { workspaceDir, scanRoot: provenance.workspaceDir });
+          }
+          if (provenance.blocked) {
+            addAlert(state, "Provenance scan found blocking risk", provenance.findings.map((finding) => finding.reason).join("; "), {
+              workspaceDir,
+              scanRoot: provenance.workspaceDir,
+              findings: provenance.findings,
+            });
+            sendProactiveNotification(ctx, "danger", "Provenance scan found blocking risk", provenance.findings.map((finding) => finding.reason).join("; "));
+          }
         }
       }
       plugin.store!.add({
         run_id: state.runId,
         session_key: state.sessionKey,
         type: "session_start",
-        layer: "Foundation",
-        severity: state.policyState.foundationBlocked ? "warning" : "info",
+        layer: "Context Provenance",
+        severity: state.policyState.provenanceBlocked ? "warning" : "info",
         title: "OpenClaw prompt build",
         summary: `${messageCount} messages in context; task tools: ${state.policyState.taskSpec.allowed_tools.join(", ")}`,
         payload: {
@@ -153,7 +171,7 @@ const plugin = {
           messageCount,
           task_spec: state.policyState.taskSpec,
           contaminated: state.policyState.contaminated,
-          foundationBlocked: state.policyState.foundationBlocked,
+          provenanceBlocked: state.policyState.provenanceBlocked,
           trust: policyTrustSnapshot(state.policyState),
           system_monitor: systemMonitorStatus(),
         },
@@ -169,7 +187,7 @@ const plugin = {
         run_id: state.runId,
         session_key: state.sessionKey,
         type: "llm_input",
-        layer: "LLM Input",
+        layer: "Context Provenance",
         severity: "info",
         title: "LLM input prepared",
         summary: plugin.config!.capture.includeSystemPromptPreview ? "system prompt preview captured" : "system prompt preview disabled",
@@ -179,7 +197,7 @@ const plugin = {
       });
     });
 
-    api.on("before_message_write", async (event, ctx) => {
+    api.on("before_message_write", (event, ctx) => {
       const state = getSession(ctx);
       const message = event?.message || {};
       const role = typeof message.role === "string" ? message.role : "unknown";
@@ -187,9 +205,12 @@ const plugin = {
         ? clampText(message.content ?? message, plugin.config!.capture.previewChars)
         : "[disabled]";
       const ruleFindings = detectMessageContent(message.content ?? message, plugin.config!);
-      const semanticFindings = await semanticJudgeMessage(message.content ?? message, plugin.config!);
-      const findings = [...ruleFindings, ...semanticFindings];
+      const findings = [...ruleFindings];
       const severity = findings.length ? "warning" : role === "assistant" ? "success" : "info";
+
+      if (role === "user") {
+        updateTaskSpec(state.policyState, [{ role: "user", content: message.content ?? message }], plugin.config!);
+      }
 
       if (shouldCoverAssistantResponse(state, role)) {
         state.coverNextAssistantResponse = false;
@@ -198,7 +219,7 @@ const plugin = {
           run_id: state.runId,
           session_key: state.sessionKey,
           type: "response_cover",
-          layer: "Input Sanitization",
+          layer: "Context Provenance",
           severity: "warning",
           title: "Assistant response covered",
           summary: "Contaminated tool output was detected earlier in this turn.",
@@ -221,7 +242,7 @@ const plugin = {
         run_id: state.runId,
         session_key: state.sessionKey,
         type: "message_write",
-        layer: findings.length ? "Input Sanitization" : "Message Write",
+        layer: findings.length ? "Context Provenance" : "Context Provenance",
         severity,
         title: `Message write: ${role}`,
         summary: findings.length ? findings.map((finding) => finding.reason).join("; ") : preview,
@@ -246,9 +267,15 @@ const plugin = {
       const operationKey = computeOperationKey(event.toolName, params);
       const normalizedTool = normalizeAction(event.toolName, params).tool;
       const semanticFindings = [
-        ...await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!),
+        ...await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
+          policyState: state.policyState,
+          phase: "tool_call",
+        }),
         ...(normalizedTool === "memory_write"
-          ? await semanticJudgeMemoryWrite(params, state.policyState.currentTask, plugin.config!)
+          ? await semanticJudgeMemoryWrite(params, state.policyState.currentTask, plugin.config!, {
+            policyState: state.policyState,
+            phase: "memory_write",
+          })
           : []),
       ];
       const result = detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings);
@@ -300,7 +327,7 @@ const plugin = {
         run_id: state.runId,
         session_key: state.sessionKey,
         type: "tool_decision",
-        layer: "Execution Control",
+        layer: "Tool Boundary",
         severity,
         title: `Tool call: ${event.toolName}`,
         summary: cachedApproval ? `allow-always cache hit; ${result.summary}` : result.summary,
@@ -312,7 +339,7 @@ const plugin = {
           run_id: state.runId,
           session_key: state.sessionKey,
           type: "approval_cache_hit",
-          layer: "Execution Control",
+          layer: "Tool Boundary",
           severity: "success",
           title: `Allow-always cache: ${event.toolName}`,
           summary: `Exact operation approved from cache after ${cacheEntry?.hits ?? 0} hit(s).`,
@@ -348,6 +375,7 @@ const plugin = {
       }
 
       if (plugin.config!.enforcement.mode === "approval" && (effectiveDecision === "deny" || effectiveDecision === "ask")) {
+        const includeJudgeAnalysis = shouldReturnJudgeAnalysis(result.findings, result.risk_score, effectiveDecision);
         const description = formatApprovalDescription({
           toolName: event.toolName,
           toolCallId: event.toolCallId || "",
@@ -355,13 +383,16 @@ const plugin = {
           riskScore: result.risk_score,
           reasons: result.policy.reasons,
           violations: result.policy.violations,
+          decision: effectiveDecision,
+          findings: result.findings,
+          includeJudgeAnalysis,
           maxChars: 240,
         });
         plugin.store!.add({
           run_id: state.runId,
           session_key: state.sessionKey,
           type: "approval_request",
-          layer: "Execution Control",
+          layer: "Tool Boundary",
           severity: "warning",
           title: `Approval requested: ${event.toolName}`,
           summary: description,
@@ -374,9 +405,11 @@ const plugin = {
             operation_key: operationKey,
             risk_score: result.risk_score,
             deterministic_block: result.policy.deterministic_block,
+            judge_analysis_returned_to_openclaw: includeJudgeAnalysis,
             reasons: result.policy.reasons,
             violations: result.policy.violations,
             summary: result.summary,
+            approval_description: description,
           },
         });
         return {
@@ -392,7 +425,7 @@ const plugin = {
                 run_id: state.runId,
                 session_key: state.sessionKey,
                 type: "approval_resolution",
-                layer: "Execution Control",
+                layer: "Tool Boundary",
                 severity: decision.startsWith("allow") ? "success" : "warning",
                 title: `Approval ${decision}: ${event.toolName}`,
                 summary: decision === "allow-always" ? "Exact operation added to allow-always cache." : `Operator decision: ${decision}`,
@@ -434,7 +467,7 @@ const plugin = {
         run_id: state.runId,
         session_key: state.sessionKey,
         type: "tool_result",
-        layer: runtimeFindings.length ? "Runtime Isolation" : findings.length ? "Input Sanitization" : "Tool Result",
+        layer: runtimeFindings.length ? "Tool Boundary" : findings.length ? "Context Provenance" : "Evidence Feedback",
         severity: allFindings.length ? "warning" : severity,
         title: event?.error ? "Tool call failed" : "Tool call completed",
         summary: event?.error
@@ -517,6 +550,7 @@ const plugin = {
     }
 
     function addFinding(state: SessionState, finding: Record<string, unknown>, extra: Record<string, unknown>): void {
+      if (String(finding.verdict || "pass") === "pass") return;
       plugin.store!.add({
         run_id: state.runId,
         session_key: state.sessionKey,
@@ -537,7 +571,7 @@ const plugin = {
         run_id: state.runId,
         session_key: state.sessionKey,
         type: "alert",
-        layer: "Execution Control",
+        layer: "Tool Boundary",
         severity: "danger",
         title,
         summary,
@@ -550,7 +584,7 @@ const plugin = {
         run_id: newId("runtime"),
         session_key: "runtime",
         type: "runtime",
-        layer: "Runtime",
+        layer: "Evidence Feedback",
         severity: "info",
         title,
         summary,
@@ -581,6 +615,21 @@ const plugin = {
     }
   },
 };
+
+function shouldReturnJudgeAnalysis(
+  findings: Array<{ finding_type?: unknown; verdict?: unknown; score?: unknown; evidence?: Record<string, unknown> }>,
+  riskScore: number,
+  decision: string,
+): boolean {
+  const hasJudgeFinding = findings.some((finding) => {
+    const evidence = finding.evidence as Record<string, unknown> | undefined;
+    return finding.finding_type === "learned" && typeof evidence?.semanticRisk === "string";
+  });
+  if (!hasJudgeFinding) return false;
+  return decision === "deny" || riskScore >= 55 || findings.some((finding) =>
+    finding.verdict === "block" || Number(finding.score || 0) >= 60
+  );
+}
 
 function severityForDecision(decision: string): RecordSeverity {
   if (decision === "deny") return "danger";
@@ -617,6 +666,26 @@ function notificationRoute(ctx: Record<string, unknown>): { channel: string; tar
   if (provider === "feishu") return { channel: "feishu", target };
   if (provider === "qqbot") return { channel: "qqbot", target };
   return null;
+}
+
+function provenanceRootsFor(workspaceDir: string): string[] {
+  const candidates = [
+    workspaceDir,
+    join(homedir(), ".openclaw", "plugin-skills"),
+    join(homedir(), ".openclaw", "skills"),
+    ...String(process.env.OPENCLAW_SKILLS_DIR || "")
+      .split(":")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ];
+  const roots: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate || !existsSync(candidate)) continue;
+    const root = resolve(candidate);
+    if (roots.some((existing) => root === existing || root.startsWith(`${existing}/`))) continue;
+    roots.push(root);
+  }
+  return roots;
 }
 
 export default plugin;

@@ -134,7 +134,7 @@ export function systemPreflight(
     if (exfilMatches.length) {
       risk.exfiltration = 95;
       risk.sensitive_data = Math.max(risk.sensitive_data, 85);
-      findings.push(finding("System Preflight", "deterministic", "block", "command can read or transmit sensitive local assets", 100, {
+      findings.push(finding("Tool Boundary", "deterministic", "block", "command can read or transmit sensitive local assets", 100, {
         command: clampText(command || text, previewChars),
         matched: exfilMatches,
         monitor,
@@ -143,7 +143,7 @@ export function systemPreflight(
     }
     if (privilegeMatches.length) {
       risk.privilege = 90;
-      findings.push(finding("System Preflight", "deterministic", "block", "command requests privileged or persistent system changes", 95, {
+      findings.push(finding("Tool Boundary", "deterministic", "block", "command requests privileged or persistent system changes", 95, {
         command: clampText(command || text, previewChars),
         matched: privilegeMatches,
         monitor,
@@ -152,7 +152,7 @@ export function systemPreflight(
     }
     if (escapeMatches.length) {
       risk.privilege = 100;
-      findings.push(finding("Runtime Isolation", "deterministic", "block", "command attempts host escape or container boundary bypass", 100, {
+      findings.push(finding("Tool Boundary", "deterministic", "block", "command attempts host escape or container boundary bypass", 100, {
         command: clampText(command || text, previewChars),
         matched: escapeMatches,
         monitor,
@@ -161,7 +161,7 @@ export function systemPreflight(
     }
     if (egressUrls.length) {
       risk.exfiltration = Math.max(risk.exfiltration, 45);
-      findings.push(finding("Runtime Isolation", "heuristic", "require_approval", "command performs network egress and requires sandbox egress review", 45, {
+      findings.push(finding("Tool Boundary", "heuristic", "require_approval", "command performs network egress and requires sandbox egress review", 45, {
         command: clampText(command || text, previewChars),
         urls: egressUrls.slice(0, 8),
         monitor,
@@ -173,7 +173,7 @@ export function systemPreflight(
   const sensitivePaths = paths.filter((path) => !isSafeSystemReadPath(path) && SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(path)));
   if (sensitivePaths.length) {
     risk.sensitive_data = Math.max(risk.sensitive_data, 85);
-    findings.push(finding("System Preflight", "deterministic", "block", "tool parameters target sensitive local paths", 90, {
+    findings.push(finding("Tool Boundary", "deterministic", "block", "tool parameters target sensitive local paths", 90, {
       paths: sensitivePaths.slice(0, 8),
       monitor,
       isolation_plan: isolationPlan("block"),
@@ -181,10 +181,13 @@ export function systemPreflight(
   }
 
   const persistencePaths = paths.filter((path) => PERSISTENCE_PATH_PATTERNS.some((pattern) => pattern.test(path)));
-  if (persistencePaths.length) {
+  const protectedPersistencePaths = persistencePaths.filter((path) =>
+    !isUserMemoryDocumentPath(path) && !isReadOnlyInstalledSkillDocPath(path, normalized, command)
+  );
+  if (protectedPersistencePaths.length) {
     risk.persistence = 90;
-    findings.push(finding("System Preflight", "deterministic", "block", "tool parameters target memory, startup, or OpenClaw configuration paths", 95, {
-      paths: persistencePaths.slice(0, 8),
+    findings.push(finding("Tool Boundary", "deterministic", "block", "tool parameters target memory, startup, or OpenClaw configuration paths", 95, {
+      paths: protectedPersistencePaths.slice(0, 8),
       monitor,
       isolation_plan: isolationPlan("block"),
     }));
@@ -193,7 +196,7 @@ export function systemPreflight(
   const gatewayUrls = urls.filter((url) => NON_LOCAL_GATEWAY_PATTERN.test(url) || /gatewayURL/i.test(url));
   if (gatewayUrls.length) {
     risk.tool_hijack = 100;
-    findings.push(finding("System Preflight", "deterministic", "block", "Control UI gateway URL override detected before network call", 100, {
+    findings.push(finding("Tool Boundary", "deterministic", "block", "Control UI gateway URL override detected before network call", 100, {
       urls: gatewayUrls.slice(0, 6),
       monitor,
       isolation_plan: isolationPlan("block"),
@@ -207,7 +210,7 @@ export function systemPreflight(
     paths,
     urls,
     sensitivePaths,
-    persistencePaths,
+    persistencePaths: protectedPersistencePaths,
     monitor,
     requireKernelObserver: Boolean(options.requireKernelObserverForHighRisk),
     unavailableAction: options.unavailableAction || "require_approval",
@@ -263,13 +266,13 @@ function kernelRuntimeGateFindings(input: {
   };
 
   if (input.monitor.ebpf === "attached") {
-    return [finding("Runtime Isolation", "deterministic", "pass", "kernel eBPF observer attached for high-risk runtime surface", 0, evidence)];
+    return [finding("Tool Boundary", "deterministic", "pass", "kernel eBPF observer attached for high-risk runtime surface", 0, evidence)];
   }
 
   const hardSurface = highRiskShell || input.sensitivePaths.length > 0 || input.persistencePaths.length > 0 || riskyFileMutation;
   const verdict: DetectionFinding["verdict"] = input.unavailableAction === "block" || hardSurface ? "block" : "require_approval";
   return [finding(
-    "Runtime Isolation",
+    "Tool Boundary",
     "deterministic",
     verdict,
     "kernel eBPF observer is required before high-risk runtime surface can execute",
@@ -423,7 +426,7 @@ function auditEbpfEvents(
 
   if (sensitiveOpenEvents.length) {
     interestingEvents.push(...sensitiveOpenEvents.map((item) => item.event));
-    findings.push(finding("Runtime Isolation", "deterministic", "require_approval", "eBPF observed unexpected sensitive file access after tool was allowed", 80, {
+    findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected sensitive file access after tool was allowed", 80, {
       toolName,
       expected_paths: expectedPaths.slice(0, 8),
       observed_paths: sensitiveOpenEvents.map((item) => item.filename).slice(0, 8),
@@ -446,7 +449,7 @@ function auditEbpfEvents(
   const unexpectedExecEvents = execEvents.filter(({ text }) => !shellTool || (lowRiskShell && command && !text.includes(command)));
   if (unexpectedExecEvents.length) {
     interestingEvents.push(...unexpectedExecEvents.map((item) => item.event));
-    findings.push(finding("Runtime Isolation", "deterministic", "require_approval", "eBPF observed unexpected process execution after non-shell or low-risk tool was allowed", 85, {
+    findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected process execution after non-shell or low-risk tool was allowed", 85, {
       toolName,
       command: command ? clampText(command, previewChars) : "",
       observed_exec: unexpectedExecEvents.map((item) => clampText(item.text, 240)).slice(0, 8),
@@ -588,6 +591,19 @@ function collectPathLike(value: unknown, out: string[] = []): string[] {
     }
   }
   return Array.from(new Set(out));
+}
+
+function isUserMemoryDocumentPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  return /(^|\/)(soul\.md|user\.md)$/i.test(normalized)
+    || /(^|\/)memory\/[^/]+\.md$/i.test(normalized);
+}
+
+function isReadOnlyInstalledSkillDocPath(path: string, normalizedTool: string, command: string): boolean {
+  if (command) return false;
+  if (/write|delete|remove|move|chmod|chown|exec|shell|command|terminal|powershell|cmd/.test(normalizedTool)) return false;
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  return /(?:^|\/)\.openclaw\/(?:plugin-skills\/[^/]+|tools\/node-[^/]+\/lib\/node_modules\/openclaw\/skills\/[^/]+)\/skill\.md$/i.test(normalized);
 }
 
 function collectUrls(value: unknown, out: string[] = []): string[] {

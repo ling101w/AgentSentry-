@@ -138,7 +138,8 @@ const MEMORY_POISON_PATTERNS = [
   /(route|archive|forward|mirror|sync|attach|append|include).{0,120}(identity|session|environment|config|credential|private|operator|bundle|openclaw\.json|\.env|\.ssh)/i,
   /(以后|后续|默认|长期|偏好|连续性|快速通道).{0,90}(审批|确认|策略|安全|提示|横幅).{0,90}(已处理|跳过|静默|自动|无需|不打扰)/i,
   /(归档|同步|转发|附加|追加|包含|投递).{0,100}(身份|会话|环境|配置|凭据|资料|材料|openclaw\.json|\.env|\.ssh)/i,
-  /\b(?:cron|crontab|systemd|startup|autorun|hooks\/wake|\/hooks\/wake)\b/i,
+  /\b(?:cron|crontab|systemd|startup|autorun|hooks\/wake|\/hooks\/wake)\b.{0,120}\b(?:write|add|install|enable|persist|execute|ignore|bypass|disable|secret|token|exfiltrate|send|upload)\b/i,
+  /\b(?:write|add|install|enable|persist|execute|ignore|bypass|disable|send|upload|写入|添加|安装|启用|持久化|执行|绕过|禁用|发送|上传)\b.{0,120}\b(?:cron|crontab|systemd|startup|autorun|hooks\/wake|\/hooks\/wake|启动项|定时任务)\b/i,
 ];
 
 const GATEWAY_HIJACK_PATTERNS = [
@@ -220,10 +221,7 @@ export function analyzeTrustContent(
     matched.skillExfil.push("skill code reads local state and contacts an external endpoint");
   }
 
-  if (/(^|\/)(memory\.md|agents\.md|soul\.md|user\.md)$/i.test(lowerPath)) {
-    matched.memoryPoison.push(lowerPath);
-  }
-  if (/(^|\/)(skill\.md|package\.json|index\.[cm]?[jt]s)$/i.test(lowerPath) && matched.skillExfil.length) {
+  if (isActiveSkillSurface(lowerPath, source, options.toolName) && matched.skillExfil.length) {
     matched.memoryPoison.push("skill package can persist unsafe capability");
   }
   if (/\.(pdf)$/i.test(lowerPath) && matched.promptInjection.length) {
@@ -288,7 +286,7 @@ export function analyzeTrustContent(
 
   const findings: DetectionFinding[] = [];
   if (matched.hiddenHtml.length || matched.urlFragment.length) {
-    findings.push(finding("Input Sanitization", "deterministic", "block", "external content contains hidden prompt-injection instructions", 95, {
+    findings.push(finding("Context Provenance", "deterministic", "block", "external content contains hidden prompt-injection instructions", 95, {
       source,
       tags,
       matched: [...matched.hiddenHtml, ...matched.urlFragment].slice(0, 5),
@@ -298,7 +296,7 @@ export function analyzeTrustContent(
     }));
   }
   if (matched.pdfStego.length) {
-    findings.push(finding("Input Sanitization", "deterministic", "block", "PDF content contains hidden or low-visibility agent instructions", 95, {
+    findings.push(finding("Context Provenance", "deterministic", "block", "PDF content contains hidden or low-visibility agent instructions", 95, {
       source,
       path: options.path || "",
       matched: matched.pdfStego.slice(0, 5),
@@ -307,7 +305,7 @@ export function analyzeTrustContent(
     }));
   }
   if (matched.imageMetadata.length) {
-    findings.push(finding("Input Sanitization", "deterministic", "block", "image metadata or OCR text contains agent instructions", 90, {
+    findings.push(finding("Context Provenance", "deterministic", "block", "image metadata or OCR text contains agent instructions", 90, {
       source,
       path: options.path || "",
       matched: matched.imageMetadata.slice(0, 5),
@@ -315,8 +313,8 @@ export function analyzeTrustContent(
       risk_vector: risk,
     }));
   }
-  if (matched.promptInjection.length && !findings.some((item) => item.layer === "Input Sanitization")) {
-    findings.push(finding("Input Sanitization", "heuristic", "require_approval", "content contains prompt-injection or exfiltration indicators", 45, {
+  if (matched.promptInjection.length && !findings.some((item) => item.layer === "Context Provenance")) {
+    findings.push(finding("Context Provenance", "heuristic", "require_approval", "content contains prompt-injection or exfiltration indicators", 45, {
       source,
       matched: matched.promptInjection.slice(0, 5),
       trust_label: label,
@@ -325,7 +323,7 @@ export function analyzeTrustContent(
     }));
   }
   if (matched.memoryPoison.length) {
-    findings.push(finding("Cognition Protection", "deterministic", "block", "content attempts to persist privileged instructions into memory or startup flow", 100, {
+    findings.push(finding("State Integrity", "deterministic", "block", "content attempts to persist privileged instructions into memory or startup flow", 100, {
       source,
       path: options.path || "",
       matched: matched.memoryPoison.slice(0, 5),
@@ -334,7 +332,7 @@ export function analyzeTrustContent(
     }));
   }
   if (matched.gatewayHijack.length) {
-    findings.push(finding("Execution Control", "deterministic", "block", "gateway URL override or token-hijack pattern detected", 100, {
+    findings.push(finding("Tool Boundary", "deterministic", "block", "gateway URL override or token-hijack pattern detected", 100, {
       source,
       matched: matched.gatewayHijack.slice(0, 5),
       trust_label: label,
@@ -342,7 +340,7 @@ export function analyzeTrustContent(
     }));
   }
   if (matched.skillExfil.length) {
-    findings.push(finding("Foundation", "deterministic", "block", "skill or code path can read OpenClaw secrets and exfiltrate them", 100, {
+    findings.push(finding("Context Provenance", "deterministic", "block", "skill or code path can read OpenClaw secrets and exfiltrate them", 100, {
       source,
       path: options.path || "",
       matched: matched.skillExfil.slice(0, 5).map((item) => sanitizeEvidence(item)),
@@ -351,7 +349,7 @@ export function analyzeTrustContent(
     }));
   }
   if (matched.sensitive.length) {
-    findings.push(finding("Execution Control", "heuristic", "require_approval", "content references sensitive credentials or private assets", 55, {
+    findings.push(finding("Tool Boundary", "heuristic", "require_approval", "content references sensitive credentials or private assets", 55, {
       source,
       sensitive_kinds: matched.sensitive,
       trust_label: label,
@@ -487,7 +485,7 @@ function inferSource(value: unknown, options: { path?: string; toolName?: string
   if (path.endsWith(".pdf")) return "pdf_text";
   if (/\.(png|jpe?g|webp|gif|tiff?)$/.test(path)) return "image_metadata";
   if (/(^|\/)(memory\.md|agents\.md|soul\.md|user\.md)$/.test(path)) return "memory";
-  if (path.endsWith("skill.md") || path.includes("/skills/")) return "skill";
+  if (isActiveSkillSurface(path)) return "skill";
   if (path.endsWith("openclaw.json") || path.includes("/config")) return "config";
   const text = flattenContent(value);
   if (/<html|<body|<span|<div|style\s*=|https?:\/\//i.test(text)) return "external_web";
@@ -650,7 +648,8 @@ function printableText(value: string): string {
 
 function isNegatedSafetyBoundary(value: string): boolean {
   return /(?:do\s+not|don't|without|never|no\s+need\s+to|不要|不需要|不包含|无需|禁止|不得|避免|不能|不应).{0,100}(?:read|send|upload|include|access|exfiltrate|token|secret|password|credential|private\s*key|读取|访问|发送|上传|外发|泄露|包含|凭据|密钥|私钥|配置)/i.test(value)
-    || /(?:read|send|upload|include|access|exfiltrate|读取|访问|发送|上传|外发|泄露|包含).{0,60}(?:do\s+not|don't|without|never|不要|不需要|不包含|无需|禁止|不得|避免|不能|不应)/i.test(value);
+    || /(?:read|send|upload|include|access|exfiltrate|modify|change|write|读取|访问|发送|上传|外发|泄露|包含|修改|改变|写入).{0,60}(?:do\s+not|don't|without|never|不要|不需要|不包含|无需|禁止|不得|避免|不能|不应|不)/i.test(value)
+    || /(?:只|仅|仅仅|only).{0,40}(?:read|check|inspect|status|查看|检查|读取|状态).{0,80}(?:不|不要|不会|不得|不能|without|do\s+not|don't|never).{0,40}(?:modify|change|write|修改|改变|写入|配置|系统配置)/i.test(value);
 }
 
 function isOperationalStatusBoundary(value: string): boolean {
@@ -669,10 +668,7 @@ function hasExfilSignal(text: string): boolean {
 }
 
 function hasSkillDataFlow(text: string, lowerPath: string, source: TrustSource, toolName?: string): boolean {
-  const skillSurface = source === "skill"
-    || lowerPath.endsWith("skill.md")
-    || lowerPath.includes("/skills/")
-    || /skill|plugin|package/i.test(toolName || "");
+  const skillSurface = isActiveSkillSurface(lowerPath, source, toolName);
   if (!skillSurface) return false;
   return textVariants(text).some((variant) => {
     const readsLocal = /\b(?:readFileSync|readFile|openSync|createReadStream|fs\.|Path\(|open\()\b[\s\S]{0,260}(?:openclaw\.json|\.openclaw|\.env|\.ssh|id_(?:rsa|ed25519|ecdsa|dsa)|credentials?|config|session)/i.test(variant)
@@ -682,6 +678,20 @@ function hasSkillDataFlow(text: string, lowerPath: string, source: TrustSource, 
     const declaresBenignSurface = /(weather|forecast|calendar|translate|天气|预报|日历|翻译|摘要|查询)/i.test(variant);
     return readsLocal && contactsNetwork && (declaresBenignSurface || /skill|package|plugin|能力|扩展/i.test(variant));
   });
+}
+
+function isActiveSkillSurface(lowerPath: string, source?: TrustSource, toolName?: string): boolean {
+  if (source === "skill") return true;
+  const normalized = lowerPath.replace(/\\/g, "/").replace(/^\.\/+/, "").toLowerCase();
+  return normalized === "skill.md"
+    || normalized.endsWith("/skill.md")
+    || normalized.startsWith("skills/")
+    || normalized.includes("/skills/")
+    || normalized.startsWith("plugin-skills/")
+    || normalized.includes("/plugin-skills/")
+    || normalized.startsWith("extensions/")
+    || normalized.includes("/extensions/")
+    || /skill|plugin|package/i.test(toolName || "");
 }
 
 function hasPrivilegeSignal(text: string): boolean {

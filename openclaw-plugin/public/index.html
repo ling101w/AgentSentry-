@@ -3,19 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AgentSentry Records</title>
+    <title>玄鉴运行记录与风险观测</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <header class="topbar">
       <div class="brand">
-        <p class="eyebrow">AgentSentry for OpenClaw</p>
+        <p class="eyebrow">玄鉴 for OpenClaw</p>
         <h1>运行记录与风险观测</h1>
         <p class="subtitle">按会话追踪 OpenClaw 提示、工具调用、拦截决策和响应结果。</p>
       </div>
       <div class="actions">
-        <div class="mode-control" aria-label="AgentSentry 运行模式">
+        <div class="mode-control" aria-label="玄鉴运行模式">
           <label for="modeSelect">模式</label>
           <select id="modeSelect">
             <option value="block">阻断</option>
@@ -59,7 +59,7 @@
                 <button class="segment active" type="button" data-focus="important">重点</button>
                 <button class="segment" type="button" data-focus="all">全量</button>
                 <button class="segment" type="button" data-focus="tools">工具</button>
-                <button class="segment" type="button" data-focus="foundation">扫描</button>
+                <button class="segment" type="button" data-focus="context">溯源</button>
               </div>
             </div>
             <div class="field-grid">
@@ -81,7 +81,7 @@
               </label>
             </div>
             <label>
-              生命周期层
+              安全域
               <select id="layerFilter">
                 <option value="">全部</option>
               </select>

@@ -191,7 +191,7 @@ async function handleRequest(
         run_id: `runtime_${Date.now().toString(36)}`,
         session_key: "dashboard:runtime-config",
         type: "runtime",
-        layer: "Runtime",
+        layer: "Evidence Feedback",
         severity: "info",
         title: "AgentSentry enforcement mode changed",
         summary: `${previousMode} -> ${mode}`,
@@ -285,7 +285,7 @@ async function handleRequest(
         run_id: runId,
         session_key: sessionKey,
         type: "lab_command",
-        layer: "Runtime",
+        layer: "Evidence Feedback",
         severity: "info",
         title: "OpenClaw business test request",
         summary: command.slice(0, 240),
@@ -927,7 +927,7 @@ function semanticJudgeProfile(mode: SemanticJudgeOverride, config: PluginConfig)
     tool_calls: config.semantic.judgeToolCalls,
     messages: config.semantic.judgeMessages,
     memory_writes: config.semantic.judgeMemoryWrites,
-    foundation: config.semantic.judgeFoundation,
+    provenance: config.semantic.judgeProvenance,
     model: config.semantic.model,
     timeout_ms: config.semantic.timeoutMs,
   };
@@ -976,7 +976,13 @@ type OverviewEvent = {
   text: string;
 };
 
-const OVERVIEW_LAYERS = ["Foundation", "Input Sanitization", "Cognition Protection", "Decision Alignment", "Execution Control"];
+const OVERVIEW_LAYERS: Array<[string, string]> = [
+  ["Context Provenance", "上下文溯源"],
+  ["State Integrity", "状态完整性"],
+  ["Intent Authorization", "意图授权"],
+  ["Tool Boundary", "工具边界"],
+  ["Evidence Feedback", "证据回流"],
+];
 const OVERVIEW_TOOLS = ["webpage", "file", "email", "api", "search", "memory", "read_file", "write_file", "shell", "database"];
 const OVERVIEW_MODES: Array<[string, string]> = [
   ["full", "#35f29b"],
@@ -1189,7 +1195,7 @@ function overviewProtectionIndex(decisions: OverviewEvent[], dangerous: Overview
 
 function overviewAlerts(events: OverviewEvent[]): Array<Record<string, unknown>> {
   return events
-    .filter((event) => event.decision === "BLOCK" || event.decision === "ASK" || event.severity === "CRITICAL" || event.severity === "HIGH" || event.severity === "MEDIUM")
+    .filter(isOverviewAlertEvent)
     .map((event) => ({
       id: event.id,
       severity: event.severity,
@@ -1204,26 +1210,32 @@ function overviewAlerts(events: OverviewEvent[]): Array<Record<string, unknown>>
     }));
 }
 
+function isOverviewAlertEvent(event: OverviewEvent): boolean {
+  if (event.decision === "BLOCK" || event.decision === "ASK") return true;
+  if (event.decision === "ALLOW" && event.severity === "INFO") return false;
+  return event.severity === "CRITICAL" || event.severity === "HIGH" || event.severity === "MEDIUM";
+}
+
 function overviewLifecycle(events: OverviewEvent[]): Array<[string, number, number]> {
-  return OVERVIEW_LAYERS.map((layer) => {
+  return OVERVIEW_LAYERS.map(([layer, label]) => {
     const rows = events.filter((event) => event.layer === layer);
     const risky = rows.filter((event) => event.severity !== "INFO" || event.decision === "BLOCK" || event.decision === "ASK").length;
     const contained = rows.filter((event) => event.decision === "BLOCK" || event.decision === "ASK").length;
     const pct = risky ? Math.round((contained / risky) * 100) : rows.length ? 100 : 0;
-    return [layer, pct, rows.length];
+    return [label, pct, rows.length];
   });
 }
 
 function overviewStages(events: OverviewEvent[]): Array<[string, number, string, number, string]> {
-  const defs: Array<[string, string[]]> = [
-    ["输入污染", ["prompt", "injection", "taint", "untrusted", "webpage", "污染", "不可信"]],
-    ["认知偏移", ["cognition", "assistant", "memory", "poison", "drift", "记忆", "投毒"]],
-    ["决策越界", ["decision", "taskspec", "scope", "intent", "approval", "越权", "偏离"]],
-    ["工具执行", ["tool", "file", "email", "api", "shell", "webpage", "工具"]],
-    ["数据外泄", ["sink", "secret", "email", "exfil", "leak", "敏感", "外泄"]],
+  const defs: Array<[string, string]> = [
+    ["溯源污染", "Context Provenance"],
+    ["状态篡改", "State Integrity"],
+    ["授权偏离", "Intent Authorization"],
+    ["边界触发", "Tool Boundary"],
+    ["证据回流", "Evidence Feedback"],
   ];
-  const rows = defs.map(([name, markers]) => {
-    const matched = events.filter((event) => overviewHasAny(event.text, markers));
+  const rows = defs.map(([name, layer]) => {
+    const matched = events.filter((event) => event.layer === layer);
     const high = matched.filter((event) => event.severity !== "INFO" || event.decision === "BLOCK" || event.decision === "ASK");
     const blocked = matched.filter((event) => event.decision === "BLOCK" || event.decision === "ASK");
     return { name, matched, high, blocked };
@@ -1363,8 +1375,36 @@ function overviewSeverity(record: AgentSentryRecord, payload: Record<string, unk
   const raw = String(record.severity || payload.severity || "").toLowerCase();
   const score = overviewScore(payload);
   if (raw === "critical" || score >= 95 || overviewHasAny(text, ["critical", "严重"])) return "CRITICAL";
-  if (raw === "danger" || raw === "high" || score >= 80 || overviewHasAny(text, ["high", "高危", "block", "deny"])) return "HIGH";
-  if (raw === "warning" || raw === "medium" || score >= 45 || overviewHasAny(text, ["ask", "approval", "中危"])) return "MEDIUM";
+  if (raw === "danger" || raw === "high" || score >= 80 || overviewHasAny(text, [
+    "high-risk",
+    "高危",
+    "rce",
+    "exfil",
+    "leak",
+    "secret",
+    "credential",
+    "api_key",
+    "private key",
+    "id_rsa",
+    "sensitive asset",
+    "敏感",
+    "外发",
+    "越权",
+  ])) return "HIGH";
+  if (raw === "warning" || raw === "medium" || score >= 45 || overviewHasAny(text, [
+    "require_approval",
+    "approval",
+    "ask",
+    "中危",
+    "warning",
+    "outside taskspec",
+    "deviat",
+    "taint",
+    "untrusted",
+    "pollut",
+    "不可信",
+    "污染",
+  ])) return "MEDIUM";
   return "INFO";
 }
 
@@ -1379,11 +1419,16 @@ function overviewDecision(record: AgentSentryRecord, payload: Record<string, unk
 
 function overviewLayer(raw: string, text: string): string {
   const value = raw.toLowerCase();
-  if (value.includes("foundation")) return "Foundation";
-  if (value.includes("input") || overviewHasAny(text, ["prompt", "injection", "sanitize", "webpage"])) return "Input Sanitization";
-  if (value.includes("cognition") || value.includes("sentry") || overviewHasAny(text, ["memory", "poison", "assistant"])) return "Cognition Protection";
-  if (value.includes("decision") || overviewHasAny(text, ["taskspec", "intent", "approval", "policy"])) return "Decision Alignment";
-  return "Execution Control";
+  if (value.includes("context") || value.includes("provenance") || value.includes("provenance")) return "Context Provenance";
+  if (value.includes("state") || value.includes("integrity")) return "State Integrity";
+  if (value.includes("intent") || value.includes("authorization")) return "Intent Authorization";
+  if (value.includes("tool") || value.includes("execution") || value.includes("preflight") || value.includes("boundary")) return "Tool Boundary";
+  if (value.includes("evidence") || value.includes("feedback") || value.includes("result") || value.includes("runtime")) return "Evidence Feedback";
+  if (value.includes("input") || value.includes("message") || value.includes("llm") || overviewHasAny(text, ["prompt", "injection", "sanitize", "webpage"])) return "Context Provenance";
+  if (value.includes("cognition") || value.includes("sentry") || overviewHasAny(text, ["memory", "poison", "assistant"])) return "State Integrity";
+  if (value.includes("decision") || overviewHasAny(text, ["taskspec", "intent", "approval", "policy"])) return "Intent Authorization";
+  if (overviewHasAny(text, ["result", "runtime", "sink", "secret", "exfil", "leak"])) return "Evidence Feedback";
+  return "Tool Boundary";
 }
 
 function overviewTool(record: AgentSentryRecord, payload: Record<string, unknown>, text: string): string {
@@ -1440,11 +1485,19 @@ function overviewScore(payload: Record<string, unknown>): number {
 }
 
 function overviewAttackType(event: OverviewEvent): string {
-  if (overviewHasAny(event.text, ["gateway", "skill", "openclaw.json"])) return "工具调用劫持";
-  if (overviewHasAny(event.text, ["memory", "webhook", "poison", "记忆", "投毒"])) return "记忆/配置持久化";
-  if (overviewHasAny(event.text, ["hidden", "prompt", "injection", "pdf", "image", "webpage", "隐藏"])) return "外部内容注入";
-  if (overviewHasAny(event.text, ["secret", "token", "api_key", "credential", "外发"])) return "数据外泄风险";
-  return "行为策略告警";
+  const text = `${event.text} ${event.reason || ""} ${event.rule || ""}`;
+  if (overviewHasAny(text, ["enoent", "no such file", "file not found", "not found", "找不到文件", "文件不存在", "路径不存在"])) return "文件访问异常";
+  if (overviewHasAny(text, ["id_rsa", ".env", "private key", "ssh", "sensitive path", "sensitive asset", "敏感路径", "敏感文件"])) return "敏感文件访问";
+  if (overviewHasAny(text, ["gatewayurl", "gateway url", "evil gateway", "tool shadow", "tool poisoning", "name collision", "shadowing", "openclaw.json", "auth token", "malicious skill", "恶意 skill", "网关劫持"])) return "工具调用劫持";
+  if (overviewHasAny(text, ["tool call mismatches task", "tool mismatch", "outside taskspec", "out-of-scope", "scope violation", "deviates from task intent", "任务边界", "意图偏离"])) return "任务边界偏离";
+  if (overviewHasAny(text, ["memory", "webhook", "poison", "remember", "startup", "记忆", "投毒", "持久化"])) return "记忆/配置持久化";
+  if (overviewHasAny(text, ["taint", "untrusted", "pollut", "contaminated", "不可信", "污染"])) return "上下文污染传播";
+  if (overviewHasAny(text, ["hidden", "prompt injection", "indirect injection", "pdf", "image", "webpage", "隐藏", "注入"])) return "外部内容注入";
+  if (overviewHasAny(text, ["secret", "token", "api_key", "credential", "exfil", "leak", "外发", "泄露"])) return "数据外泄风险";
+  if (overviewHasAny(text, ["shell", "sudo", "chmod", "chown", "rm -", "curl ", "wget ", "命令执行"])) return "命令执行风险";
+  if (event.decision === "ASK") return "人工审批事件";
+  if (event.decision === "BLOCK") return "策略阻断事件";
+  return "运行风险事件";
 }
 
 function overviewHasAny(text: string, markers: string[]): boolean {
@@ -1836,7 +1889,10 @@ async function executeLabActions(input: {
   updateTaskSpec(policyState, [{ role: "user", content: input.command }], config);
   const messageFindings = [
     ...detectMessageContent(input.command, config),
-    ...await semanticJudgeMessage(input.command, config),
+    ...await semanticJudgeMessage(input.command, config, {
+      policyState,
+      phase: "message",
+    }),
   ];
   updateAfterMessage(policyState, messageFindings);
   for (const finding of messageFindings) {
@@ -1852,9 +1908,15 @@ async function executeLabActions(input: {
   for (const [index, action] of input.actions.entries()) {
     const normalizedTool = normalizeAction(action.toolName, action.params).tool;
     const semanticFindings = [
-      ...await semanticJudgeToolCall(action.toolName, action.params, policyState.currentTask, config),
+      ...await semanticJudgeToolCall(action.toolName, action.params, policyState.currentTask, config, {
+        policyState,
+        phase: "tool_call",
+      }),
       ...(normalizedTool === "memory_write"
-        ? await semanticJudgeMemoryWrite(action.params, policyState.currentTask, config)
+        ? await semanticJudgeMemoryWrite(action.params, policyState.currentTask, config, {
+          policyState,
+          phase: "memory_write",
+        })
         : []),
     ];
     const result = detectToolCall(action.toolName, action.params, config, policyState, semanticFindings);
@@ -1900,7 +1962,7 @@ async function executeLabActions(input: {
       run_id: input.runId,
       session_key: input.sessionKey,
       type: "tool_decision",
-      layer: "Execution Control",
+      layer: "Tool Boundary",
       severity,
       title: `Business tool decision: ${action.toolName}`,
       summary: result.summary,
@@ -1922,7 +1984,7 @@ async function executeLabActions(input: {
         run_id: input.runId,
         session_key: input.sessionKey,
         type: "alert",
-        layer: "Execution Control",
+        layer: "Tool Boundary",
         severity: result.decision === "deny" ? "danger" : "warning",
         title: `Lab policy ${result.decision}: ${action.toolName}`,
         summary: result.summary,
@@ -1938,15 +2000,15 @@ async function executeLabActions(input: {
       const executionFindings = Array.isArray(execution.findings) ? execution.findings as Array<Record<string, unknown>> : [];
       if (executionFindings.length) {
         updateAfterMessage(policyState, executionFindings as never);
-        const runtimeFindings = executionFindings.filter((finding) => String(finding.layer || "") === "Runtime Isolation");
-        const nonRuntimeFindings = executionFindings.filter((finding) => String(finding.layer || "") !== "Runtime Isolation");
+        const runtimeFindings = executionFindings.filter((finding) => String(finding.layer || "") === "Tool Boundary");
+        const nonRuntimeFindings = executionFindings.filter((finding) => String(finding.layer || "") !== "Tool Boundary");
         for (const finding of executionFindings) {
           addLabFinding(input.store, config, input.runId, input.sessionKey, finding, {
             toolName: normalizedAction.toolName,
             toolCallId,
             command_id: input.commandId,
             scenario: input.scenario,
-            source: String(finding.layer || "") === "Runtime Isolation" ? "ebpf-runtime-audit" : "memory-guard-storage",
+            source: String(finding.layer || "") === "Tool Boundary" ? "ebpf-runtime-audit" : "memory-guard-storage",
             semantic_judge: semanticProfile,
           });
         }
@@ -1955,7 +2017,7 @@ async function executeLabActions(input: {
             run_id: input.runId,
             session_key: input.sessionKey,
             type: "alert",
-            layer: "Cognition Protection",
+            layer: "State Integrity",
             severity: nonRuntimeFindings.some((finding) => finding.verdict === "block") ? "danger" : "warning",
             title: `Memory Guard finding: ${normalizedAction.toolName}`,
             summary: nonRuntimeFindings.map((finding) => String(finding.reason || "memory guard finding")).join("; "),
@@ -1974,7 +2036,7 @@ async function executeLabActions(input: {
             run_id: input.runId,
             session_key: input.sessionKey,
             type: "alert",
-            layer: "Runtime Isolation",
+            layer: "Tool Boundary",
             severity: "warning",
             title: `eBPF runtime audit finding: ${normalizedAction.toolName}`,
             summary: runtimeFindings.map((finding) => String(finding.reason || "runtime audit finding")).join("; "),
@@ -2008,7 +2070,7 @@ async function executeLabActions(input: {
             run_id: input.runId,
             session_key: input.sessionKey,
             type: "alert",
-            layer: "Input Sanitization",
+            layer: "Context Provenance",
             severity: "warning",
             title: `Tool result tainted: ${normalizedAction.toolName}`,
             summary: toolResultFindings.map((finding) => finding.reason).join("; "),
@@ -2086,7 +2148,7 @@ function addToolResultRecord(
     run_id: input.runId,
     session_key: input.sessionKey,
     type: "tool_result",
-    layer: "Tool Result",
+    layer: "Evidence Feedback",
     severity,
     title: `Business tool ${executionStatus}: ${action.toolName}`,
     summary: execution.ok

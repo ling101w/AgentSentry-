@@ -1,6 +1,6 @@
 # AgentSentry OpenClaw Plugin
 
-This package embeds AgentSentry into OpenClaw as a local plugin, following the same plugin shape as AgentWard:
+This package embeds XuanJian/AgentSentry into OpenClaw as a local runtime supervision plugin:
 
 - `openclaw.plugin.json` declares the plugin and config UI hints.
 - `package.json` exposes `openclaw.extensions`.
@@ -41,7 +41,7 @@ Runtime commands:
 /agentsentry config set enforcement.mode block
 /agentsentry config set notifications.enableProactiveNotifications true
 /agentsentry config set policy.allowlistedRecipients user@example.com,security@example.com
-/agentsentry config set semantic.judgeFoundation true
+/agentsentry config set semantic.judgeProvenance true
 /agentsentry config set responseCover.enabled true
 /agentsentry approvals status
 /agentsentry approvals reset
@@ -72,17 +72,17 @@ Runtime config changes are persisted to:
 The OpenClaw plugin now ports the core AgentSentry guard model into TypeScript:
 
 - TaskSpec inference from the latest user message
-- foundation scan for malicious `SKILL.md` files, risky configs, embedded secrets, and sensitive workspace files
+- workspace provenance scan for malicious `SKILL.md` files, risky configs, embedded secrets, and sensitive workspace files
 - deterministic sink checks for email/message, file, API, shell, and sensitive asset access
 - prompt-injection detection on messages and tool results
 - taint feedback: contaminated tool results tighten later high-risk sinks
 - trajectory checks for repeated tool use
 - normalized tool names so OpenClaw tools map onto AgentSentry actions
 - optional OpenAI-compatible semantic judge that emits `learned` findings for tool calls and messages
-- optional semantic foundation scan for `SKILL.md` and configuration files
+- optional semantic workspace provenance scan for `SKILL.md` and configuration files
 - exact-operation approval cache: when an OpenClaw approval is resolved as `allow-always`, the same tool name and parameter hash is allowed without repeated approval
 - persistent approval cache stored at `~/.openclaw/agentsentry/approval-cache.json`
-- optional response covering after contaminated tool results, similar to AgentWard's covered response flow
+- optional response covering after contaminated tool results
 
 Records are stored as JSONL at:
 
@@ -124,7 +124,7 @@ Semantic judging is disabled by default. It uses an OpenAI-compatible `/chat/com
 /agentsentry config set semantic.baseUrl https://api.openai.com/v1
 /agentsentry config set semantic.model gpt-4o-mini
 /agentsentry config set semantic.apiKeyEnv AGENTSENTRY_API_KEY
-/agentsentry config set semantic.judgeFoundation true
+/agentsentry config set semantic.judgeProvenance true
 ```
 
 PowerShell example:

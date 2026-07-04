@@ -3,10 +3,10 @@ import { basename, extname, join, relative } from "node:path";
 import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { clampText } from "./redact.ts";
-import { semanticJudgeFoundationFile } from "./semantic.ts";
+import { semanticJudgeProvenanceFile } from "./semantic.ts";
 import { analyzeTrustContent } from "./trust.ts";
 
-export type FoundationScanResult = {
+export type ProvenanceScanResult = {
   workspaceDir: string;
   scannedFiles: number;
   skippedFiles: number;
@@ -17,7 +17,7 @@ export type FoundationScanResult = {
 
 type CachedScan = {
   scannedAt: number;
-  result: FoundationScanResult;
+  result: ProvenanceScanResult;
 };
 
 const scanCache = new Map<string, CachedScan>();
@@ -26,6 +26,10 @@ const SKIP_DIRS = new Set([
   ".git",
   ".hg",
   ".svn",
+  "attacks",
+  "attack-samples",
+  "benchmarks",
+  "fixtures",
   "node_modules",
   "dist",
   "build",
@@ -127,14 +131,14 @@ const SOURCE_SECRET_VALUE_PATTERNS = [
   /\b(api[_-]?key|token|secret|password)\s*[:=]\s*["'][a-zA-Z0-9._+/=-]{20,}["']/i,
 ];
 
-export async function scanFoundation(workspaceDir: string, config: PluginConfig): Promise<FoundationScanResult> {
+export async function scanProvenance(workspaceDir: string, config: PluginConfig): Promise<ProvenanceScanResult> {
   const now = Date.now();
   const cached = scanCache.get(workspaceDir);
-  if (cached && now - cached.scannedAt < config.foundationScan.rescanIntervalMs) {
+  if (cached && now - cached.scannedAt < config.provenanceScan.rescanIntervalMs) {
     return { ...cached.result, cached: true };
   }
 
-  const result: FoundationScanResult = {
+  const result: ProvenanceScanResult = {
     workspaceDir,
     scannedFiles: 0,
     skippedFiles: 0,
@@ -143,7 +147,7 @@ export async function scanFoundation(workspaceDir: string, config: PluginConfig)
     cached: false,
   };
 
-  if (!config.foundationScan.enabled || !workspaceDir || !existsSync(workspaceDir)) {
+  if (!config.provenanceScan.enabled || !workspaceDir || !existsSync(workspaceDir)) {
     scanCache.set(workspaceDir, { scannedAt: now, result });
     return result;
   }
@@ -157,7 +161,7 @@ export async function scanFoundation(workspaceDir: string, config: PluginConfig)
     let content = "";
     try {
       const stat = statSync(filePath);
-      if (stat.size > config.foundationScan.maxFileBytes) {
+      if (stat.size > config.provenanceScan.maxFileBytes) {
         result.skippedFiles += 1;
         continue;
       }
@@ -168,25 +172,25 @@ export async function scanFoundation(workspaceDir: string, config: PluginConfig)
       continue;
     }
 
-    if (config.foundationScan.scanSkills && isSkillFile(relPath)) {
+    if (config.provenanceScan.scanSkills && isSkillFile(relPath)) {
       result.findings.push(...scanSkillContent(relPath, content, config));
     }
-    if (config.foundationScan.scanConfig && isConfigFile(relPath)) {
+    if (config.provenanceScan.scanConfig && isConfigFile(relPath)) {
       result.findings.push(...scanConfigContent(relPath, content, config));
     }
-    if (config.foundationScan.scanSensitiveFiles) {
+    if (config.provenanceScan.scanSensitiveFiles) {
       result.findings.push(...scanSensitiveFile(relPath, content, config));
     }
     result.findings.push(...scanTrustSurface(relPath, content, config));
     if (shouldSemanticScan(relPath, config)) {
-      result.findings.push(...await semanticJudgeFoundationFile({
+      result.findings.push(...await semanticJudgeProvenanceFile({
         relPath,
         content,
         roleHint: isSkillFile(relPath) ? "skill" : isConfigFile(relPath) ? "configuration" : "workspace file",
       }, config));
     }
 
-    if (result.scannedFiles >= config.foundationScan.maxFiles) break;
+    if (result.scannedFiles >= config.provenanceScan.maxFiles) break;
   }
 
   result.blocked = result.findings.some((finding) => finding.verdict === "block");
@@ -194,7 +198,7 @@ export async function scanFoundation(workspaceDir: string, config: PluginConfig)
   return result;
 }
 
-export function clearFoundationScanCache(): void {
+export function clearProvenanceScanCache(): void {
   scanCache.clear();
 }
 
@@ -202,7 +206,7 @@ function listCandidateFiles(workspaceDir: string, config: PluginConfig): string[
   const files: string[] = [];
   const stack = [workspaceDir];
 
-  while (stack.length && files.length < config.foundationScan.maxFiles) {
+  while (stack.length && files.length < config.provenanceScan.maxFiles) {
     const dir = stack.pop()!;
     let entries;
     try {
@@ -220,7 +224,7 @@ function listCandidateFiles(workspaceDir: string, config: PluginConfig): string[
       if (!entry.isFile()) continue;
       if (!isTextCandidate(fullPath)) continue;
       files.push(fullPath);
-      if (files.length >= config.foundationScan.maxFiles) break;
+      if (files.length >= config.provenanceScan.maxFiles) break;
     }
   }
   return files;
@@ -230,7 +234,7 @@ function scanSkillContent(relPath: string, content: string, config: PluginConfig
   const findings: DetectionFinding[] = [];
   const matches = matchPatterns(content, MALICIOUS_SKILL_PATTERNS);
   if (matches.length) {
-    findings.push(finding("Foundation", "deterministic", "block", "skill file contains malicious instruction patterns", 100, {
+    findings.push(finding("Context Provenance", "deterministic", "block", "skill file contains malicious instruction patterns", 100, {
       path: relPath,
       matched: matches.slice(0, 5),
       preview: clampText(content, config.capture.previewChars),
@@ -243,7 +247,7 @@ function scanConfigContent(relPath: string, content: string, config: PluginConfi
   const findings: DetectionFinding[] = [];
   const riskyMatches = matchPatterns(content, RISKY_CONFIG_PATTERNS);
   if (riskyMatches.length) {
-    findings.push(finding("Foundation", "heuristic", "require_approval", "configuration contains risky security settings", 40, {
+    findings.push(finding("Context Provenance", "heuristic", "require_approval", "configuration contains risky security settings", 40, {
       path: relPath,
       matched: riskyMatches.slice(0, 5),
     }));
@@ -251,7 +255,7 @@ function scanConfigContent(relPath: string, content: string, config: PluginConfi
 
   const secretMatches = matchPatterns(content, CONFIG_SECRET_VALUE_PATTERNS);
   if (secretMatches.length) {
-    findings.push(finding("Foundation", "heuristic", "require_approval", "configuration contains hardcoded secret values", 55, {
+    findings.push(finding("Context Provenance", "heuristic", "require_approval", "configuration contains hardcoded secret values", 55, {
       path: relPath,
       matched: secretMatches.slice(0, 5).map(() => "[redacted]"),
       confidence: "high",
@@ -269,7 +273,7 @@ function scanSensitiveFile(relPath: string, content: string, config: PluginConfi
     || config.policy.sensitiveAssets.some((asset) => matchesSensitiveAssetPath(lowerPath, asset));
 
   if (sensitiveByName) {
-    findings.push(finding("Foundation", "heuristic", "require_approval", "workspace contains sensitive asset file", 30, {
+    findings.push(finding("Context Provenance", "heuristic", "require_approval", "workspace contains sensitive asset file", 30, {
       path: relPath,
       file: name,
     }));
@@ -278,7 +282,7 @@ function scanSensitiveFile(relPath: string, content: string, config: PluginConfi
   if (!isConfigFile(relPath)) {
     const secretMatches = matchPatterns(content, SOURCE_SECRET_VALUE_PATTERNS);
     if (secretMatches.length) {
-      findings.push(finding("Foundation", "heuristic", "require_approval", "workspace file appears to contain embedded secrets", 45, {
+      findings.push(finding("Context Provenance", "heuristic", "require_approval", "workspace file appears to contain embedded secrets", 45, {
         path: relPath,
         matched: secretMatches.slice(0, 5).map(() => "[redacted]"),
         confidence: "medium",
@@ -296,7 +300,7 @@ function scanTrustSurface(relPath: string, content: string, config: PluginConfig
   });
   return analysis.findings.map((item) => ({
     ...item,
-    layer: item.layer === "Execution Control" ? "Foundation" : item.layer,
+    layer: item.layer === "Tool Boundary" ? "Context Provenance" : item.layer,
     evidence: {
       ...item.evidence,
       path: relPath,
@@ -329,7 +333,12 @@ function isTextCandidate(filePath: string): boolean {
 
 function isSkillFile(relPath: string): boolean {
   const normalized = relPath.toLowerCase();
-  return normalized.endsWith("skill.md") || normalized.includes("/skills/") || normalized.includes("\\skills\\");
+  return normalized === "skill.md"
+    || normalized.endsWith("/skill.md")
+    || normalized.startsWith("skills/")
+    || normalized.includes("/skills/")
+    || normalized.startsWith("plugin-skills/")
+    || normalized.includes("/plugin-skills/");
 }
 
 function isConfigFile(relPath: string): boolean {
@@ -356,7 +365,7 @@ function readCandidateContent(filePath: string): string {
 }
 
 function shouldSemanticScan(relPath: string, config: PluginConfig): boolean {
-  if (!config.semantic.enabled || !config.semantic.judgeFoundation) return false;
+  if (!config.semantic.enabled || !config.semantic.judgeProvenance) return false;
   return isSkillFile(relPath) || isConfigFile(relPath);
 }
 

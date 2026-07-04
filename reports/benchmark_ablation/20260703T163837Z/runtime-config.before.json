@@ -1,0 +1,91 @@
+{
+  "dashboard": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 8765
+  },
+  "storage": {
+    "stateDir": "",
+    "maxRecords": 10000
+  },
+  "capture": {
+    "includeMessageText": true,
+    "includeToolParams": true,
+    "includeSystemPromptPreview": false,
+    "previewChars": 800
+  },
+  "detection": {
+    "enabled": true,
+    "askThreshold": 35,
+    "denyThreshold": 70
+  },
+  "semantic": {
+    "enabled": true,
+    "mode": "risk-tiered",
+    "judgeToolCalls": true,
+    "judgeMessages": true,
+    "judgeProvenance": true,
+    "judgeMemoryWrites": true,
+    "baseUrl": "https://api.deepseek.com/v1",
+    "model": "deepseek-v4-flash",
+    "apiKeyEnv": "AGENTSENTRY_API_KEY",
+    "timeoutMs": 15000,
+    "maxInputChars": 6000
+  },
+  "provenanceScan": {
+    "enabled": true,
+    "scanSkills": true,
+    "scanConfig": true,
+    "scanSensitiveFiles": true,
+    "maxFiles": 200,
+    "maxFileBytes": 65536,
+    "rescanIntervalMs": 30000
+  },
+  "policy": {
+    "deterministic": true,
+    "taintFeedback": true,
+    "restrictWritesToAllowedRoots": true,
+    "allowlistedRecipients": [
+      "user@example.com",
+      "security@example.com"
+    ],
+    "allowlistedApiHosts": [
+      "api.example.com",
+      "127.0.0.1",
+      "localhost"
+    ],
+    "allowedWriteRoots": [
+      "/home/ubuntu/AgentSentry-/openclaw-workspace",
+      "notes",
+      "reports"
+    ],
+    "sensitiveAssets": [
+      ".env",
+      "id_rsa",
+      "secret",
+      "token",
+      "api_key",
+      "system_prompt",
+      "openclaw.json"
+    ]
+  },
+  "runtimeIsolation": {
+    "requireKernelObserverForHighRisk": true,
+    "unavailableAction": "require_approval",
+    "auditAfterExecution": true
+  },
+  "enforcement": {
+    "mode": "approval",
+    "approvalTimeoutMs": 30000
+  },
+  "notifications": {
+    "enableProactiveNotifications": false,
+    "minSeverity": "warning",
+    "maxMessageChars": 1000
+  },
+  "responseCover": {
+    "enabled": true,
+    "coverAssistantAfterContamination": true,
+    "message": "AgentSentry detected contaminated tool output; review the dashboard before trusting this turn."
+  }
+}

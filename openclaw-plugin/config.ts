@@ -29,7 +29,7 @@ export class PluginConfig {
     mode: SemanticJudgeMode;
     judgeToolCalls: boolean;
     judgeMessages: boolean;
-    judgeFoundation: boolean;
+    judgeProvenance: boolean;
     judgeMemoryWrites: boolean;
     baseUrl: string;
     model: string;
@@ -37,7 +37,7 @@ export class PluginConfig {
     timeoutMs: number;
     maxInputChars: number;
   };
-  foundationScan: {
+  provenanceScan: {
     enabled: boolean;
     scanSkills: boolean;
     scanConfig: boolean;
@@ -101,7 +101,7 @@ export class PluginConfig {
       mode: "risk-tiered",
       judgeToolCalls: true,
       judgeMessages: false,
-      judgeFoundation: false,
+      judgeProvenance: false,
       judgeMemoryWrites: true,
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-4o-mini",
@@ -109,7 +109,7 @@ export class PluginConfig {
       timeoutMs: 12000,
       maxInputChars: 6000,
     };
-    this.foundationScan = {
+    this.provenanceScan = {
       enabled: true,
       scanSkills: true,
       scanConfig: true,
@@ -193,7 +193,7 @@ export class PluginConfig {
       }
       config.semantic.judgeToolCalls = readBoolean(semantic.judgeToolCalls, config.semantic.judgeToolCalls);
       config.semantic.judgeMessages = readBoolean(semantic.judgeMessages, config.semantic.judgeMessages);
-      config.semantic.judgeFoundation = readBoolean(semantic.judgeFoundation, config.semantic.judgeFoundation);
+      config.semantic.judgeProvenance = readBoolean(semantic.judgeProvenance, config.semantic.judgeProvenance);
       config.semantic.judgeMemoryWrites = readBoolean(semantic.judgeMemoryWrites, config.semantic.judgeMemoryWrites);
       config.semantic.baseUrl = readString(semantic.baseUrl, config.semantic.baseUrl);
       config.semantic.model = readString(semantic.model, config.semantic.model);
@@ -202,15 +202,15 @@ export class PluginConfig {
       config.semantic.maxInputChars = readPositiveInt(semantic.maxInputChars, config.semantic.maxInputChars);
     }
 
-    const foundationScan = objectAt(obj, "foundationScan");
-    if (foundationScan) {
-      config.foundationScan.enabled = readBoolean(foundationScan.enabled, config.foundationScan.enabled);
-      config.foundationScan.scanSkills = readBoolean(foundationScan.scanSkills, config.foundationScan.scanSkills);
-      config.foundationScan.scanConfig = readBoolean(foundationScan.scanConfig, config.foundationScan.scanConfig);
-      config.foundationScan.scanSensitiveFiles = readBoolean(foundationScan.scanSensitiveFiles, config.foundationScan.scanSensitiveFiles);
-      config.foundationScan.maxFiles = readPositiveInt(foundationScan.maxFiles, config.foundationScan.maxFiles);
-      config.foundationScan.maxFileBytes = readPositiveInt(foundationScan.maxFileBytes, config.foundationScan.maxFileBytes);
-      config.foundationScan.rescanIntervalMs = readPositiveInt(foundationScan.rescanIntervalMs, config.foundationScan.rescanIntervalMs);
+    const provenanceScan = objectAt(obj, "provenanceScan");
+    if (provenanceScan) {
+      config.provenanceScan.enabled = readBoolean(provenanceScan.enabled, config.provenanceScan.enabled);
+      config.provenanceScan.scanSkills = readBoolean(provenanceScan.scanSkills, config.provenanceScan.scanSkills);
+      config.provenanceScan.scanConfig = readBoolean(provenanceScan.scanConfig, config.provenanceScan.scanConfig);
+      config.provenanceScan.scanSensitiveFiles = readBoolean(provenanceScan.scanSensitiveFiles, config.provenanceScan.scanSensitiveFiles);
+      config.provenanceScan.maxFiles = readPositiveInt(provenanceScan.maxFiles, config.provenanceScan.maxFiles);
+      config.provenanceScan.maxFileBytes = readPositiveInt(provenanceScan.maxFileBytes, config.provenanceScan.maxFileBytes);
+      config.provenanceScan.rescanIntervalMs = readPositiveInt(provenanceScan.rescanIntervalMs, config.provenanceScan.rescanIntervalMs);
     }
 
     const policy = objectAt(obj, "policy");

@@ -33,15 +33,15 @@
 
 页面没有兜底假数据。接口不可用时显示空态、错误或 stale 状态。
 
-## 五层防护
+## 四域一环防护
 
-| 层级 | 功能 | 主要证据 |
+| 安全域 | 功能 | 主要证据 |
 |---|---|---|
-| 基础扫描层 | 扫描 Skill、配置、敏感文件和供应链风险 | `foundation_scan`、Foundation finding |
-| 输入净化层 | 检测外部邮件、网页、PDF、图片、工具返回污染 | Input Sanitization finding |
-| 认知保护层 | 管控长期记忆写入、护照、哈希、保护键和隔离 | Memory Guard、memory passport |
-| 决策对齐层 | 对比用户任务授权和当前工具计划，识别意图漂移 | Decision Alignment finding |
-| 执行控制层 | 执行前检查文件、命令、API、邮件、网关和系统路径 | Execution Control、System Preflight |
+| 上下文溯源域 | 扫描工作区基础文件、Skill、配置、外部邮件、网页、PDF、图片和工具返回，标记来源与污染 | `provenance_scan`、`Context Provenance` finding、信任标签 |
+| 状态完整性域 | 管控长期记忆写入、记忆护照、哈希完整性、保护键和隔离 | `State Integrity` finding、memory passport、quarantine |
+| 意图授权域 | 对比用户任务授权和当前工具计划，识别目标漂移、越权参数和污点流向 | `Intent Authorization` finding、TaskSpec、ABAC 决策 |
+| 工具边界域 | 执行前检查文件、命令、API、邮件、网关、系统路径，并接入 eBPF 运行证据 | `Tool Boundary` finding、system monitor、eBPF audit |
+| 证据回流环 | 保存工具结果、审批、运行时审计和风险向量，反向收紧后续工具调用 | `Evidence Feedback` record、approval cache、runtime audit |
 
 ## 核心能力
 
@@ -124,14 +124,14 @@
 
 ### LLM-Judge
 
-LLM-Judge 使用 DeepSeek-compatible 接口进行语义复核，覆盖工具调用、消息、记忆写入和基础扫描。它是二道防线，即使关闭，确定性策略、污点传播、ABAC、Memory Guard 和系统预执行仍然工作。
+LLM-Judge 使用 DeepSeek-compatible 接口进行语义复核，覆盖工具调用、消息、记忆写入和溯源扫描。它是二道防线，即使关闭，确定性策略、污点传播、ABAC、Memory Guard 和系统预执行仍然工作。
 
 LLM-Judge 在四个环节发挥作用：
 
 - 消息/工具结果：判断是否包含提示注入、越狱、凭据外泄或恶意指令。
 - 工具调用：判断动作是否与用户任务一致，是否可能外泄、破坏、越权或漂移。
 - 记忆写入：判断候选长期记忆是否会污染未来行为或绕过审批。
-- 基础扫描：判断 Skill、配置和工作区基础文件是否存在恶意能力或供应链风险。
+- 溯源扫描：判断 Skill、配置和工作区基础文件是否存在恶意能力或供应链风险。
 
 Judge 返回低/中/高风险和理由。玄鉴不会把模型输出当成唯一裁决，而是转换为 finding，再与确定性规则、TaskSpec、污点流和系统预执行策略合并。
 

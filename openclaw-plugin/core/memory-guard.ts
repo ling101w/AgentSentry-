@@ -145,7 +145,7 @@ export function memoryGuardScanRead(input: {
   });
   findings.push(...analysis.findings);
   if (!integrityOk) {
-    findings.push(finding("Cognition Protection", "deterministic", "block", "memory passport integrity check failed", 100, {
+    findings.push(finding("State Integrity", "deterministic", "block", "memory passport integrity check failed", 100, {
       key,
       expected_sha256: envelope.passport.content_sha256,
       actual_sha256: contentHash,
@@ -153,14 +153,14 @@ export function memoryGuardScanRead(input: {
     }));
   }
   if (isLowTrustMemory(envelope.passport) && riskMax(analysis.risk_vector) >= 45) {
-    findings.push(finding("Cognition Protection", "heuristic", "require_approval", "low-trust memory requires review before it can influence decisions", 60, {
+    findings.push(finding("State Integrity", "heuristic", "require_approval", "low-trust memory requires review before it can influence decisions", 60, {
       key,
       passport: publicPassport(envelope.passport),
       risk_vector: analysis.risk_vector,
     }));
   }
   if (isAuthoritativeMemory(content) && isLowTrustMemory(envelope.passport)) {
-    findings.push(finding("Cognition Protection", "deterministic", "block", "low-trust memory tries to assert authoritative future behavior", 95, {
+    findings.push(finding("State Integrity", "deterministic", "block", "low-trust memory tries to assert authoritative future behavior", 95, {
       key,
       passport: publicPassport(envelope.passport),
       preview: clampText(content, input.config.capture.previewChars),
@@ -182,7 +182,7 @@ export function memoryConsensusFindings(input: {
   if (!risky.length) return [];
   const benign = input.memories.length - risky.length;
   if (benign <= 0) return [];
-  return [finding("Cognition Protection", "heuristic", "require_approval", "memory consensus check found low-trust outlier records", 70, {
+  return [finding("State Integrity", "heuristic", "require_approval", "memory consensus check found low-trust outlier records", 70, {
     query_context: clampText(input.context, input.config.capture.previewChars),
     total_memories: input.memories.length,
     outliers: risky.slice(0, 8).map(({ key, envelope }) => ({
@@ -277,32 +277,32 @@ function memoryStructuralFindings(
 ): DetectionFinding[] {
   const findings: DetectionFinding[] = [];
   if (passport.protected_key) {
-    findings.push(finding("Cognition Protection", "deterministic", "block", "memory write targets a protected key", 100, {
+    findings.push(finding("State Integrity", "deterministic", "block", "memory write targets a protected key", 100, {
       key,
       passport: publicPassport(passport),
     }));
   }
   if (passport.size_bytes > MAX_MEMORY_BYTES) {
-    findings.push(finding("Cognition Protection", "deterministic", "block", "memory payload exceeds maximum allowed size", 95, {
+    findings.push(finding("State Integrity", "deterministic", "block", "memory payload exceeds maximum allowed size", 95, {
       key,
       size_bytes: passport.size_bytes,
       max_bytes: MAX_MEMORY_BYTES,
     }));
   } else if (passport.size_bytes > WARN_MEMORY_BYTES) {
-    findings.push(finding("Cognition Protection", "heuristic", "require_approval", "memory payload is unusually large", 45, {
+    findings.push(finding("State Integrity", "heuristic", "require_approval", "memory payload is unusually large", 45, {
       key,
       size_bytes: passport.size_bytes,
       warn_bytes: WARN_MEMORY_BYTES,
     }));
   }
   if (MEMORY_SECRET_PATTERNS.some((pattern) => pattern.test(content))) {
-    findings.push(finding("Cognition Protection", "deterministic", "block", "memory write attempts to persist secrets or credentials", 100, {
+    findings.push(finding("State Integrity", "deterministic", "block", "memory write attempts to persist secrets or credentials", 100, {
       key,
       preview: clampText(redactMemorySecrets(content), config.capture.previewChars),
     }));
   }
   if (isAuthoritativeMemory(content) && trustRankForPassport(passport) <= 2) {
-    findings.push(finding("Cognition Protection", "deterministic", "block", "low-trust source cannot write authoritative future-behavior memory", 95, {
+    findings.push(finding("State Integrity", "deterministic", "block", "low-trust source cannot write authoritative future-behavior memory", 95, {
       key,
       source_class: passport.source_class,
       trust_level: passport.trust_level,
@@ -310,7 +310,7 @@ function memoryStructuralFindings(
     }));
   }
   if (existing && existing.passport.content_sha256 !== sha256(legacyMemoryValue(existing))) {
-    findings.push(finding("Cognition Protection", "deterministic", "block", "existing memory record failed integrity check before update", 100, {
+    findings.push(finding("State Integrity", "deterministic", "block", "existing memory record failed integrity check before update", 100, {
       key,
       passport: publicPassport(existing.passport),
     }));

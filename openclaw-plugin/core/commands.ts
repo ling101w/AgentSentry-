@@ -12,7 +12,7 @@ type CommandRuntime = {
   sessionCount: number;
   approvalCacheCount: number;
   resetRecords: () => void;
-  clearFoundationCache: () => void;
+  clearProvenanceCache: () => void;
   clearApprovalCache: () => void;
   setConfig: (config: PluginConfig) => void;
   persistConfig: (config: PluginConfig) => void;
@@ -23,7 +23,7 @@ const WRITABLE_PREFIXES = [
   "capture.",
   "detection.",
   "semantic.",
-  "foundationScan.",
+  "provenanceScan.",
   "policy.",
   "enforcement.",
   "notifications.",
@@ -84,7 +84,7 @@ export function handleAgentSentryCommand(
     if (!setAtPath(config, key, parsed)) return { text: `Failed to set config path: ${key}` };
     runtime.setConfig(config);
     runtime.persistConfig(config);
-    if (key.startsWith("foundationScan.") || key.startsWith("policy.") || key.startsWith("semantic.")) runtime.clearFoundationCache();
+    if (key.startsWith("provenanceScan.") || key.startsWith("policy.") || key.startsWith("semantic.")) runtime.clearProvenanceCache();
     return { text: `${key} set to ${JSON.stringify(parsed)}\nPersisted: ${runtime.runtimeConfigPath}` };
   }
 
@@ -92,7 +92,7 @@ export function handleAgentSentryCommand(
     copyWritableConfig(startupConfig, config);
     runtime.setConfig(config);
     runtime.resetRuntimeConfig();
-    runtime.clearFoundationCache();
+    runtime.clearProvenanceCache();
     return { text: "AgentSentry runtime configuration reset to startup values." };
   }
 
@@ -109,7 +109,7 @@ export function formatStatus(config: PluginConfig, runtime: CommandRuntime): str
     `Sessions: ${runtime.sessionCount}`,
     `Approval cache: ${runtime.approvalCacheCount} exact operation(s)`,
     `Enforcement: ${config.enforcement.mode}`,
-    `Foundation scan: ${config.foundationScan.enabled ? "enabled" : "disabled"}`,
+    `Workspace provenance scan: ${config.provenanceScan.enabled ? "enabled" : "disabled"}`,
     `Detection: ${config.detection.enabled ? "enabled" : "disabled"}`,
     `Semantic judge: ${config.semantic.enabled ? `${config.semantic.model} (${config.semantic.apiKeyEnv}, ${config.semantic.mode})` : "disabled"}`,
     `Notifications: ${config.notifications.enableProactiveNotifications ? config.notifications.minSeverity : "disabled"}`,

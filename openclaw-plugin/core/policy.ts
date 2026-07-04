@@ -51,8 +51,8 @@ export type PolicyState = {
   currentTask: string;
   taskSpec: TaskSpec;
   contaminated: boolean;
-  foundationBlocked: boolean;
-  foundationFindings: DetectionFinding[];
+  provenanceBlocked: boolean;
+  provenanceFindings: DetectionFinding[];
   history: Array<{
     tool: string;
     decision: "allow" | "ask" | "deny";
@@ -118,6 +118,8 @@ export type PolicyDecision = {
 
 const TOOL_ALIASES: Array<[RegExp, string]> = [
   [/^(browser\.open|browser_open|open_browser|fetch_url|web\.open|read_webpage)$/i, "read_webpage"],
+  [/^(read|open)$/i, "read_file"],
+  [/^(write|create|edit|replace|patch)$/i, "write_file"],
   [/(read|open|parse).*(email|mail)|email.*read|mail.*read/i, "read_webpage"],
   [/(read|parse|summarize).*pdf|pdf.*(read|parse|summarize)/i, "read_webpage"],
   [/(analy[sz]e|read|parse).*(image|picture|photo|ocr)|image.*(ocr|read|analy[sz]e)/i, "read_webpage"],
@@ -162,8 +164,8 @@ export function createPolicyState(): PolicyState {
     currentTask: "",
     taskSpec,
     contaminated: false,
-    foundationBlocked: false,
-    foundationFindings: [],
+    provenanceBlocked: false,
+    provenanceFindings: [],
     history: [],
     toolResultLabels: new Map(),
     exposures: [],
@@ -184,10 +186,19 @@ export function updateTaskSpec(state: PolicyState, messages: unknown, config: Pl
 }
 
 export function normalizeAction(toolName: string, params: Record<string, unknown>): AgentSentryAction {
-  const tool = normalizeToolName(toolName);
+  let tool = normalizeToolName(toolName);
   const args = normalizeArgs(tool, params);
+  tool = specializeStateTool(tool, args);
   const reason = typeof params.reason === "string" ? params.reason : "";
   return { tool, originalTool: toolName, args, reason };
+}
+
+function specializeStateTool(tool: string, args: Record<string, unknown>): string {
+  const path = readFirstString(args, ["path", "file", "filename", "target"]);
+  if (!isOpenClawMemoryDocumentPath(path)) return tool;
+  if (tool === "read_file") return "memory_read";
+  if (tool === "write_file") return "memory_write";
+  return tool;
 }
 
 export function applyExposureTaint(action: AgentSentryAction, state: PolicyState, config: PluginConfig): {
@@ -201,6 +212,7 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
   const args = { ...action.args };
   const findings: DetectionFinding[] = [];
   for (const [key, value] of Object.entries(args)) {
+    if (isControlArg(key)) continue;
     if (isLabeledValue(value)) continue;
     const text = flattenText(value);
     if (!text.trim()) continue;
@@ -220,7 +232,7 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
       influence: mode === "run_exposure_default" ? "payload_default" : "matched",
     };
     args[key] = { value, label: inheritedLabel };
-    findings.push(finding("Execution Control", "deterministic", "block", "sink argument inherits malicious or secret taint", 100, {
+    findings.push(finding("Tool Boundary", "deterministic", "block", "sink argument inherits malicious or secret taint", 100, {
       tool: action.tool,
       arg: key,
       source: exposure.source,
@@ -249,20 +261,28 @@ export function decideAction(
   if (riskScoringEnabled && action.tool === "shell_exec" && !assessment.highRisk) {
     risk = 8;
   }
-  if (config.policy.deterministic && state.foundationBlocked && HIGH_RISK_SINKS.has(action.tool)) {
-    findings.push(finding("Foundation", "deterministic", "block", "foundation scan found blocking workspace risk", 100, {
-      blockedFindings: state.foundationFindings.filter((item) => item.verdict === "block").map((item) => item.reason),
-    }));
-    violations.push("foundation scan found blocking workspace risk");
+  const directProvenanceRisk = config.policy.deterministic && state.provenanceBlocked
+    ? provenanceRiskForAction(action, state)
+    : null;
+  if (directProvenanceRisk) {
+    findings.push(finding(
+      "Context Provenance",
+      "deterministic",
+      "block",
+      "tool call directly references a workspace item marked risky by provenance scan",
+      100,
+      directProvenanceRisk,
+    ));
+    violations.push("tool call directly references risky workspace item");
   }
 
   const outsideTaskSpec = taskSpec.forbidden_tools.includes(action.tool) || !taskSpec.allowed_tools.includes(action.tool);
   if (config.policy.deterministic && outsideTaskSpec && shouldHardBlockTaskMismatch(action, assessment, state)) {
     violations.push(`tool ${action.tool} is outside TaskSpec`);
-    findings.push(finding("Execution Control", "deterministic", "block", `tool ${action.tool} is outside TaskSpec`, 100, { tool: action.tool, assessment }));
+    findings.push(finding("Tool Boundary", "deterministic", "block", `tool ${action.tool} is outside TaskSpec`, 100, { tool: action.tool, assessment }));
   } else if (riskScoringEnabled && outsideTaskSpec) {
     risk += assessment.highRisk ? 40 : 12;
-    findings.push(finding("Execution Control", "heuristic", assessment.highRisk ? "require_approval" : "pass", `tool ${action.tool} is outside TaskSpec`, assessment.highRisk ? 35 : 8, { tool: action.tool, assessment }));
+    findings.push(finding("Tool Boundary", "heuristic", assessment.highRisk ? "require_approval" : "pass", `tool ${action.tool} is outside TaskSpec`, assessment.highRisk ? 35 : 8, { tool: action.tool, assessment }));
   } else {
     reasons.push("tool is allowed by TaskSpec");
   }
@@ -275,7 +295,7 @@ export function decideAction(
   const policyViolations = config.policy.deterministic ? deterministicViolations(action, taskSpec, state, config) : [];
   for (const violation of policyViolations) {
     violations.push(violation);
-    findings.push(finding("Execution Control", "deterministic", "block", violation, 100, { tool: action.tool }));
+    findings.push(finding("Tool Boundary", "deterministic", "block", violation, 100, { tool: action.tool }));
   }
   for (const reason of findings
     .filter((item) => item.finding_type === "deterministic" && item.verdict === "block")
@@ -337,7 +357,7 @@ export function decideAction(
 }
 
 export function updateAfterMessage(state: PolicyState, findings: DetectionFinding[]): void {
-  if (findings.some((finding) => finding.layer === "Input Sanitization" || finding.layer === "Cognition Protection")) {
+  if (findings.some((finding) => finding.layer === "Context Provenance" || finding.layer === "State Integrity")) {
     state.contaminated = true;
   }
   mergeFindingTrust(state, findings);
@@ -350,7 +370,7 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
     risk_score: decision.risk_score,
   });
   if (state.history.length > 80) state.history = state.history.slice(-80);
-  if (decision.findings.some((finding) => finding.layer === "Input Sanitization" || finding.layer === "Cognition Protection")) {
+  if (decision.findings.some((finding) => finding.layer === "Context Provenance" || finding.layer === "State Integrity")) {
     state.contaminated = true;
   }
   if (decision.decision === "allow") updateBehaviorProfile(state, decision.action);
@@ -422,7 +442,7 @@ export function resultFindings(toolCallId: string, result: unknown, state: Polic
   if (!findings.length && !hasInjectionSignal(safeStringify(result))) return [];
   return [
     ...findings,
-    finding("Input Sanitization", "heuristic", "pass", "untrusted tool output contains prompt-injection indicators; taint is preserved for sink checks", 25, {
+    finding("Context Provenance", "heuristic", "pass", "untrusted tool output contains prompt-injection indicators; taint is preserved for sink checks", 25, {
       source: label.source,
       preview: clampText(result, config.capture.previewChars),
       trust_label: label.trust_label || null,
@@ -490,6 +510,9 @@ export function deriveTaskSpec(task: string, sensitiveAssets: string[]): TaskSpe
   if (containsAny(lowered, ["网页", "网站", "url", "http", "邮件", "外部内容", "pdf", "图片", "图像", "简历", "文档", "页面"])) {
     allowed.push("read_webpage", "call_api");
   }
+  if (containsAny(lowered, ["search", "web search", "github", "搜索", "检索", "查找"])) {
+    allowed.push("web_search", "read_webpage", "call_api");
+  }
   if (containsAny(lowered, [
     "memory",
     "remember",
@@ -499,6 +522,10 @@ export function deriveTaskSpec(task: string, sensitiveAssets: string[]): TaskSpe
     "long-term note",
     "记住",
     "记忆",
+    "身份",
+    "叫我",
+    "我的名字",
+    "称呼",
     "长期经验",
     "经验库",
     "长期偏好",
@@ -657,10 +684,10 @@ function decisionAlignment(action: AgentSentryAction, taskSpec: TaskSpec): Detec
   const loweredTask = taskSpec.task.toLowerCase();
   const assessment = assessActionWithSensitiveAssets(action, taskSpec.sensitive_assets);
   if (action.tool === "send_email" && containsAny(loweredTask, EXPLICIT_NO_EMAIL)) {
-    findings.push(finding("Decision Alignment", "heuristic", "require_approval", "email action conflicts with explicit user constraint", 35, { tool: action.tool }));
+    findings.push(finding("Intent Authorization", "heuristic", "require_approval", "email action conflicts with explicit user constraint", 35, { tool: action.tool }));
   }
   if ((assessment.highRisk || isTrustSensitiveSink(action, assessment)) && !taskSpec.allowed_tools.includes(action.tool)) {
-    findings.push(finding("Decision Alignment", "heuristic", "require_approval", "high-risk action deviates from task intent", 30, { tool: action.tool }));
+    findings.push(finding("Intent Authorization", "heuristic", "require_approval", "high-risk action deviates from task intent", 30, { tool: action.tool }));
   }
   return findings;
 }
@@ -669,12 +696,12 @@ function trajectoryFindingsFor(action: AgentSentryAction, state: PolicyState, co
   const findings: DetectionFinding[] = [];
   const count = state.history.filter((item) => item.tool === action.tool).length;
   if (count >= 3) {
-    findings.push(finding("Sentry Trajectory", "heuristic", "require_approval", "tool frequency is unusually high", 20, { tool: action.tool, count: count + 1 }));
+    findings.push(finding("Evidence Feedback", "heuristic", "require_approval", "tool frequency is unusually high", 20, { tool: action.tool, count: count + 1 }));
   }
   const assessment = assessAction(action, config);
   const blockedTaint = config.policy.taintFeedback ? taintFlowForAction(action, assessment, state) : null;
   if (blockedTaint) {
-    findings.push(finding("Sentry Trajectory", "heuristic", "require_approval", "taint profile tightens this high-risk sink", 20, {
+    findings.push(finding("Evidence Feedback", "heuristic", "require_approval", "taint profile tightens this high-risk sink", 20, {
       tool: action.tool,
       sink: blockedTaint.sink,
       taint: blockedTaint,
@@ -684,7 +711,7 @@ function trajectoryFindingsFor(action: AgentSentryAction, state: PolicyState, co
     && !/(发送|发邮件|email|mail|写入|保存|执行|运行|记住|memory|remember|shell|command)/i.test(state.currentTask);
   const lastRead = state.history.slice(-4).some((item) => item.tool === "read_webpage" || item.tool === "read_file" || item.tool === "call_api");
   if (readOnlyTask && lastRead && isTrustSensitiveSink(action, assessment)) {
-    findings.push(finding("Decision Alignment", "deterministic", "block", "dynamic intent tracking detected drift from read-only task to high-risk action", 100, {
+    findings.push(finding("Intent Authorization", "deterministic", "block", "dynamic intent tracking detected drift from read-only task to high-risk action", 100, {
       task: state.currentTask,
       tool: action.tool,
       recent_tools: state.history.slice(-4).map((item) => item.tool),
@@ -742,7 +769,7 @@ function trustFindingsFor(action: AgentSentryAction, state: PolicyState): Detect
   const assessment = assessActionWithSensitiveAssets(action, []);
   const blockedTaint = taintFlowForAction(action, assessment, state);
   if (blockedTaint) {
-    findings.push(finding("ABAC Session Policy", "deterministic", "block", "high-risk tool call requires trusted context, but taint profile blocks this sink", 100, {
+    findings.push(finding("Intent Authorization", "deterministic", "block", "high-risk tool call requires trusted context, but taint profile blocks this sink", 100, {
       tool: action.tool,
       sink: blockedTaint.sink,
       taint: blockedTaint,
@@ -753,7 +780,7 @@ function trustFindingsFor(action: AgentSentryAction, state: PolicyState): Detect
   const lowest = minimumTrustLabel(state.trustLabels);
   if (!lowest || !isTrustSensitiveSink(action, assessment)) return findings;
   if (lowest.confidentiality === "secret" && (action.tool === "send_email" || action.tool === "call_api" || action.tool === "shell_exec")) {
-    findings.push(finding("ABAC Session Policy", "deterministic", "block", "secret-tainted context cannot flow into external sink", 100, {
+    findings.push(finding("Intent Authorization", "deterministic", "block", "secret-tainted context cannot flow into external sink", 100, {
       tool: action.tool,
       source: lowest.source,
       aggregate_risk: state.aggregateRisk,
@@ -872,7 +899,7 @@ function assessActionWithSensitiveAssets(action: AgentSentryAction, sensitiveAss
     sensitive = true;
     reasons.push("arguments reference sensitive asset");
   }
-  if (path && isPersistencePath(path)) {
+  if (path && isPersistencePath(path) && action.tool !== "read_file" && action.tool !== "memory_read") {
     persistence = true;
     reasons.push("path targets persistence surface");
   }
@@ -913,6 +940,25 @@ function shouldHardBlockTaskMismatch(action: AgentSentryAction, assessment: Acti
   if (action.tool === "shell_exec") return assessment.highRisk;
   if (action.tool === "memory_write") return assessment.persistence;
   return assessment.highRisk;
+}
+
+function provenanceRiskForAction(action: AgentSentryAction, state: PolicyState): Record<string, unknown> | null {
+  if (!state.provenanceFindings.length) return null;
+  const argsText = normalizeExposureText(safeStringify(action.args));
+  if (!argsText) return null;
+  const matched = state.provenanceFindings.filter((item) => {
+    const evidence = (item.evidence || {}) as Record<string, unknown>;
+    const rawPath = String(evidence.path || evidence.file || "").replace(/\\/g, "/").toLowerCase();
+    if (!rawPath || item.verdict !== "block") return false;
+    const base = rawPath.split("/").filter(Boolean).pop() || rawPath;
+    return (rawPath.length >= 6 && argsText.includes(rawPath))
+      || (base.length >= 6 && argsText.includes(base));
+  });
+  if (!matched.length) return null;
+  return {
+    matched_paths: matched.map((item) => String(((item.evidence || {}) as Record<string, unknown>).path || ((item.evidence || {}) as Record<string, unknown>).file || "")).slice(0, 5),
+    blocked_findings: matched.map((item) => item.reason).slice(0, 5),
+  };
 }
 
 function isTrustSensitiveSink(action: AgentSentryAction, assessment: ActionAssessment): boolean {
@@ -994,6 +1040,13 @@ function isPersistencePath(path: string): boolean {
     || normalized.includes("/.openclaw/");
 }
 
+function isOpenClawMemoryDocumentPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").toLowerCase();
+  if (!normalized) return false;
+  return /(^|\/)(memory\.md|soul\.md|user\.md)$/i.test(normalized)
+    || /(^|\/)memory\/[^/]+\.md$/i.test(normalized);
+}
+
 function isSystemMutationPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").toLowerCase();
   if (isSafeSystemReadPath(normalized)) return false;
@@ -1023,7 +1076,7 @@ function assessShellCommand(command: string): Pick<ActionAssessment, "externalSi
   const externalSink = /\b(curl|wget|scp|rsync|nc|ncat|socat)\b/i.test(command) && !safeRead;
   const sensitive = /(~\/\.ssh\/id_|\/\.ssh\/id_|\.env\b|openclaw\.json|\/etc\/shadow|\/\.aws\/credentials|\/\.kube\/config|secret|token|password|api[_-]?key)/i.test(command);
   const persistence = /\b(crontab|systemctl\s+enable|systemctl\s+edit|tee\s+.*(memory\.md|agents\.md|openclaw\.json)|>>?\s*.*(memory\.md|agents\.md|openclaw\.json|\/etc\/|cron\.d|systemd))\b/i.test(command);
-  const systemMutation = !safeRead && /\b(sudo|chmod\s+(777|[0-7]*7[0-7]*)|chown|systemctl|service\s+(start|restart|enable)|mount|umount|iptables|ufw)\b/i.test(command);
+  const systemMutation = !safeRead && /\b(sudo|chmod\s+(777|[0-7]*7[0-7]*)|chown|systemctl\s+(start|restart|stop|reload|enable|disable|edit|daemon-reload|mask|unmask)|service\s+(start|restart|stop|reload|enable|disable)|mount|umount|iptables|ufw)\b/i.test(command);
   const destructive = /\brm\s+-rf\s+(\/|~|\.\.?)(\s|$)|\bdd\s+.*\bof=\/dev\/|\bmkfs\.|\bshutdown\b|\breboot\b|:\s*\(\s*\)\s*\{/i.test(command);
   const remoteExec = /\b(curl|wget)\b[\s\S]{0,160}\|\s*(bash|sh|zsh|python|node)\b/i.test(command);
   if (externalSink) reasons.push("command uses network transfer");
@@ -1188,6 +1241,10 @@ function readFirstString(args: Record<string, unknown>, keys: string[]): string 
   for (const key of keys) {
     const value = args[key];
     if (typeof value === "string") return value;
+    if (isLabeledValue(value)) {
+      const unwrapped = flattenText(value.value).trim();
+      if (unwrapped) return unwrapped;
+    }
   }
   return "";
 }
@@ -1280,10 +1337,15 @@ function riskVectorFromFindings(findings: DetectionFinding[]): RiskVector {
     const evidence = item.evidence || {};
     const riskVector = evidence.risk_vector;
     if (isRiskVector(riskVector)) vector = mergeRiskVectors(vector, riskVector);
-    if (item.layer === "Cognition Protection") vector = addRisk(vector, createRiskVector({ persistence: item.score }));
-    if (item.layer === "Input Sanitization") vector = addRisk(vector, createRiskVector({ prompt_injection: item.score }));
-    if (item.layer === "System Preflight" || item.layer === "Runtime Isolation") vector = addRisk(vector, createRiskVector({ privilege: item.score }));
-    if (item.layer === "Foundation") vector = addRisk(vector, createRiskVector({ supply_chain: item.score }));
+    if (item.layer === "State Integrity") vector = addRisk(vector, createRiskVector({ persistence: item.score }));
+    if (item.layer === "Context Provenance") {
+      const reason = String(item.reason || "").toLowerCase();
+      vector = addRisk(vector, createRiskVector({
+        prompt_injection: /(prompt|injection|hidden|pdf|image|message|content)/i.test(reason) ? item.score : 0,
+        supply_chain: /(skill|configuration|workspace|provenance|provenance)/i.test(reason) ? item.score : 0,
+      }));
+    }
+    if (item.layer === "Tool Boundary") vector = addRisk(vector, createRiskVector({ privilege: item.score }));
   }
   return vector;
 }
@@ -1368,7 +1430,8 @@ function matchExposure(text: string, exposures: PolicyState["exposures"]): { exp
   for (const exposure of exposures) {
     const candidate = normalizeExposureText(exposure.text);
     if (!candidate) continue;
-    if (normalized.includes(candidate) || candidate.includes(normalized)) return { exposure, mode: "substring" };
+    const minLength = Math.min(normalized.length, candidate.length);
+    if (minLength >= 24 && (normalized.includes(candidate) || candidate.includes(normalized))) return { exposure, mode: "substring" };
     if (Math.min(normalized.length, candidate.length) >= 32 && similarity(normalized.slice(0, 1200), candidate.slice(0, 1200)) >= 0.82) {
       return { exposure, mode: "fuzzy" };
     }
@@ -1419,6 +1482,10 @@ function isSinkPayloadArg(tool: string, name: string): boolean {
     call_api: new Set(["body", "payload", "data", "content"]),
   };
   return Boolean(payloadArgs[tool]?.has(name));
+}
+
+function isControlArg(name: string): boolean {
+  return /^(timeout|timeoutms|max_?tokens?|limit|page|pagesize|offset|cursor|count|retries|retry|temperature|top_p|stream)$/i.test(String(name || ""));
 }
 
 function normalizeExposureText(value: string): string {

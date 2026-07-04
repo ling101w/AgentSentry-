@@ -59,7 +59,7 @@ const PERSISTENCE_PATTERNS = [
 ];
 
 const PRIVILEGE_PATTERNS = [
-  /\b(?:sudo|su\s+-|chmod|chown|iptables|ufw|systemctl|service\s+(?:start|restart|enable)|mount|umount|setcap)\b/i,
+  /\b(?:sudo|su\s+-|chmod|chown|iptables|ufw|systemctl\s+(?:start|restart|stop|reload|enable|disable|edit|daemon-reload|mask|unmask)|service\s+(?:start|restart|stop|reload|enable|disable)|mount|umount|setcap)\b/i,
   /\b(?:rm\s+-rf|dd\s+.*\bof=\/dev\/|mkfs\.|shutdown|reboot)\b/i,
   /(提权|管理员|系统目录|禁用防火墙|修改权限|删除系统)/i,
 ];
@@ -92,7 +92,8 @@ export function semanticActionFindings(
   const hasLocalRead = graph.localReads.length > 0 || /\bread[_-]?file\b|filesystem.*read/i.test(toolName);
   const hasPrivilegedEffect = graph.privilegedEffects.length > 0;
   const isMemoryTool = /memory|remember|webhook|wake/i.test(toolName);
-  const hasExplicitPersistence = graph.persistenceTargets.length > 0;
+  const readOnlySkillDocLookup = isReadOnlyInstalledSkillDocLookup(toolName, params);
+  const hasExplicitPersistence = graph.persistenceTargets.length > 0 && !readOnlySkillDocLookup;
   const hasPersistence = hasExplicitPersistence || isMemoryTool;
   const declaredBenign = graph.benignClaims.length > 0;
   let risk = 0;
@@ -110,7 +111,7 @@ export function semanticActionFindings(
 
   if (declaredBenign && hasLocalRead && hasNetworkWrite && (hasSensitiveSource || graph.externalSinks.length > 0)) {
     risk += 90;
-    findings.push(finding("Foundation", "deterministic", "block", "declared benign tool capability conflicts with local read plus network egress behavior", 100, {
+    findings.push(finding("Context Provenance", "deterministic", "block", "declared benign tool capability conflicts with local read plus network egress behavior", 100, {
       toolName,
       benignClaims: graph.benignClaims.slice(0, 5),
       localReads: graph.localReads.slice(0, 5),
@@ -121,7 +122,7 @@ export function semanticActionFindings(
 
   if ((hasExplicitPersistence || (isMemoryTool && hasSensitiveSource && hasExternalSink)) && (hasPrivilegedEffect || hasSensitiveSource || hasExternalSink)) {
     risk += 60;
-    findings.push(finding("Cognition Protection", "deterministic", "block", "semantic action graph combines persistence with privileged, sensitive, or external side effects", 90, {
+    findings.push(finding("State Integrity", "deterministic", "block", "semantic action graph combines persistence with privileged, sensitive, or external side effects", 90, {
       toolName,
       persistenceTargets: graph.persistenceTargets.slice(0, 6),
       privilegedEffects: graph.privilegedEffects.slice(0, 6),
@@ -130,7 +131,7 @@ export function semanticActionFindings(
     }, config));
   } else if (hasExplicitPersistence || hasPrivilegedEffect) {
     risk += 35;
-    findings.push(finding("Execution Control", "heuristic", "require_approval", "semantic action graph contains persistence or privileged side effects", 45, {
+    findings.push(finding("Tool Boundary", "heuristic", "require_approval", "semantic action graph contains persistence or privileged side effects", 45, {
       toolName,
       persistenceTargets: graph.persistenceTargets.slice(0, 6),
       privilegedEffects: graph.privilegedEffects.slice(0, 6),
@@ -140,7 +141,7 @@ export function semanticActionFindings(
 
   if (graph.encodings.length && (hasSensitiveSource || hasExternalSink || hasPersistence || hasPrivilegedEffect)) {
     risk += 40;
-    findings.push(finding("Input Sanitization", "heuristic", "require_approval", "encoded parameter content expands to security-sensitive behavior", 45, {
+    findings.push(finding("Context Provenance", "heuristic", "require_approval", "encoded parameter content expands to security-sensitive behavior", 45, {
       toolName,
       encodings: graph.encodings.slice(0, 8),
       sources: graph.sensitiveSources.slice(0, 5),
@@ -151,6 +152,13 @@ export function semanticActionFindings(
   }
 
   return { findings: dedupeFindings(findings), risk: Math.min(risk, 150), graph };
+}
+
+function isReadOnlyInstalledSkillDocLookup(toolName: string, params: Record<string, unknown>): boolean {
+  const tool = toolName.toLowerCase();
+  if (/write|delete|remove|move|chmod|chown|exec|shell|command|terminal|powershell|cmd/.test(tool)) return false;
+  const text = safeStringify(params).replace(/\\/g, "/").toLowerCase();
+  return /(?:^|[~/"'\s])\.openclaw\/(?:plugin-skills\/[^/]+|tools\/node-[^/]+\/lib\/node_modules\/openclaw\/skills\/[^/]+)\/skill\.md(?:["'\s]|$)/i.test(text);
 }
 
 function collectFacts(value: unknown, path = ""): SemanticFact[] {

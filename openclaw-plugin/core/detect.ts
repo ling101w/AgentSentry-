@@ -116,8 +116,8 @@ export function detectToolCall(
 
   if (action.tool === "memory_write") {
     const memoryGuard = memoryGuardScanWrite({
-      key: readFirstText(params, ["key", "name", "path", "file"]) || "memory",
-      content: readFirstValue(params, ["value", "content", "body", "text", "payload"]) ?? params,
+      key: memoryKeyFromParams(params),
+      content: readFirstValue(params, ["value", "content", "body", "text", "payload", "new_string", "replacement", "patch"]) ?? params,
       context: state.currentTask,
       sourceClass: readMemorySourceClass(params),
       sourceId: toolName,
@@ -140,7 +140,7 @@ export function detectToolCall(
     if (matched.length) {
       risk += 55;
       findings.push({
-        layer: "Execution Control",
+        layer: "Tool Boundary",
         finding_type: "deterministic",
         verdict: "block",
         reason: "dangerous command pattern detected",
@@ -155,7 +155,7 @@ export function detectToolCall(
   if (sensitivePaths.length) {
     risk += 35;
     findings.push({
-      layer: "Execution Control",
+      layer: "Tool Boundary",
       finding_type: "deterministic",
       verdict: "block",
       reason: "tool parameters reference sensitive or system paths",
@@ -168,7 +168,7 @@ export function detectToolCall(
   if (injectionMatches.length) {
     risk += 25;
     findings.push({
-      layer: "Decision Alignment",
+      layer: "Intent Authorization",
       finding_type: "heuristic",
       verdict: "require_approval",
       reason: "tool call contains prompt-injection or exfiltration indicators",
@@ -232,7 +232,7 @@ export function detectMessageContent(content: unknown, config: PluginConfig): De
   return [
     ...findings,
     {
-      layer: "Input Sanitization",
+      layer: "Context Provenance",
       finding_type: "heuristic",
       verdict: "pass",
       reason: "message contains prompt-injection indicators",
@@ -274,6 +274,16 @@ function readFirstValue(params: Record<string, unknown>, keys: string[]): unknow
   return undefined;
 }
 
+function memoryKeyFromParams(params: Record<string, unknown>): string {
+  const raw = readFirstText(params, ["key", "name", "path", "file"]) || "memory";
+  const normalized = raw.replace(/\\/g, "/");
+  const memoryFile = normalized.match(/(?:^|\/)memory\/([^/]+\.md)$/i);
+  if (memoryFile?.[1]) return `memory/${memoryFile[1]}`;
+  const namedMemory = normalized.match(/(?:^|\/)(user\.md|soul\.md|memory\.md)$/i);
+  if (namedMemory?.[1]) return namedMemory[1];
+  return raw;
+}
+
 function readMemorySourceClass(params: Record<string, unknown>): MemorySourceClass | undefined {
   const raw = readFirstText(params, ["source_class", "sourceClass", "source", "origin"]).toLowerCase();
   if (!raw) return undefined;
@@ -291,7 +301,7 @@ function mcpToolMetadataFindings(toolName: string, params: Record<string, unknow
   const strong = hits.filter((hit) => hit.strength === "block");
   const selected = (strong.length ? strong : hits).slice(0, 8);
   return [{
-    layer: "Foundation",
+    layer: "Context Provenance",
     finding_type: "deterministic",
     verdict: strong.length ? "block" : "require_approval",
     reason: strong.length

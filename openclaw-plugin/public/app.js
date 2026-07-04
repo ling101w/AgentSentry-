@@ -16,17 +16,11 @@ const state = {
 };
 
 const layerNames = {
-  Foundation: "基础扫描",
-  "LLM Input": "模型输入",
-  "Message Write": "消息写入",
-  "Input Sanitization": "输入净化",
-  "Cognition Protection": "认知保护",
-  "Decision Alignment": "决策对齐",
-  "ABAC Session Policy": "ABAC 会话策略",
-  "System Preflight": "系统预执行",
-  "Sentry Trajectory": "行为轨迹",
-  "Execution Control": "执行控制",
-  "Tool Result": "工具结果",
+  "Context Provenance": "上下文溯源域",
+  "State Integrity": "状态完整性域",
+  "Intent Authorization": "意图授权域",
+  "Tool Boundary": "工具边界域",
+  "Evidence Feedback": "证据回流环",
   Runtime: "运行时",
 };
 
@@ -34,7 +28,7 @@ const typeNames = {
   finding_group: "发现聚合",
   lab_command: "实验指令",
   session_start: "会话开始",
-  foundation_scan: "基础扫描",
+  provenance_scan: "溯源扫描",
   llm_input: "模型输入",
   message_write: "消息写入",
   tool_decision: "工具裁决",
@@ -117,7 +111,7 @@ const textTranslations = [
   [/configuration appears to contain embedded secrets/gi, "配置文件疑似包含内嵌密钥"],
   [/configuration contains hardcoded secret values/gi, "配置文件包含硬编码敏感值"],
   [/workspace contains sensitive asset file/gi, "工作区包含敏感资产文件"],
-  [/AgentSentry dashboard started/gi, "AgentSentry 面板已启动"],
+  [/AgentSentry dashboard started/gi, "玄鉴面板已启动"],
   [/OpenClaw prompt build/gi, "OpenClaw 提示词构建"],
   [/LLM input prepared/gi, "模型输入已准备"],
   [/system prompt preview disabled/gi, "系统提示词预览已关闭"],
@@ -130,10 +124,11 @@ const textTranslations = [
   [/Tool call: ([\w.-]+)/gi, (_, tool) => `工具调用：${displayTool(tool)}`],
   [/tool ([\w.-]+) is outside TaskSpec/gi, (_, tool) => `工具 ${displayTool(tool)} 超出当前任务规范`],
   [/TaskSpec/gi, "任务规范"],
-  [/Foundation scan completed/gi, "Foundation 扫描完成"],
+  [/Workspace provenance scan completed/gi, "工作区溯源扫描完成"],
+  [/Workspace provenance scan blocked workspace/gi, "工作区溯源扫描阻断"],
   [/OpenClaw produced a tool trace for this Promptbeat case, but the provider timed out before the final assistant reply\./gi, "OpenClaw 已为该 PromptBeat 用例产生工具轨迹，但模型服务在最终回复前超时。"],
   [/Observed tool calls: ([^.]+)\./gi, (_, tools) => `观察到的工具调用：${tools.split(",").map((tool) => displayTool(tool.trim())).join("、")}。`],
-  [/Check the AgentSentry dashboard for tool_decision, alert, and tool_result records\./gi, "请在 AgentSentry 面板查看工具裁决、告警和工具结果记录。"],
+  [/Check the AgentSentry dashboard for tool_decision, alert, and tool_result records\./gi, "请在玄鉴面板查看工具裁决、告警和工具结果记录。"],
   [/Request timed out before a response was generated\. Please try again, or increase `agents\.defaults\.timeoutSeconds` in your config\./gi, "生成回复前请求超时。可以重试，或调高 OpenClaw 配置中的 agents.defaults.timeoutSeconds。"],
   [/(\d+) findings; (\d+) files scanned; cached/gi, (_, findings, files) => `${findings} 个发现；已扫描 ${files} 个文件；使用缓存`],
   [/(\d+) findings; (\d+) files scanned/gi, (_, findings, files) => `${findings} 个发现；已扫描 ${files} 个文件`],
@@ -400,7 +395,7 @@ function sessionInsight(records) {
     return { tone: "danger", title: "发现并拦截高风险工具行为", body: `${tools} 触发任务规范外调用；共有 ${alerts.length} 条告警、${deniedTools.length} 次阻断。` };
   }
   if (hardcodedSecrets.length) {
-    return { tone: "warning", title: "启动前发现硬编码敏感配置", body: `基础扫描发现 ${hardcodedSecrets.length} 个配置敏感值，建议确认是否为测试密钥或生产密钥。` };
+    return { tone: "warning", title: "启动前发现硬编码敏感配置", body: `工作区溯源扫描发现 ${hardcodedSecrets.length} 个配置敏感值，建议确认是否为测试密钥或生产密钥。` };
   }
   if (timeouts.length) {
     return { tone: "warning", title: "模型响应链路超时", body: "OpenClaw 已写入运行轨迹，但模型服务没有在超时时间内完成最终回复。" };
@@ -408,22 +403,32 @@ function sessionInsight(records) {
   if (assistantReplies.length) {
     return { tone: "success", title: "会话已完成回复", body: "本次会话产生了助手回复，未发现高风险工具阻断。" };
   }
-  return { tone: "", title: "会话正在形成", body: "已捕获基础扫描和消息输入，等待后续工具调用或回复记录。" };
+  return { tone: "", title: "会话正在形成", body: "已捕获工作区溯源和消息输入，等待后续工具调用或回复记录。" };
 }
 
 function stageRail(records) {
   const stages = [
-    ["基础扫描", records.filter((record) => record.layer === "Foundation" || record.type === "foundation_scan").length],
-    ["输入净化", records.filter((record) => record.layer === "Input Sanitization" || record.type === "message_write").length],
-    ["认知保护", records.filter((record) => record.layer === "Cognition Protection" || record.layer === "Sentry Trajectory" || /memory|webhook|poison|taint/i.test(searchableText(record))).length],
-    ["决策对齐", records.filter((record) => record.layer === "Decision Alignment" || record.layer === "ABAC Session Policy" || /taskspec|intent|scope|drift|abac/i.test(searchableText(record))).length],
-    ["执行控制", records.filter((record) => record.layer === "Execution Control" || record.layer === "System Preflight" || record.layer === "Tool Result" || ["tool_decision", "tool_result", "alert", "response_cover"].includes(record.type)).length],
+    ["上下文溯源", records.filter((record) => canonicalDomain(record) === "context").length],
+    ["状态完整性", records.filter((record) => canonicalDomain(record) === "state").length],
+    ["意图授权", records.filter((record) => canonicalDomain(record) === "intent").length],
+    ["工具边界", records.filter((record) => canonicalDomain(record) === "boundary").length],
+    ["证据回流", records.filter((record) => canonicalDomain(record) === "feedback").length],
   ];
   return `
     <div class="stage-rail">
       ${stages.map(([label, count]) => `<div class="stage ${count ? "active" : ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(count)}</strong></div>`).join("")}
     </div>
   `;
+}
+
+function canonicalDomain(record) {
+  const layer = String(record.layer || record.payload?.layer || "");
+  const text = searchableText(record);
+  if (layer === "Context Provenance" || ["provenance_scan", "llm_input", "lab_command", "session_start", "message_write"].includes(record.type)) return "context";
+  if (layer === "State Integrity" || /memory|webhook|poison/i.test(text)) return "state";
+  if (layer === "Intent Authorization" || /taskspec|intent|scope|drift|abac/i.test(text)) return "intent";
+  if (layer === "Evidence Feedback" || ["tool_result", "approval_cache_hit", "runtime"].includes(record.type)) return "feedback";
+  return "boundary";
 }
 
 function issueDigest(records) {
@@ -476,8 +481,8 @@ function applyFocusMode(records) {
   if (state.focusMode === "tools") {
     return records.filter((record) => ["tool_decision", "tool_result", "alert", "approval_request", "approval_resolution", "approval_cache_hit"].includes(record.type));
   }
-  if (state.focusMode === "foundation") {
-    return records.filter((record) => record.layer === "Foundation" || record.type === "foundation_scan");
+  if (state.focusMode === "context") {
+    return records.filter((record) => canonicalDomain(record) === "context");
   }
   return records.filter((record) => isImportantRecord(record));
 }
@@ -494,7 +499,7 @@ function isImportantRecord(record) {
     return /hardcoded secret|embedded secrets|sensitive asset/i.test(reason);
   }
   if (record.type === "finding_group") return true;
-  if (record.type === "foundation_scan") return Number(record.payload?.findingCount || record.payload?.findings || 0) > 0;
+  if (record.type === "provenance_scan") return Number(record.payload?.findingCount || record.payload?.findings || 0) > 0;
   return ["session_start", "llm_input"].includes(record.type);
 }
 
@@ -508,8 +513,8 @@ function sessionRecords() {
 function groupTimelineRecords(records) {
   const buckets = new Map();
   for (const record of records) {
-    if (!isGroupableFoundationFinding(record)) continue;
-    const key = foundationFindingKey(record);
+    if (!isGroupableProvenanceFinding(record)) continue;
+    const key = provenanceFindingKey(record);
     const bucket = buckets.get(key) || [];
     bucket.push(record);
     buckets.set(key, bucket);
@@ -528,7 +533,7 @@ function groupTimelineRecords(records) {
   for (const record of sortRecordsDesc(records)) {
     const group = firstRecordByKey.get(record.id);
     if (group) {
-      output.push(makeFoundationFindingGroup(group.key, group.bucket));
+      output.push(makeProvenanceFindingGroup(group.key, group.bucket));
       continue;
     }
     if (groupedIds.has(record.id)) continue;
@@ -569,24 +574,24 @@ function bindPagination(id, onPage) {
   });
 }
 
-function isGroupableFoundationFinding(record) {
+function isGroupableProvenanceFinding(record) {
   return record.type === "guard_finding"
-    && record.layer === "Foundation"
+    && canonicalDomain(record) === "context"
     && record.severity === "warning";
 }
 
-function foundationFindingKey(record) {
+function provenanceFindingKey(record) {
   const payload = record.payload || {};
-  const reason = payload.reason || record.summary || record.title || "foundation finding";
+  const reason = payload.reason || record.summary || record.title || "provenance finding";
   const confidence = payload.evidence?.confidence || "";
   return [record.session_key || "", record.layer || "", record.severity || "", reason, confidence].join("|");
 }
 
-function makeFoundationFindingGroup(key, bucket) {
+function makeProvenanceFindingGroup(key, bucket) {
   const sortedBucket = bucket.slice().sort(compareRecordsDesc);
   const first = sortedBucket[0];
   const payload = first.payload || {};
-  const reason = payload.reason || first.summary || first.title || "foundation finding";
+  const reason = payload.reason || first.summary || first.title || "provenance finding";
   const paths = Array.from(new Set(bucket.map((record) => record.payload?.evidence?.path).filter(Boolean)));
   const confidence = payload.evidence?.confidence || "medium";
   return {
@@ -598,10 +603,10 @@ function makeFoundationFindingGroup(key, bucket) {
     layer: first.layer,
     severity: first.severity,
     title: `${translateText(reason)}（${bucket.length} 项）`,
-    summary: `已折叠 ${bucket.length} 条同类基础扫描发现，涉及 ${paths.length || bucket.length} 个文件。`,
+    summary: `已折叠 ${bucket.length} 条同类溯源扫描发现，涉及 ${paths.length || bucket.length} 个文件。`,
     payload: {
       grouped: true,
-      group_type: "foundation_findings",
+      group_type: "provenance_findings",
       count: bucket.length,
       reason,
       confidence,
@@ -970,7 +975,7 @@ $("exportCsvBtn").addEventListener("click", () => downloadExport("csv"));
 $("copyPayloadBtn").addEventListener("click", copySelectedPayload);
 $("modeSelect")?.addEventListener("change", () => setEnforcementMode($("modeSelect").value));
 $("resetBtn").addEventListener("click", async () => {
-  if (!confirm("确认清空 AgentSentry 本地记录？")) return;
+  if (!confirm("确认清空玄鉴本地记录？")) return;
   await fetch("/api/reset", { method: "POST" });
   state.selectedId = "";
   state.selectedSession = "";

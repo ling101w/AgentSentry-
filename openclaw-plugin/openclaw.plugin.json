@@ -99,9 +99,9 @@
             "type": "boolean",
             "description": "Use semantic judge for message and tool-result content review."
           },
-          "judgeFoundation": {
+          "judgeProvenance": {
             "type": "boolean",
-            "description": "Use semantic judge for foundation files such as SKILL.md and config files."
+            "description": "Use semantic judge for workspace provenance files such as SKILL.md and config files."
           },
           "judgeMemoryWrites": {
             "type": "boolean",
@@ -129,13 +129,13 @@
           }
         }
       },
-      "foundationScan": {
+      "provenanceScan": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Run foundation scan at prompt-build time."
+            "description": "Run workspace provenance scan at prompt-build time."
           },
           "scanSkills": {
             "type": "boolean",
@@ -292,9 +292,9 @@
       "label": "Semantic Scheduling",
       "help": "Choose off, risk-tiered, or full LLM-Judge scheduling."
     },
-    "semantic.judgeFoundation": {
-      "label": "Semantic Foundation Scan",
-      "help": "Uses the semantic judge to review SKILL.md and config files during foundation scan."
+    "semantic.judgeProvenance": {
+      "label": "Semantic Provenance Scan",
+      "help": "Uses the semantic judge to review SKILL.md and config files during workspace provenance scan."
     },
     "semantic.judgeMemoryWrites": {
       "label": "Semantic Memory Write Review",
@@ -308,19 +308,19 @@
       "label": "Semantic API Key Env",
       "help": "Environment variable name containing the API key."
     },
-    "foundationScan.enabled": {
-      "label": "Enable Foundation Scan",
-      "help": "Scans workspace files before prompt construction."
+    "provenanceScan.enabled": {
+      "label": "Enable Provenance Scan",
+      "help": "Scans workspace provenance files before prompt construction."
     },
-    "foundationScan.scanSkills": {
+    "provenanceScan.scanSkills": {
       "label": "Scan Skills",
       "help": "Checks SKILL.md and related skill files for malicious instructions."
     },
-    "foundationScan.scanConfig": {
+    "provenanceScan.scanConfig": {
       "label": "Scan Config",
       "help": "Checks config files for risky exposure or secrets."
     },
-    "foundationScan.scanSensitiveFiles": {
+    "provenanceScan.scanSensitiveFiles": {
       "label": "Scan Sensitive Files",
       "help": "Records sensitive files found in the workspace."
     },
