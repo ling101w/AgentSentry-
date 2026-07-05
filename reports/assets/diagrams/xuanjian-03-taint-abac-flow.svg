@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#06131d"/><stop offset="0.52" stop-color="#092231"/><stop offset="1" stop-color="#0d1a2b"/>
+      </linearGradient>
+      <radialGradient id="halo" cx="50%" cy="45%" r="62%">
+        <stop offset="0" stop-color="#1dd9ff" stop-opacity="0.24"/><stop offset="1" stop-color="#1dd9ff" stop-opacity="0"/>
+      </radialGradient>
+      <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+        <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.34"/>
+      </filter>
+      <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+        <path d="M2,2 L10,6 L2,10 Z" fill="#46d9ff"/>
+      </marker>
+      <marker id="arrowRed" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+        <path d="M2,2 L10,6 L2,10 Z" fill="#ff6074"/>
+      </marker>
+      <style>
+        text { font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; letter-spacing: 0; }
+        .mono { font-family: "Noto Sans Mono CJK SC", "Noto Sans Mono", monospace; }
+      </style>
+    </defs>
+    <rect width="1920" height="1080" fill="url(#bg)"/>
+    <rect width="1920" height="1080" fill="url(#halo)"/>
+    <g opacity="0.10">
+      <line x1="80" y1="0" x2="80" y2="1080" stroke="#8ee8ff"/><line x1="160" y1="0" x2="160" y2="1080" stroke="#8ee8ff"/><line x1="240" y1="0" x2="240" y2="1080" stroke="#8ee8ff"/><line x1="320" y1="0" x2="320" y2="1080" stroke="#8ee8ff"/><line x1="400" y1="0" x2="400" y2="1080" stroke="#8ee8ff"/><line x1="480" y1="0" x2="480" y2="1080" stroke="#8ee8ff"/><line x1="560" y1="0" x2="560" y2="1080" stroke="#8ee8ff"/><line x1="640" y1="0" x2="640" y2="1080" stroke="#8ee8ff"/><line x1="720" y1="0" x2="720" y2="1080" stroke="#8ee8ff"/><line x1="800" y1="0" x2="800" y2="1080" stroke="#8ee8ff"/><line x1="880" y1="0" x2="880" y2="1080" stroke="#8ee8ff"/><line x1="960" y1="0" x2="960" y2="1080" stroke="#8ee8ff"/><line x1="1040" y1="0" x2="1040" y2="1080" stroke="#8ee8ff"/><line x1="1120" y1="0" x2="1120" y2="1080" stroke="#8ee8ff"/><line x1="1200" y1="0" x2="1200" y2="1080" stroke="#8ee8ff"/><line x1="1280" y1="0" x2="1280" y2="1080" stroke="#8ee8ff"/><line x1="1360" y1="0" x2="1360" y2="1080" stroke="#8ee8ff"/><line x1="1440" y1="0" x2="1440" y2="1080" stroke="#8ee8ff"/><line x1="1520" y1="0" x2="1520" y2="1080" stroke="#8ee8ff"/><line x1="1600" y1="0" x2="1600" y2="1080" stroke="#8ee8ff"/><line x1="1680" y1="0" x2="1680" y2="1080" stroke="#8ee8ff"/><line x1="1760" y1="0" x2="1760" y2="1080" stroke="#8ee8ff"/><line x1="1840" y1="0" x2="1840" y2="1080" stroke="#8ee8ff"/>
+      <line x1="0" y1="80" x2="1920" y2="80" stroke="#8ee8ff"/><line x1="0" y1="160" x2="1920" y2="160" stroke="#8ee8ff"/><line x1="0" y1="240" x2="1920" y2="240" stroke="#8ee8ff"/><line x1="0" y1="320" x2="1920" y2="320" stroke="#8ee8ff"/><line x1="0" y1="400" x2="1920" y2="400" stroke="#8ee8ff"/><line x1="0" y1="480" x2="1920" y2="480" stroke="#8ee8ff"/><line x1="0" y1="560" x2="1920" y2="560" stroke="#8ee8ff"/><line x1="0" y1="640" x2="1920" y2="640" stroke="#8ee8ff"/><line x1="0" y1="720" x2="1920" y2="720" stroke="#8ee8ff"/><line x1="0" y1="800" x2="1920" y2="800" stroke="#8ee8ff"/><line x1="0" y1="880" x2="1920" y2="880" stroke="#8ee8ff"/><line x1="0" y1="960" x2="1920" y2="960" stroke="#8ee8ff"/><line x1="0" y1="1040" x2="1920" y2="1040" stroke="#8ee8ff"/>
+    </g>
+    <text x="92" y="86" fill="#ffffff" font-size="48" font-weight="950" text-anchor="start" class="">
+<tspan x="92" dy="0">污点传播与 ABAC 授权判定</tspan>
+</text>
+    <text x="94" y="132" fill="#9bcfe4" font-size="25" font-weight="550" text-anchor="start" class="">
+<tspan x="94" dy="0">外部内容可以被读取和总结，但不可信数据不能流向敏感读取、外发、执行或持久化工具</tspan>
+</text>
+    
+    <g>
+      <rect x="100" y="250" width="360" height="210" rx="22" fill="#0b2230" stroke="#ff6074" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="100" y="250" width="8" height="210" rx="4" fill="#ff6074" opacity="0.95"/>
+      <text x="128" y="298" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="128" dy="0">有毒外部内容</tspan>
+</text>
+      <text x="128" y="346" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="128" dy="0">邮件白字、网页零尺寸 span</tspan>
+<tspan x="128" dy="34">、PDF 透明层、图片元数据隐</tspan>
+<tspan x="128" dy="34">藏指令。</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="560" y="250" width="350" height="230" rx="22" fill="#0b2230" stroke="#35f29b" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="560" y="250" width="8" height="230" rx="4" fill="#35f29b" opacity="0.95"/>
+      <text x="588" y="298" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="588" dy="0">只读摄取</tspan>
+</text>
+      <text x="588" y="346" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="588" dy="0">邮件读取、网页读取、PDF</tspan>
+<tspan x="588" dy="34"> 解析、图片分析默认允许</tspan>
+<tspan x="588" dy="34">完成业务分析。</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="1010" y="250" width="350" height="230" rx="22" fill="#0b2230" stroke="#46d9ff" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="1010" y="250" width="8" height="230" rx="4" fill="#46d9ff" opacity="0.95"/>
+      <text x="1038" y="298" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="1038" dy="0">污点标签</tspan>
+</text>
+      <text x="1038" y="346" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="1038" dy="0">来源=外部网页/邮件</tspan>
+<tspan x="1038" dy="34">完整性=已污染</tspan>
+<tspan x="1038" dy="34">密级=公开或机密</tspan>
+<tspan x="1038" dy="34">禁止流向=外发、执行、持</tspan>
+<tspan x="1038" dy="34">久化</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="1460" y="250" width="350" height="230" rx="22" fill="#0b2230" stroke="#ff6074" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="1460" y="250" width="8" height="230" rx="4" fill="#ff6074" opacity="0.95"/>
+      <text x="1488" y="298" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="1488" dy="0">高危工具</tspan>
+</text>
+      <text x="1488" y="346" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="1488" dy="0">敏感文件读取</tspan>
+<tspan x="1488" dy="34">外部邮件发送</tspan>
+<tspan x="1488" dy="34">非白名单 API</tspan>
+<tspan x="1488" dy="34">Shell 执行</tspan>
+</text>
+    </g>
+    
+    <g>
+      <line x1="460" y1="355" x2="560" y2="355" stroke="#46d9ff" stroke-width="4" stroke-linecap="round"  marker-end="url(#arrow)"/>
+      
+    </g>
+    
+    <g>
+      <line x1="910" y1="355" x2="1010" y2="355" stroke="#46d9ff" stroke-width="4" stroke-linecap="round"  marker-end="url(#arrow)"/>
+      
+    </g>
+    
+    <g>
+      <line x1="1360" y1="355" x2="1460" y2="355" stroke="#ff6074" stroke-width="4" stroke-linecap="round"  marker-end="url(#arrowRed)"/>
+      <text x="1410" y="343" fill="#ff6074" font-size="20" font-weight="800" text-anchor="middle" class="">
+<tspan x="1410" dy="0">流向检查</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="265" y="650" width="420" height="190" rx="22" fill="#0b2230" stroke="#f8b84e" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="265" y="650" width="8" height="190" rx="4" fill="#f8b84e" opacity="0.95"/>
+      <text x="293" y="698" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="293" dy="0">TaskSpec</tspan>
+</text>
+      <text x="293" y="746" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="293" dy="0">来自用户原始任务：例如“只总</tspan>
+<tspan x="293" dy="34">结邮件，不执行邮件内额外指令</tspan>
+<tspan x="293" dy="34">”。</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="750" y="650" width="420" height="190" rx="22" fill="#0b2230" stroke="#a77cff" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="750" y="650" width="8" height="190" rx="4" fill="#a77cff" opacity="0.95"/>
+      <text x="778" y="698" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="778" dy="0">ABAC 判定</tspan>
+</text>
+      <text x="778" y="746" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="778" dy="0">主体=Agent；客体=工具、路径</tspan>
+<tspan x="778" dy="34">、收件人；环境=会话污点、来</tspan>
+<tspan x="778" dy="34">源信任、当前任务。</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="1235" y="650" width="420" height="190" rx="22" fill="#0b2230" stroke="#35f29b" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="1235" y="650" width="8" height="190" rx="4" fill="#35f29b" opacity="0.95"/>
+      <text x="1263" y="698" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="1263" dy="0">结果</tspan>
+</text>
+      <text x="1263" y="746" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="1263" dy="0">低风险读取：ALLOW</tspan>
+<tspan x="1263" dy="34">敏感读取/外发/执行：DENY</tspan>
+<tspan x="1263" dy="34">边界不清：ASK</tspan>
+</text>
+    </g>
+    
+    <g>
+      <line x1="475" y1="650" x2="760" y2="520" stroke="#f8b84e" stroke-width="4" stroke-linecap="round" stroke-dasharray="12 10" marker-end="url(#arrow)"/>
+      
+    </g>
+    
+    <g>
+      <line x1="1130" y1="650" x2="1295" y2="520" stroke="#a77cff" stroke-width="4" stroke-linecap="round" stroke-dasharray="12 10" marker-end="url(#arrow)"/>
+      
+    </g>
+    
+    <g>
+      <line x1="1170" y1="745" x2="1235" y2="745" stroke="#46d9ff" stroke-width="4" stroke-linecap="round"  marker-end="url(#arrow)"/>
+      
+    </g>
+    <text x="92" y="1018" fill="#9bcfe4" font-size="23" font-weight="600" text-anchor="start" class="">
+<tspan x="92" dy="0">图 3  玄鉴不是“一看到外部内容就阻断”，而是允许摄取、保留污点，并在高危 sink 前进行 ABAC 流向门禁。</tspan>
+</text></svg>

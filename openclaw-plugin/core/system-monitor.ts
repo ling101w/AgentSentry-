@@ -40,6 +40,8 @@ export type EbpfLogCheckpoint = {
   size: number;
   created_at: string;
   monitor: SystemMonitorStatus;
+  root_pid: number;
+  root_uid?: number;
 };
 
 export type EbpfRuntimeAudit = {
@@ -48,6 +50,8 @@ export type EbpfRuntimeAudit = {
   checkpoint: EbpfLogCheckpoint | null;
   scanned_bytes: number;
   event_count: number;
+  raw_event_count?: number;
+  attributed_event_count?: number;
   interesting_events: Array<Record<string, unknown>>;
   findings: DetectionFinding[];
 };
@@ -325,6 +329,8 @@ export function ebpfLogCheckpoint(): EbpfLogCheckpoint | null {
       size: stats.size,
       created_at: new Date().toISOString(),
       monitor,
+      root_pid: process.pid,
+      root_uid: typeof process.getuid === "function" ? process.getuid() : undefined,
     };
   } catch {
     return null;
@@ -354,16 +360,45 @@ export function auditRuntimeEventsSince(
   }
 
   const { events, scannedBytes } = readEbpfEventsSince(checkpoint, maxBytes, maxEvents);
-  const audit = auditEbpfEvents(events, toolName, params, monitor, previewChars);
+  const attributedEvents = attributeEventsToRuntime(events, checkpoint);
+  const audit = auditEbpfEvents(attributedEvents, toolName, params, monitor, previewChars);
   return {
     enabled: true,
     monitor,
     checkpoint,
     scanned_bytes: scannedBytes,
-    event_count: events.length,
+    event_count: attributedEvents.length,
+    raw_event_count: events.length,
+    attributed_event_count: attributedEvents.length,
     interesting_events: audit.interestingEvents,
     findings: audit.findings,
   };
+}
+
+function attributeEventsToRuntime(
+  events: Array<Record<string, unknown>>,
+  checkpoint: EbpfLogCheckpoint,
+): Array<Record<string, unknown>> {
+  const rootPid = checkpoint.root_pid;
+  if (!Number.isFinite(rootPid) || rootPid <= 0) return events;
+  const rootUid = checkpoint.root_uid;
+  const processTree = new Set<number>([rootPid]);
+  const attributed: Array<Record<string, unknown>> = [];
+  const sorted = [...events].sort((a, b) => numericField(a, "ts_ns") - numericField(b, "ts_ns"));
+  for (const event of sorted) {
+    const pid = numericField(event, "pid");
+    const ppid = numericField(event, "ppid");
+    const uid = numericField(event, "uid");
+    const uidMatches = rootUid === undefined || uid === 0 || uid === rootUid;
+    const belongsToRuntime = uidMatches && (
+      (pid > 0 && processTree.has(pid))
+      || (ppid > 0 && processTree.has(ppid))
+    );
+    if (!belongsToRuntime) continue;
+    if (pid > 0) processTree.add(pid);
+    attributed.push(event);
+  }
+  return attributed;
 }
 
 function readEbpfEventsSince(
@@ -411,8 +446,11 @@ function auditEbpfEvents(
   const normalized = toolName.toLowerCase();
   const command = readFirstString(params, ["command", "cmd", "script", "shell", "input"]);
   const expectedPaths = collectPathLike(params);
+  const expectedUrls = collectUrls(params);
   const shellTool = /shell|command|exec|terminal|powershell|cmd/.test(normalized);
   const lowRiskShell = shellTool && command ? isLowRiskShellRead(command) : false;
+  const networkTool = /http|fetch|request|api|browser|email|mail|message|send|webhook|curl|wget/.test(normalized)
+    || expectedUrls.some((url) => isExternalUrl(url));
   const interestingEvents: Array<Record<string, unknown>> = [];
   const findings: DetectionFinding[] = [];
 
@@ -443,6 +481,7 @@ function auditEbpfEvents(
     .filter((event) => String(event.event || "") === "execve")
     .filter((event) => isRelevantComm(String(event.comm || "")))
     .map((event) => ({ event, text: execEventText(event) }))
+    .filter(({ text }) => !isAgentSentryMonitorInternalExec(text))
     .filter(({ text }) => isDangerousRuntimeExec(text))
     .slice(0, 12);
 
@@ -458,6 +497,31 @@ function auditEbpfEvents(
         source: "ebpf",
         event: "execve",
         policy: "dangerous exec only; normal node/library activity ignored",
+      },
+    }));
+  }
+
+  const unexpectedConnectEvents = events
+    .filter((event) => String(event.event || "") === "connect")
+    .filter((event) => isRelevantComm(String(event.comm || "")))
+    .filter(() => !networkTool)
+    .slice(0, 12);
+  if (unexpectedConnectEvents.length) {
+    interestingEvents.push(...unexpectedConnectEvents);
+    findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected socket connection after non-network tool was allowed", 75, {
+      toolName,
+      expected_urls: expectedUrls.slice(0, 8),
+      observed_processes: unexpectedConnectEvents.map((event) => ({
+        pid: event.pid,
+        ppid: event.ppid,
+        comm: event.comm,
+        fd: event.fd,
+      })).slice(0, 8),
+      monitor,
+      runtime_audit: {
+        source: "ebpf",
+        event: "connect",
+        policy: "non-network tools should not open sockets unless explicitly authorized",
       },
     }));
   }
@@ -675,7 +739,14 @@ function isLowRiskShellRead(command: string): boolean {
 }
 
 function isRelevantComm(comm: string): boolean {
-  return /^(node|bash|sh|zsh|python|python3|curl|wget|nc|ncat|socat)$/i.test(comm.trim());
+  return /^(node|bash|sh|zsh|python|python3|cat|head|tail|curl|wget|nc|ncat|socat)$/i.test(comm.trim());
+}
+
+function isAgentSentryMonitorInternalExec(text: string): boolean {
+  return /(?:^|\/)systemctl\s+is-active\s+--quiet\s+agentsentry-ebpf-observer\.service\b/.test(text)
+    || /(?:^|\/)systemctl\s+is-active\s+--quiet\s*$/.test(text)
+    || /(?:^|\/)pgrep\s+-f\s+bpftrace\s+\.\*agentsentry-ebpf-observer/i.test(text)
+    || /(?:^|\/)bpftool\s+version\b/.test(text);
 }
 
 function isBenignRuntimePath(path: string): boolean {
@@ -715,6 +786,16 @@ function execEventText(event: Record<string, unknown>): string {
     .map((value) => typeof value === "string" ? value : "")
     .filter(Boolean)
     .join(" ");
+}
+
+function numericField(event: Record<string, unknown>, key: string): number {
+  const value = event[key];
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }
 
 function isDangerousRuntimeExec(text: string): boolean {

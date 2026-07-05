@@ -16,6 +16,7 @@ import {
   resultFindings,
   updateAfterDecision,
   updateAfterMessage,
+  updateAfterRuntimeFindings,
   updateTaskSpec,
   type PolicyState,
 } from "./core/policy.ts";
@@ -462,6 +463,7 @@ const plugin = {
         : null;
       const runtimeFindings = runtimeAudit?.findings || [];
       const allFindings = [...findings, ...runtimeFindings];
+      updateAfterRuntimeFindings(state.policyState, event?.toolName || "", runtimeFindings);
       const severity: RecordSeverity = event?.error ? "danger" : "success";
       plugin.store!.add({
         run_id: state.runId,

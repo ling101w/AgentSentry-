@@ -16,7 +16,7 @@ import {
   type MemoryGuardAction,
   type MemorySourceClass,
 } from "../core/memory-guard.ts";
-import { createPolicyState, normalizeAction, policyTrustSnapshot, resultFindings, updateAfterDecision, updateAfterMessage, updateTaskSpec } from "../core/policy.ts";
+import { createPolicyState, normalizeAction, policyTrustSnapshot, resultFindings, updateAfterDecision, updateAfterMessage, updateAfterRuntimeFindings, updateTaskSpec } from "../core/policy.ts";
 import type { PolicyState } from "../core/policy.ts";
 import type { AgentSentryRecord, RecordSeverity, RecordStore } from "../core/records.ts";
 import { semanticJudgeMemoryWrite, semanticJudgeMessage, semanticJudgeToolCall } from "../core/semantic.ts";
@@ -1999,9 +1999,10 @@ async function executeLabActions(input: {
       addToolResultRecord(input, normalizedAction, toolCallId, execution.ok ? "executed" : "failed", execution);
       const executionFindings = Array.isArray(execution.findings) ? execution.findings as Array<Record<string, unknown>> : [];
       if (executionFindings.length) {
-        updateAfterMessage(policyState, executionFindings as never);
         const runtimeFindings = executionFindings.filter((finding) => String(finding.layer || "") === "Tool Boundary");
         const nonRuntimeFindings = executionFindings.filter((finding) => String(finding.layer || "") !== "Tool Boundary");
+        updateAfterRuntimeFindings(policyState, normalizedAction.toolName, runtimeFindings as never);
+        updateAfterMessage(policyState, executionFindings as never);
         for (const finding of executionFindings) {
           addLabFinding(input.store, config, input.runId, input.sessionKey, finding, {
             toolName: normalizedAction.toolName,

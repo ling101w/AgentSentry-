@@ -15,12 +15,13 @@ BEGIN
 }
 
 tracepoint:syscalls:sys_enter_execve
-/comm == "node" || comm == "bash" || comm == "sh" || comm == "zsh" || comm == "python" || comm == "python3" || comm == "curl" || comm == "wget"/
+/comm == "node" || comm == "bash" || comm == "sh" || comm == "zsh" || comm == "python" || comm == "python3" || comm == "cat" || comm == "head" || comm == "tail" || comm == "curl" || comm == "wget"/
 {
   printf(
-    "{\"event\":\"execve\",\"ts_ns\":%llu,\"pid\":%d,\"uid\":%d,\"comm\":\"%s\",\"argv0\":\"%s\",\"argv1\":\"%s\",\"argv2\":\"%s\"}\n",
+    "{\"event\":\"execve\",\"ts_ns\":%llu,\"pid\":%d,\"ppid\":%d,\"uid\":%d,\"comm\":\"%s\",\"argv0\":\"%s\",\"argv1\":\"%s\",\"argv2\":\"%s\"}\n",
     nsecs,
     pid,
+    curtask->real_parent->tgid,
     uid,
     comm,
     str(args->argv[0]),
@@ -30,12 +31,13 @@ tracepoint:syscalls:sys_enter_execve
 }
 
 tracepoint:syscalls:sys_enter_openat
-/comm == "node" || comm == "bash" || comm == "sh" || comm == "python" || comm == "python3"/
+/comm == "node" || comm == "bash" || comm == "sh" || comm == "python" || comm == "python3" || comm == "cat" || comm == "head" || comm == "tail"/
 {
   printf(
-    "{\"event\":\"openat\",\"ts_ns\":%llu,\"pid\":%d,\"uid\":%d,\"comm\":\"%s\",\"filename\":\"%s\",\"flags\":%d}\n",
+    "{\"event\":\"openat\",\"ts_ns\":%llu,\"pid\":%d,\"ppid\":%d,\"uid\":%d,\"comm\":\"%s\",\"filename\":\"%s\",\"flags\":%d}\n",
     nsecs,
     pid,
+    curtask->real_parent->tgid,
     uid,
     comm,
     str(args->filename),
@@ -47,9 +49,10 @@ tracepoint:syscalls:sys_enter_connect
 /comm == "node" || comm == "curl" || comm == "wget" || comm == "python" || comm == "python3"/
 {
   printf(
-    "{\"event\":\"connect\",\"ts_ns\":%llu,\"pid\":%d,\"uid\":%d,\"comm\":\"%s\",\"fd\":%d}\n",
+    "{\"event\":\"connect\",\"ts_ns\":%llu,\"pid\":%d,\"ppid\":%d,\"uid\":%d,\"comm\":\"%s\",\"fd\":%d}\n",
     nsecs,
     pid,
+    curtask->real_parent->tgid,
     uid,
     comm,
     args->fd

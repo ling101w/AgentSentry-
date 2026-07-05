@@ -66,6 +66,7 @@ export type PolicyState = {
   }>;
   apiCallCounts: Map<string, number>;
   behaviorProfiles: Map<string, BehaviorProfile>;
+  runtimeProfiles: Map<string, RuntimeFeedbackProfile>;
   trustLabels: TrustLabel[];
   aggregateRisk: RiskVector;
   taintedSources: string[];
@@ -89,6 +90,15 @@ type BehaviorProfile = {
   pathRoots: string[];
   maxParamBytes: number;
   maxParamKeys: number;
+};
+
+type RuntimeFeedbackProfile = {
+  violations: number;
+  sensitiveAccess: number;
+  unexpectedExec: number;
+  networkEgress: number;
+  lastReason: string;
+  lastAt: string;
 };
 
 type ActionAssessment = {
@@ -171,6 +181,7 @@ export function createPolicyState(): PolicyState {
     exposures: [],
     apiCallCounts: new Map(),
     behaviorProfiles: new Map(),
+    runtimeProfiles: new Map(),
     trustLabels: [],
     aggregateRisk: createRiskVector(),
     taintedSources: [],
@@ -310,6 +321,9 @@ export function decideAction(
     const behaviorFindings = behaviorAnomalyFindingsFor(action, state, config);
     findings.push(...behaviorFindings);
 
+    const runtimeFeedbackFindings = runtimeFeedbackFindingsFor(action, state, config);
+    findings.push(...runtimeFeedbackFindings);
+
     const trustFindings = trustFindingsFor(action, state);
     findings.push(...trustFindings);
   }
@@ -376,6 +390,32 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
   if (decision.decision === "allow") updateBehaviorProfile(state, decision.action);
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, decision.risk_vector);
   mergeFindingTrust(state, decision.findings);
+}
+
+export function updateAfterRuntimeFindings(state: PolicyState, toolName: string, findings: DetectionFinding[]): void {
+  const runtimeFindings = findings.filter(isRuntimeAuditFinding);
+  if (!runtimeFindings.length) return;
+  const tool = normalizeToolName(toolName);
+  const existing = state.runtimeProfiles.get(tool) || {
+    violations: 0,
+    sensitiveAccess: 0,
+    unexpectedExec: 0,
+    networkEgress: 0,
+    lastReason: "",
+    lastAt: "",
+  };
+  existing.violations += runtimeFindings.length;
+  existing.sensitiveAccess += runtimeFindings.filter((finding) => /sensitive file access|sensitive path/i.test(finding.reason)).length;
+  existing.unexpectedExec += runtimeFindings.filter((finding) => /unexpected process execution|execve|process execution/i.test(finding.reason)).length;
+  existing.networkEgress += runtimeFindings.filter((finding) => /unexpected network egress|unexpected socket connection|connect|outbound socket/i.test(finding.reason)).length;
+  existing.lastReason = runtimeFindings.map((finding) => finding.reason).join("; ").slice(0, 300);
+  existing.lastAt = new Date().toISOString();
+  state.runtimeProfiles.set(tool, existing);
+  if (state.runtimeProfiles.size > 24) {
+    const first = state.runtimeProfiles.keys().next().value;
+    if (first) state.runtimeProfiles.delete(first);
+  }
+  state.contaminated = true;
 }
 
 export function labelToolResult(toolCallId: string, result: unknown, state: PolicyState, config: PluginConfig, toolName = ""): Label {
@@ -461,6 +501,15 @@ export function policyTrustSnapshot(state: PolicyState): Record<string, unknown>
     aggregate_risk: state.aggregateRisk,
     tainted_sources: state.taintedSources.slice(-12),
     taint_flows: state.taintFlows.slice(-12),
+    runtime_feedback: [...state.runtimeProfiles.entries()].slice(-8).map(([tool, profile]) => ({
+      tool,
+      violations: profile.violations,
+      sensitive_access: profile.sensitiveAccess,
+      unexpected_exec: profile.unexpectedExec,
+      network_egress: profile.networkEgress,
+      last_reason: profile.lastReason,
+      last_at: profile.lastAt,
+    })),
     lowest_trust: lowest
       ? {
         source: lowest.source,
@@ -762,6 +811,33 @@ function behaviorAnomalyFindingsFor(action: AgentSentryAction, state: PolicyStat
     }));
   }
   return findings;
+}
+
+function runtimeFeedbackFindingsFor(action: AgentSentryAction, state: PolicyState, config: PluginConfig): DetectionFinding[] {
+  const profile = state.runtimeProfiles.get(action.tool);
+  if (!profile || profile.violations <= 0) return [];
+  const assessment = assessAction(action, config);
+  const sensitiveFollowUp = assessment.highRisk || isTrustSensitiveSink(action, assessment);
+  const score = sensitiveFollowUp ? Math.min(65, 35 + profile.violations * 8) : Math.min(35, 18 + profile.violations * 4);
+  const verdict: DetectionFinding["verdict"] = "require_approval";
+  return [finding("Evidence Feedback", "learned", verdict, "runtime feedback downgraded this tool after eBPF observed policy-relevant behavior", score, {
+    tool: action.tool,
+    prior_runtime_violations: profile.violations,
+    sensitive_access: profile.sensitiveAccess,
+    unexpected_exec: profile.unexpectedExec,
+    network_egress: profile.networkEgress,
+    last_reason: profile.lastReason,
+    last_at: profile.lastAt,
+    current_action_class: assessment.class,
+    current_action_high_risk: assessment.highRisk,
+  })];
+}
+
+function isRuntimeAuditFinding(finding: DetectionFinding): boolean {
+  const evidence = finding.evidence || {};
+  const runtimeAudit = evidence.runtime_audit as Record<string, unknown> | undefined;
+  return finding.layer === "Tool Boundary"
+    && (runtimeAudit?.source === "ebpf" || /eBPF observed|runtime audit/i.test(finding.reason));
 }
 
 function trustFindingsFor(action: AgentSentryAction, state: PolicyState): DetectionFinding[] {

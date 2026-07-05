@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#06131d"/><stop offset="0.52" stop-color="#092231"/><stop offset="1" stop-color="#0d1a2b"/>
+      </linearGradient>
+      <radialGradient id="halo" cx="50%" cy="45%" r="62%">
+        <stop offset="0" stop-color="#1dd9ff" stop-opacity="0.24"/><stop offset="1" stop-color="#1dd9ff" stop-opacity="0"/>
+      </radialGradient>
+      <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+        <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.34"/>
+      </filter>
+      <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+        <path d="M2,2 L10,6 L2,10 Z" fill="#46d9ff"/>
+      </marker>
+      <marker id="arrowRed" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+        <path d="M2,2 L10,6 L2,10 Z" fill="#ff6074"/>
+      </marker>
+      <style>
+        text { font-family: "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; letter-spacing: 0; }
+        .mono { font-family: "Noto Sans Mono CJK SC", "Noto Sans Mono", monospace; }
+      </style>
+    </defs>
+    <rect width="1920" height="1080" fill="url(#bg)"/>
+    <rect width="1920" height="1080" fill="url(#halo)"/>
+    <g opacity="0.10">
+      <line x1="80" y1="0" x2="80" y2="1080" stroke="#8ee8ff"/><line x1="160" y1="0" x2="160" y2="1080" stroke="#8ee8ff"/><line x1="240" y1="0" x2="240" y2="1080" stroke="#8ee8ff"/><line x1="320" y1="0" x2="320" y2="1080" stroke="#8ee8ff"/><line x1="400" y1="0" x2="400" y2="1080" stroke="#8ee8ff"/><line x1="480" y1="0" x2="480" y2="1080" stroke="#8ee8ff"/><line x1="560" y1="0" x2="560" y2="1080" stroke="#8ee8ff"/><line x1="640" y1="0" x2="640" y2="1080" stroke="#8ee8ff"/><line x1="720" y1="0" x2="720" y2="1080" stroke="#8ee8ff"/><line x1="800" y1="0" x2="800" y2="1080" stroke="#8ee8ff"/><line x1="880" y1="0" x2="880" y2="1080" stroke="#8ee8ff"/><line x1="960" y1="0" x2="960" y2="1080" stroke="#8ee8ff"/><line x1="1040" y1="0" x2="1040" y2="1080" stroke="#8ee8ff"/><line x1="1120" y1="0" x2="1120" y2="1080" stroke="#8ee8ff"/><line x1="1200" y1="0" x2="1200" y2="1080" stroke="#8ee8ff"/><line x1="1280" y1="0" x2="1280" y2="1080" stroke="#8ee8ff"/><line x1="1360" y1="0" x2="1360" y2="1080" stroke="#8ee8ff"/><line x1="1440" y1="0" x2="1440" y2="1080" stroke="#8ee8ff"/><line x1="1520" y1="0" x2="1520" y2="1080" stroke="#8ee8ff"/><line x1="1600" y1="0" x2="1600" y2="1080" stroke="#8ee8ff"/><line x1="1680" y1="0" x2="1680" y2="1080" stroke="#8ee8ff"/><line x1="1760" y1="0" x2="1760" y2="1080" stroke="#8ee8ff"/><line x1="1840" y1="0" x2="1840" y2="1080" stroke="#8ee8ff"/>
+      <line x1="0" y1="80" x2="1920" y2="80" stroke="#8ee8ff"/><line x1="0" y1="160" x2="1920" y2="160" stroke="#8ee8ff"/><line x1="0" y1="240" x2="1920" y2="240" stroke="#8ee8ff"/><line x1="0" y1="320" x2="1920" y2="320" stroke="#8ee8ff"/><line x1="0" y1="400" x2="1920" y2="400" stroke="#8ee8ff"/><line x1="0" y1="480" x2="1920" y2="480" stroke="#8ee8ff"/><line x1="0" y1="560" x2="1920" y2="560" stroke="#8ee8ff"/><line x1="0" y1="640" x2="1920" y2="640" stroke="#8ee8ff"/><line x1="0" y1="720" x2="1920" y2="720" stroke="#8ee8ff"/><line x1="0" y1="800" x2="1920" y2="800" stroke="#8ee8ff"/><line x1="0" y1="880" x2="1920" y2="880" stroke="#8ee8ff"/><line x1="0" y1="960" x2="1920" y2="960" stroke="#8ee8ff"/><line x1="0" y1="1040" x2="1920" y2="1040" stroke="#8ee8ff"/>
+    </g>
+    <text x="92" y="86" fill="#ffffff" font-size="48" font-weight="950" text-anchor="start" class="">
+<tspan x="92" dy="0">上下文增强 LLM-Judge 与 eBPF 运行时联动</tspan>
+</text>
+    <text x="94" y="132" fill="#9bcfe4" font-size="25" font-weight="550" text-anchor="start" class="">
+<tspan x="94" dy="0">Judge 负责复杂语义判断，eBPF 负责执行后的系统行为观测；两者都不替代硬策略边界</tspan>
+</text>
+    
+    <g>
+      <rect x="90" y="240" width="470" height="510" rx="22" fill="#0b2230" stroke="#a77cff" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="90" y="240" width="8" height="510" rx="4" fill="#a77cff" opacity="0.95"/>
+      <text x="118" y="288" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="118" dy="0">LLM-Judge 上下文包</tspan>
+</text>
+      <text x="118" y="336" fill="#b9d6e6" font-size="28" font-weight="500" text-anchor="start" class="">
+<tspan x="118" dy="0">用户授权任务</tspan>
+<tspan x="118" dy="40">TaskSpec 工具与目标边界</tspan>
+<tspan x="118" dy="40">最近工具轨迹</tspan>
+<tspan x="118" dy="40">污点来源与 Trust Label</tspan>
+<tspan x="118" dy="40">ABAC/规则命中</tspan>
+<tspan x="118" dy="40">候选工具参数</tspan>
+<tspan x="118" dy="40">可能后果</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="725" y="260" width="470" height="250" rx="22" fill="#0b2230" stroke="#46d9ff" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="725" y="260" width="8" height="250" rx="4" fill="#46d9ff" opacity="0.95"/>
+      <text x="753" y="308" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="753" dy="0">DeepSeek 语义裁决</tspan>
+</text>
+      <text x="753" y="356" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="753" dy="0">输出风险等级、置信度、建议动</tspan>
+<tspan x="753" dy="34">作、证据和风险分类。重点判断</tspan>
+<tspan x="753" dy="34">隐蔽外发、持久化污染、目标漂</tspan>
+<tspan x="753" dy="34">移、工具劫持。</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="725" y="590" width="470" height="210" rx="22" fill="#0b2230" stroke="#f8b84e" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="725" y="590" width="8" height="210" rx="4" fill="#f8b84e" opacity="0.95"/>
+      <text x="753" y="638" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="753" dy="0">策略融合</tspan>
+</text>
+      <text x="753" y="686" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="753" dy="0">确定性规则 + 污点/ABAC + </tspan>
+<tspan x="753" dy="34">LLM 语义证据，共同形成放行</tspan>
+<tspan x="753" dy="34">、审批或阻断。</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="1360" y="240" width="470" height="250" rx="22" fill="#0b2230" stroke="#35f29b" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="1360" y="240" width="8" height="250" rx="4" fill="#35f29b" opacity="0.95"/>
+      <text x="1388" y="288" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="1388" dy="0">eBPF 观测器</tspan>
+</text>
+      <text x="1388" y="336" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="1388" dy="0">内核层记录进程执行、文件打开</tspan>
+<tspan x="1388" dy="34">、网络连接等事件，验证工具是</tspan>
+<tspan x="1388" dy="34">否触碰敏感路径、外联或执行命</tspan>
+<tspan x="1388" dy="34">令。</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="1360" y="590" width="470" height="210" rx="22" fill="#0b2230" stroke="#35f29b" stroke-width="2.4" filter="url(#softShadow)"/>
+      <rect x="1360" y="590" width="8" height="210" rx="4" fill="#35f29b" opacity="0.95"/>
+      <text x="1388" y="638" fill="#ffffff" font-size="34" font-weight="900" text-anchor="start" class="">
+<tspan x="1388" dy="0">证据回流</tspan>
+</text>
+      <text x="1388" y="686" fill="#b9d6e6" font-size="24" font-weight="500" text-anchor="start" class="">
+<tspan x="1388" dy="0">执行结果、系统事件、污染流和</tspan>
+<tspan x="1388" dy="34">审批记录写入 records，进入</tspan>
+<tspan x="1388" dy="34">下一轮策略状态。</tspan>
+</text>
+    </g>
+    
+    <g>
+      <line x1="560" y1="470" x2="725" y2="385" stroke="#46d9ff" stroke-width="4" stroke-linecap="round"  marker-end="url(#arrow)"/>
+      
+    </g>
+    
+    <g>
+      <line x1="960" y1="510" x2="960" y2="590" stroke="#f8b84e" stroke-width="4" stroke-linecap="round"  marker-end="url(#arrow)"/>
+      
+    </g>
+    
+    <g>
+      <line x1="1195" y1="695" x2="1360" y2="695" stroke="#35f29b" stroke-width="4" stroke-linecap="round"  marker-end="url(#arrow)"/>
+      
+    </g>
+    
+    <g>
+      <line x1="1595" y1="490" x2="1595" y2="590" stroke="#35f29b" stroke-width="4" stroke-linecap="round"  marker-end="url(#arrow)"/>
+      
+    </g>
+    
+    <g>
+      <line x1="1360" y1="365" x2="1195" y2="365" stroke="#35f29b" stroke-width="4" stroke-linecap="round" stroke-dasharray="12 10" marker-end="url(#arrow)"/>
+      <text x="1277" y="353" fill="#35f29b" font-size="20" font-weight="800" text-anchor="middle" class="">
+<tspan x="1277" dy="0">运行时证据</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="628" y="860" width="320" height="46" rx="23" fill="#a77cff" opacity="0.18" stroke="#a77cff" stroke-width="1.6"/>
+      <text x="788" y="891" fill="#eaf7ff" font-size="21" font-weight="800" text-anchor="middle" class="">
+<tspan x="788" dy="0">非全量：risk-tiered </tspan>
+<tspan x="788" dy="28">调度</tspan>
+</text>
+    </g>
+    
+    <g>
+      <rect x="988" y="860" width="320" height="46" rx="23" fill="#ff6074" opacity="0.18" stroke="#ff6074" stroke-width="1.6"/>
+      <text x="1148" y="891" fill="#eaf7ff" font-size="21" font-weight="800" text-anchor="middle" class="">
+<tspan x="1148" dy="0">高危面：内联阻断优先</tspan>
+</text>
+    </g>
+    <text x="92" y="1018" fill="#9bcfe4" font-size="23" font-weight="600" text-anchor="start" class="">
+<tspan x="92" dy="0">图 4  LLM-Judge 处理复杂语义和上下文关系；eBPF 提供系统层证据。最终执行权仍由玄鉴策略内核掌握。</tspan>
+</text></svg>

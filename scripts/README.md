@@ -4,6 +4,7 @@
 
 | 脚本 | 用途 |
 |---|---|
+| `run_ebpf_runtime_ablation.mjs` | eBPF 运行时消融验证：无观察器、仅观察、观察并反哺、正常行为负样本。 |
 | `run_benchmark_eval.py` | 综合攻击回归 benchmark 评测。 |
 | `run_tool_attack_benchmark_eval.py` | 非提示注入工具攻击专项评测。 |
 | `run_full_acceptance_tests.py` | 8765 插件完整功能验收。 |
