@@ -6,6 +6,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "profile": {
+        "type": "string",
+        "enum": ["observe", "balanced", "competition", "high-security"],
+        "description": "Named security posture. Explicit nested settings may refine the selected profile."
+      },
       "dashboard": {
         "type": "object",
         "additionalProperties": false,
@@ -216,6 +221,25 @@
           }
         }
       },
+      "runtimeIsolation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requireKernelObserverForHighRisk": {
+            "type": "boolean",
+            "description": "Require the kernel observer before high-risk execution is released."
+          },
+          "unavailableAction": {
+            "type": "string",
+            "enum": ["require_approval", "block"],
+            "description": "Action used when required runtime isolation is unavailable."
+          },
+          "auditAfterExecution": {
+            "type": "boolean",
+            "description": "Audit runtime observer events after an allowed tool call."
+          }
+        }
+      },
       "notifications": {
         "type": "object",
         "additionalProperties": false,
@@ -256,6 +280,10 @@
     }
   },
   "uiHints": {
+    "profile": {
+      "label": "Security Profile",
+      "help": "Use competition for the judged demo and observe for telemetry-only deployments."
+    },
     "dashboard.enabled": {
       "label": "Enable Dashboard",
       "help": "Starts the local AgentSentry records dashboard."

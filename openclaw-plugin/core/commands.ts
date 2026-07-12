@@ -1,4 +1,4 @@
-import type { PluginConfig } from "../config.ts";
+import { applySecurityProfile, isSecurityProfileName, type PluginConfig } from "../config.ts";
 
 type CommandContext = {
   args?: string;
@@ -25,10 +25,18 @@ const WRITABLE_PREFIXES = [
   "semantic.",
   "provenanceScan.",
   "policy.",
+  "runtimeIsolation.",
   "enforcement.",
   "notifications.",
   "responseCover.",
 ];
+
+const WRITABLE_ENUM_VALUES: Readonly<Record<string, readonly string[]>> = {
+  "semantic.mode": ["off", "risk-tiered", "full"],
+  "runtimeIsolation.unavailableAction": ["require_approval", "block"],
+  "enforcement.mode": ["observe", "approval", "block"],
+  "notifications.minSeverity": ["warning", "danger"],
+};
 
 export function handleAgentSentryCommand(
   ctx: CommandContext,
@@ -58,6 +66,18 @@ export function handleAgentSentryCommand(
     return { text: "Usage: /agentsentry approvals [status|reset]" };
   }
 
+  if (tokens[0] === "profile") {
+    const profile = tokens[1] || "";
+    if (!isSecurityProfileName(profile)) {
+      return { text: "Usage: /agentsentry profile <observe|balanced|competition|high-security>" };
+    }
+    applySecurityProfile(config, profile);
+    runtime.setConfig(config);
+    runtime.persistConfig(config);
+    runtime.clearProvenanceCache();
+    return { text: `AgentSentry profile set to ${profile.toUpperCase()} / ${config.enforcement.mode.toUpperCase()}.\nPersisted: ${runtime.runtimeConfigPath}` };
+  }
+
   if (tokens[0] !== "config") {
     return { text: usage() };
   }
@@ -81,6 +101,10 @@ export function handleAgentSentryCommand(
     if (!isTypeCompatible(existing, parsed)) {
       return { text: `Type mismatch for ${key}: expected ${typeName(existing)}, got ${typeName(parsed)}.` };
     }
+    const allowedValues = WRITABLE_ENUM_VALUES[key];
+    if (allowedValues && (typeof parsed !== "string" || !allowedValues.includes(parsed))) {
+      return { text: `Invalid value for ${key}: expected one of ${allowedValues.join(", ")}.` };
+    }
     if (!setAtPath(config, key, parsed)) return { text: `Failed to set config path: ${key}` };
     runtime.setConfig(config);
     runtime.persistConfig(config);
@@ -101,7 +125,7 @@ export function handleAgentSentryCommand(
 
 export function formatStatus(config: PluginConfig, runtime: CommandRuntime): string {
   return [
-    "AgentSentry is active.",
+    `AgentSentry is active: ${config.profile.toUpperCase()} / ${config.enforcement.mode.toUpperCase()}.`,
     `Dashboard: ${runtime.dashboardUrl}`,
     `Records: ${runtime.recordsPath}`,
     `Runtime config: ${runtime.runtimeConfigPath}`,
@@ -109,6 +133,9 @@ export function formatStatus(config: PluginConfig, runtime: CommandRuntime): str
     `Sessions: ${runtime.sessionCount}`,
     `Approval cache: ${runtime.approvalCacheCount} exact operation(s)`,
     `Enforcement: ${config.enforcement.mode}`,
+    `Profile: ${config.profile}`,
+    `Deterministic policy: ${config.policy.deterministic ? "enabled" : "disabled"}`,
+    `Taint feedback: ${config.policy.taintFeedback ? "enabled" : "disabled"}`,
     `Workspace provenance scan: ${config.provenanceScan.enabled ? "enabled" : "disabled"}`,
     `Detection: ${config.detection.enabled ? "enabled" : "disabled"}`,
     `Semantic judge: ${config.semantic.enabled ? `${config.semantic.model} (${config.semantic.apiKeyEnv}, ${config.semantic.mode})` : "disabled"}`,
@@ -116,6 +143,7 @@ export function formatStatus(config: PluginConfig, runtime: CommandRuntime): str
     `Response cover: ${config.responseCover.enabled ? "enabled" : "disabled"}`,
     "Commands:",
     "  /agentsentry status",
+    "  /agentsentry profile <observe|balanced|competition|high-security>",
     "  /agentsentry config get [key]",
     "  /agentsentry config set <key> <value>",
     "  /agentsentry config reset",
@@ -128,6 +156,7 @@ function usage(): string {
   return [
     "Usage:",
     "  /agentsentry status",
+    "  /agentsentry profile <observe|balanced|competition|high-security>",
     "  /agentsentry config get [key]",
     "  /agentsentry config set <key> <value>",
     "  /agentsentry config reset",
@@ -220,6 +249,7 @@ function typeName(value: unknown): string {
 }
 
 function copyWritableConfig(from: PluginConfig, to: PluginConfig): void {
+  to.profile = from.profile;
   for (const path of listLeafPaths(to).filter((item) => isWritablePath(to, item))) {
     const value = getAtPath(from, path);
     setAtPath(to, path, Array.isArray(value) ? [...value] : value);

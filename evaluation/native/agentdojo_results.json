@@ -1,0 +1,54 @@
+{
+  "$schema": "https://agentsentry.dev/schemas/agentdojo-native-result-v1.json",
+  "protocol": {
+    "name": "agentsentry.agentdojo.native-result",
+    "version": "1.0.0"
+  },
+  "visibility": "public_aggregate",
+  "status": "not_run",
+  "run": {
+    "run_id": "agentdojo-native-not-run",
+    "release_commit": null,
+    "working_tree_dirty": false,
+    "started_at": null,
+    "finished_at": null
+  },
+  "benchmark": {
+    "name": "AgentDojo",
+    "version": "v1.2.2",
+    "commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60",
+    "suite": "workspace",
+    "adapter_version": "1.0.0",
+    "selection_sha256": "476178ca36f7c46579bbe5c69ef2a325f2750bfd311aa825e61197ce0708e16e",
+    "seeds": [7, 17, 29]
+  },
+  "system_under_test": {
+    "plugin_version": "0.2.0",
+    "profile": "competition",
+    "model": "not_selected",
+    "config_sha256": "be5b34cd97c1036fd93448f5bcd6355e2471bad27b32cab96cf141eb4ee04d10"
+  },
+  "label_isolation": {
+    "architecture": "separate_evaluator_and_detector_processes",
+    "label_store_mounted_in_detector": false,
+    "opaque_trial_ids": true,
+    "detector_event_schema_sha256": "3fe94bfa6e0b7b360d825573fea1214ab2c87881f888bf6dc893e848d4bb4106",
+    "detector_transcript_sha256": null,
+    "detector_event_count": 0,
+    "private_labels_sha256": null,
+    "post_join_sha256": null,
+    "violations": []
+  },
+  "coverage": {
+    "expected_trials": 120,
+    "observed_trials": 0,
+    "completed_trials": 0,
+    "error_trials": 0,
+    "reportable": false
+  },
+  "metrics": null,
+  "artifacts": {
+    "private_trials_sha256": null,
+    "detector_transcript_sha256": null
+  }
+}

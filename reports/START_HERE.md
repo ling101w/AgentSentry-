@@ -8,6 +8,8 @@
 
 当前仓库和插件内部仍使用 `AgentSentry` 作为工程代码名，这是历史命名；展示、报告和答辩统一使用“玄鉴”。
 
+评测证据先读 `reports/EVALUATION_METHODOLOGY.md`：历史 520 + 320 条结果均为公开样例映射到 `/command-lab` 的开发回归，不是独立盲测，也不是 AgentDojo/InjecAgent 原生运行。
+
 ## 先看哪几份
 
 如果只想快速理解项目，按这个顺序看：

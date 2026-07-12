@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+*.egg-info/
 *.pyc
 *.pyo
 
@@ -41,7 +42,15 @@ id_ed25519*
 *.local.json
 runtime/*
 !runtime/README.md
+runtime/agentdojo/
 .openclaw/
+
+# Evaluation fixtures are versioned; the real independent holdout stays sealed.
+!evaluation/**/*.jsonl
+evaluation/blind/blind_holdout*.jsonl
+!evaluation/blind/blind_holdout.example.jsonl
+evaluation/native/*.private.jsonl
+evaluation/native/*.private.json
 
 # OpenClaw local workspace may contain credentials and machine-local state.
 openclaw-workspace/
@@ -68,6 +77,9 @@ reports/supervision_ablation/*-outbox.jsonl
 reports/supervision_ablation/*-shell-exec.jsonl
 reports/supervision_ablation/*-memory.json
 reports/supervision_ablation/*-sensitive-read.jsonl
+reports/blind_evaluation/*.private.json
+reports/native_agentdojo/*.private.*
+openclaw-plugin/sbom.cdx.json
 
 # Output keeps the README and compressed deliverables, not expanded build trees.
 output/*

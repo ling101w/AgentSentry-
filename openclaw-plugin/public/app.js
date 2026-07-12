@@ -102,7 +102,9 @@ const toolNames = {
 const findingTypeNames = {
   deterministic: "确定性规则",
   heuristic: "启发式规则",
-  learned: "语义/哨兵判断",
+  learned: "旧版哨兵判断",
+  behavioral: "统计行为基线",
+  semantic: "语义复核",
   unknown: "未知类型",
 };
 
@@ -122,7 +124,20 @@ const textTranslations = [
   [/tool result returned/gi, "工具已返回结果"],
   [/High-risk tool call: ([\w.-]+)/gi, (_, tool) => `高风险工具调用：${displayTool(tool)}`],
   [/Tool call: ([\w.-]+)/gi, (_, tool) => `工具调用：${displayTool(tool)}`],
+  [/Business tool blocked: ([\w.-]+)/gi, (_, tool) => `业务工具已阻断：${displayTool(tool)}`],
+  [/Business tool decision: ([\w.-]+)/gi, (_, tool) => `业务工具裁决：${displayTool(tool)}`],
+  [/Business tool skipped: ([\w.-]+)/gi, (_, tool) => `业务工具未执行：${displayTool(tool)}`],
+  [/Lab policy deny: ([\w.-]+)/gi, (_, tool) => `实验策略拒绝：${displayTool(tool)}`],
+  [/Lab policy ask: ([\w.-]+)/gi, (_, tool) => `实验策略需确认：${displayTool(tool)}`],
   [/tool ([\w.-]+) is outside TaskSpec/gi, (_, tool) => `工具 ${displayTool(tool)} 超出当前任务规范`],
+  [/tool ([\w.-]+) lacks explicit capability authorization/gi, (_, tool) => `工具 ${displayTool(tool)} 缺少显式能力授权`],
+  [/dynamic intent tracking detected drift from read-only task to high-risk action/gi, "动态意图追踪发现只读任务漂移到高风险动作"],
+  [/task intent does not allow email/gi, "当前任务未授权邮件外发"],
+  [/tool arguments match deterministic trust-risk policy/gi, "工具参数命中确定性信任风险策略"],
+  [/content contains prompt-injection or exfiltration indicators/gi, "内容包含提示注入或数据外传信号"],
+  [/content attempts to persist privileged instructions into memory or startup flow/gi, "内容试图把特权指令持久化到记忆或启动流程"],
+  [/high-risk action deviates from task intent/gi, "高风险动作偏离当前任务意图"],
+  [/read path references sensitive asset/gi, "读取路径指向敏感资产"],
   [/TaskSpec/gi, "任务规范"],
   [/Workspace provenance scan completed/gi, "工作区溯源扫描完成"],
   [/Workspace provenance scan blocked workspace/gi, "工作区溯源扫描阻断"],
@@ -209,6 +224,39 @@ function renderEnforcementMode() {
   if (title) title.textContent = meta.title;
   const help = $("modeHelpText");
   if (help) help.textContent = meta.text;
+  renderSecurityStack();
+}
+
+function renderSecurityStack() {
+  const items = Array.isArray(state.enforcement?.securityStack) ? state.enforcement.securityStack : [];
+  const target = $("securityStack");
+  const readiness = $("stackReadiness");
+  const mode = $("stackMode");
+  if (!target || !readiness || !mode) return;
+
+  if (!items.length) {
+    target.innerHTML = '<span class="stack-empty">防护栈状态暂不可用</span>';
+    readiness.textContent = "等待运行配置";
+    mode.textContent = "--";
+    return;
+  }
+
+  const enabled = items.filter((item) => item.enabled).length;
+  const enforcementMode = state.enforcement?.mode || "observe";
+  const modeMeta = enforcementModeText[enforcementMode] || enforcementModeText.observe;
+  readiness.textContent = state.enforcement?.competitionReady
+    ? `比赛防护链已就绪 · ${enabled}/${items.length}`
+    : `已启用 ${enabled}/${items.length} 层 · 尚未满足比赛档完整条件`;
+  const profile = String(state.enforcement?.profile || "custom").toUpperCase();
+  mode.textContent = `${profile} / ${modeMeta.label}`;
+  mode.className = `stack-mode ${state.enforcement?.competitionReady ? "ready" : "partial"}`;
+  target.innerHTML = items.map((item, index) => `
+    <div class="stack-item ${item.enabled ? "enabled" : "disabled"}">
+      <span class="stack-index">${index + 1}</span>
+      <strong>${escapeHtml(item.label || item.key)}</strong>
+      <span class="stack-state">${item.enabled ? "开启" : "关闭"}</span>
+    </div>
+  `).join("");
 }
 
 function normalizeSelection(keepSelection) {
@@ -367,6 +415,7 @@ function renderSessionSummary() {
       <strong>${escapeHtml(insight.title)}</strong>
       <span>${escapeHtml(insight.body)}</span>
     </div>
+    ${decisionStory(records)}
     ${stageRail(records)}
     ${issueDigest(records)}
   `;
@@ -404,6 +453,59 @@ function sessionInsight(records) {
     return { tone: "success", title: "会话已完成回复", body: "本次会话产生了助手回复，未发现高风险工具阻断。" };
   }
   return { tone: "", title: "会话正在形成", body: "已捕获工作区溯源和消息输入，等待后续工具调用或回复记录。" };
+}
+
+function decisionStory(records) {
+  const decisionRecord = records.find((record) => record.type === "tool_decision" && isBlocked(record))
+    || records.find((record) => record.type === "tool_decision")
+    || records.find((record) => record.type === "alert");
+  if (!decisionRecord) return "";
+
+  const related = decisionRecord.run_id
+    ? records.filter((record) => record.run_id === decisionRecord.run_id)
+    : records;
+  const payload = decisionRecord.payload || {};
+  const sourceRecord = related.find((record) => record.type === "lab_command")
+    || related.find((record) => record.type === "message_write" && record.payload?.role === "user")
+    || related.find((record) => record.type === "llm_input")
+    || related.find((record) => record.type === "tool_result" && /webpage|email|pdf|image|external/i.test(searchableText(record)));
+  const authorizationRecord = related.find((record) => record.type === "guard_finding" && /taskspec|explicit capability|intent|authorization|outside task|drift/i.test(searchableText(record)))
+    || related.find((record) => record.type === "alert" && /taskspec|explicit capability|intent|authorization|outside task|drift/i.test(searchableText(record)));
+  const dataRecord = related.find((record) => record.type === "guard_finding" && /sensitive|secret|credential|\.env|taint|pollution|exfiltrat/i.test(searchableText(record)))
+    || related.find((record) => /sensitive|secret|credential|\.env|taint|pollution|exfiltrat/i.test(searchableText(record)));
+  const tool = displayTool(payload.normalized_tool || payload.toolName || payload.tool || decisionRecord.tool || "工具调用");
+  const rawDecision = payload.decision || payload.verdict || payload.original_decision || (isBlocked(decisionRecord) ? "deny" : "allow");
+  const decision = decisionNames[rawDecision] || rawDecision;
+  const tone = isBlocked(decisionRecord) ? "danger" : rawDecision === "ask" ? "warning" : "success";
+  const steps = [
+    ["来源", sourceRecord ? conciseEvidence(summaryText(sourceRecord), 34) : "当前会话输入"],
+    ["授权", authorizationRecord ? conciseEvidence(titleText(authorizationRecord), 34) : "TaskSpec 已校验"],
+    ["数据", dataRecord ? conciseEvidence(titleText(dataRecord), 34) : "未发现敏感流"],
+    ["Sink", tool],
+    ["裁决", decision],
+  ];
+
+  return `
+    <section class="decision-story ${tone}" aria-label="最近裁决证据链">
+      <div class="decision-story-head">
+        <span>最近裁决证据链</span>
+        <strong>${escapeHtml(conciseEvidence(titleText(decisionRecord), 52))}</strong>
+      </div>
+      <div class="decision-story-steps">
+        ${steps.map(([label, value], index) => `
+          <div class="decision-step ${index === steps.length - 1 ? "verdict" : ""}">
+            <span>${escapeHtml(label)}</span>
+            <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function conciseEvidence(value, maxLength = 48) {
+  const text = translateText(String(value || "-")).replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
 function stageRail(records) {
@@ -703,7 +805,10 @@ function renderDetail(record) {
     ${decisionSummary(fullRecord)}
     ${groupSummary(fullRecord)}
     ${record.payload?.__compact && !state.detailCache.has(record.id) ? '<div class="empty detail-loading">正在读取完整 payload...</div>' : ""}
-    <pre>${escapeHtml(JSON.stringify(fullRecord, null, 2))}</pre>
+    <details class="raw-evidence">
+      <summary><span>原始 JSON 证据</span><small>按需展开</small></summary>
+      <pre>${escapeHtml(JSON.stringify(fullRecord, null, 2))}</pre>
+    </details>
   `;
   if (record.payload?.__compact && !state.detailCache.has(record.id)) {
     void loadRecordDetail(record.id);

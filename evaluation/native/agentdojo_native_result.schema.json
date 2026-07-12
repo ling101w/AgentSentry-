@@ -1,0 +1,810 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentsentry.dev/schemas/agentdojo-native-result-v1.json",
+  "title": "AgentSentry AgentDojo native public result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "protocol",
+    "visibility",
+    "status",
+    "run",
+    "benchmark",
+    "system_under_test",
+    "label_isolation",
+    "coverage",
+    "metrics",
+    "artifacts"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "https://agentsentry.dev/schemas/agentdojo-native-result-v1.json"
+    },
+    "protocol": {
+      "const": {
+        "name": "agentsentry.agentdojo.native-result",
+        "version": "1.0.0"
+      }
+    },
+    "visibility": {
+      "const": "public_aggregate"
+    },
+    "status": {
+      "enum": ["complete", "partial", "failed", "not_run"]
+    },
+    "run": {
+      "$ref": "#/$defs/run"
+    },
+    "benchmark": {
+      "$ref": "#/$defs/benchmark"
+    },
+    "system_under_test": {
+      "$ref": "#/$defs/systemUnderTest"
+    },
+    "label_isolation": {
+      "$ref": "#/$defs/labelIsolation"
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "metrics": {
+      "oneOf": [
+        { "$ref": "#/$defs/metrics" },
+        { "type": "null" }
+      ]
+    },
+    "artifacts": {
+      "$ref": "#/$defs/artifacts"
+    }
+  },
+  "allOf": [
+    {
+      "$ref": "#/$defs/labelFreeValue"
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "not_run" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "run": {
+            "properties": {
+              "release_commit": { "type": "null" },
+              "started_at": { "type": "null" },
+              "finished_at": { "type": "null" }
+            }
+          },
+          "label_isolation": {
+            "properties": {
+              "detector_transcript_sha256": { "type": "null" },
+              "detector_event_count": { "const": 0 },
+              "private_labels_sha256": { "type": "null" },
+              "post_join_sha256": { "type": "null" }
+            }
+          },
+          "coverage": {
+            "properties": {
+              "observed_trials": { "const": 0 },
+              "completed_trials": { "const": 0 },
+              "error_trials": { "const": 0 },
+              "reportable": { "const": false }
+            }
+          },
+          "metrics": { "type": "null" },
+          "artifacts": {
+            "properties": {
+              "private_trials_sha256": { "type": "null" },
+              "detector_transcript_sha256": { "type": "null" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["complete", "partial", "failed"] }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "run": {
+            "properties": {
+              "release_commit": { "$ref": "#/$defs/gitCommit" },
+              "started_at": { "$ref": "#/$defs/timestamp" },
+              "finished_at": { "$ref": "#/$defs/timestamp" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["complete", "partial"] }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "label_isolation": {
+            "properties": {
+              "detector_transcript_sha256": { "$ref": "#/$defs/sha256" },
+              "detector_event_count": { "type": "integer", "minimum": 1 },
+              "private_labels_sha256": { "$ref": "#/$defs/sha256" },
+              "post_join_sha256": { "$ref": "#/$defs/sha256" }
+            }
+          },
+          "artifacts": {
+            "properties": {
+              "private_trials_sha256": { "$ref": "#/$defs/sha256" },
+              "detector_transcript_sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "complete" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "run": {
+            "properties": {
+              "working_tree_dirty": { "const": false }
+            }
+          },
+          "coverage": {
+            "properties": {
+              "expected_trials": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["partial", "failed", "not_run"] }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "coverage": {
+            "properties": {
+              "reportable": { "const": false }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "coverage": {
+            "properties": {
+              "reportable": { "const": true }
+            },
+            "required": ["reportable"]
+          }
+        },
+        "required": ["coverage"]
+      },
+      "then": {
+        "properties": {
+          "status": { "const": "complete" },
+          "coverage": {
+            "properties": {
+              "error_trials": { "const": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "coverage": {
+            "properties": {
+              "observed_trials": { "const": 0 }
+            },
+            "required": ["observed_trials"]
+          }
+        },
+        "required": ["coverage"]
+      },
+      "then": {
+        "properties": {
+          "metrics": { "type": "null" }
+        }
+      },
+      "else": {
+        "properties": {
+          "metrics": { "$ref": "#/$defs/metrics" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "nonNegativeNumber": {
+      "type": "number",
+      "minimum": 0
+    },
+    "unitNumber": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nullableSha256": {
+      "oneOf": [
+        { "$ref": "#/$defs/sha256" },
+        { "type": "null" }
+      ]
+    },
+    "gitCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"
+    },
+    "nullableGitCommit": {
+      "oneOf": [
+        { "$ref": "#/$defs/gitCommit" },
+        { "type": "null" }
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "nullableTimestamp": {
+      "oneOf": [
+        { "$ref": "#/$defs/timestamp" },
+        { "type": "null" }
+      ]
+    },
+    "labelFreeValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "not": {
+              "enum": [
+                "trials",
+                "case_results",
+                "case_id",
+                "benchmark_case_id",
+                "is_attack",
+                "attack_type"
+              ]
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/labelFreeValue"
+          }
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/labelFreeValue"
+          }
+        },
+        {
+          "type": ["string", "number", "boolean", "null"]
+        }
+      ]
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "release_commit",
+        "working_tree_dirty",
+        "started_at",
+        "finished_at"
+      ],
+      "properties": {
+        "run_id": { "$ref": "#/$defs/nonEmptyString" },
+        "release_commit": { "$ref": "#/$defs/nullableGitCommit" },
+        "working_tree_dirty": { "type": "boolean" },
+        "started_at": { "$ref": "#/$defs/nullableTimestamp" },
+        "finished_at": { "$ref": "#/$defs/nullableTimestamp" }
+      }
+    },
+    "benchmark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "commit",
+        "suite",
+        "adapter_version",
+        "selection_sha256",
+        "seeds"
+      ],
+      "properties": {
+        "name": { "const": "AgentDojo" },
+        "version": { "$ref": "#/$defs/nonEmptyString" },
+        "commit": { "$ref": "#/$defs/nullableGitCommit" },
+        "suite": { "$ref": "#/$defs/nonEmptyString" },
+        "adapter_version": { "$ref": "#/$defs/nonEmptyString" },
+        "selection_sha256": { "$ref": "#/$defs/sha256" },
+        "seeds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nonNegativeInteger" }
+        }
+      }
+    },
+    "systemUnderTest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plugin_version", "profile", "model", "config_sha256"],
+      "properties": {
+        "plugin_version": { "$ref": "#/$defs/nonEmptyString" },
+        "profile": { "$ref": "#/$defs/nonEmptyString" },
+        "model": { "$ref": "#/$defs/nonEmptyString" },
+        "config_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "labelIsolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "architecture",
+        "label_store_mounted_in_detector",
+        "opaque_trial_ids",
+        "detector_event_schema_sha256",
+        "detector_transcript_sha256",
+        "detector_event_count",
+        "private_labels_sha256",
+        "post_join_sha256",
+        "violations"
+      ],
+      "properties": {
+        "architecture": { "const": "separate_evaluator_and_detector_processes" },
+        "label_store_mounted_in_detector": { "const": false },
+        "opaque_trial_ids": { "const": true },
+        "detector_event_schema_sha256": { "$ref": "#/$defs/sha256" },
+        "detector_transcript_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "detector_event_count": { "$ref": "#/$defs/nonNegativeInteger" },
+        "private_labels_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "post_join_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "violations": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expected_trials",
+        "observed_trials",
+        "completed_trials",
+        "error_trials",
+        "reportable"
+      ],
+      "properties": {
+        "expected_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+        "observed_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+        "completed_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+        "error_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+        "reportable": { "type": "boolean" }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private_trials_sha256", "detector_transcript_sha256"],
+      "properties": {
+        "private_trials_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "detector_transcript_sha256": { "$ref": "#/$defs/nullableSha256" }
+      }
+    },
+    "rateMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "numerator", "denominator"],
+      "properties": {
+        "value": {
+          "oneOf": [
+            { "$ref": "#/$defs/unitNumber" },
+            { "type": "null" }
+          ]
+        },
+        "numerator": { "$ref": "#/$defs/nonNegativeInteger" },
+        "denominator": { "$ref": "#/$defs/nonNegativeInteger" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "denominator": { "const": 0 } },
+            "required": ["denominator"]
+          },
+          "then": {
+            "properties": {
+              "value": { "type": "null" },
+              "numerator": { "const": 0 }
+            }
+          },
+          "else": {
+            "properties": {
+              "value": { "$ref": "#/$defs/unitNumber" }
+            }
+          }
+        }
+      ]
+    },
+    "utilitySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evaluated_trials",
+        "score_sum",
+        "mean_score",
+        "completed_tasks",
+        "task_completion_rate"
+      ],
+      "properties": {
+        "evaluated_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+        "score_sum": { "$ref": "#/$defs/nonNegativeNumber" },
+        "mean_score": {
+          "oneOf": [
+            { "$ref": "#/$defs/unitNumber" },
+            { "type": "null" }
+          ]
+        },
+        "completed_tasks": { "$ref": "#/$defs/nonNegativeInteger" },
+        "task_completion_rate": { "$ref": "#/$defs/rateMetric" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "evaluated_trials": { "const": 0 } },
+            "required": ["evaluated_trials"]
+          },
+          "then": {
+            "properties": {
+              "score_sum": { "const": 0 },
+              "mean_score": { "type": "null" },
+              "completed_tasks": { "const": 0 }
+            }
+          },
+          "else": {
+            "properties": {
+              "mean_score": { "$ref": "#/$defs/unitNumber" }
+            }
+          }
+        }
+      ]
+    },
+    "latencyMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["samples", "mean", "p50", "p95", "p99"],
+      "properties": {
+        "samples": { "$ref": "#/$defs/nonNegativeInteger" },
+        "mean": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonNegativeNumber" },
+            { "type": "null" }
+          ]
+        },
+        "p50": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonNegativeNumber" },
+            { "type": "null" }
+          ]
+        },
+        "p95": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonNegativeNumber" },
+            { "type": "null" }
+          ]
+        },
+        "p99": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonNegativeNumber" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "samples": { "const": 0 } },
+            "required": ["samples"]
+          },
+          "then": {
+            "properties": {
+              "mean": { "type": "null" },
+              "p50": { "type": "null" },
+              "p95": { "type": "null" },
+              "p99": { "type": "null" }
+            }
+          },
+          "else": {
+            "properties": {
+              "mean": { "$ref": "#/$defs/nonNegativeNumber" },
+              "p50": { "$ref": "#/$defs/nonNegativeNumber" },
+              "p95": { "$ref": "#/$defs/nonNegativeNumber" },
+              "p99": { "$ref": "#/$defs/nonNegativeNumber" }
+            }
+          }
+        }
+      ]
+    },
+    "costMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "known_trials",
+        "unknown_trials",
+        "known_total_usd",
+        "complete",
+        "total_usd",
+        "average_usd_per_attempt",
+        "cost_per_1000_attempts_usd"
+      ],
+      "properties": {
+        "known_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+        "unknown_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+        "known_total_usd": { "$ref": "#/$defs/nonNegativeNumber" },
+        "complete": { "type": "boolean" },
+        "total_usd": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonNegativeNumber" },
+            { "type": "null" }
+          ]
+        },
+        "average_usd_per_attempt": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonNegativeNumber" },
+            { "type": "null" }
+          ]
+        },
+        "cost_per_1000_attempts_usd": {
+          "oneOf": [
+            { "$ref": "#/$defs/nonNegativeNumber" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "unknown_trials": { "const": 0 } },
+            "required": ["unknown_trials"]
+          },
+          "then": {
+            "properties": { "complete": { "const": true } }
+          },
+          "else": {
+            "properties": { "complete": { "const": false } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "complete": { "const": false } },
+            "required": ["complete"]
+          },
+          "then": {
+            "properties": {
+              "total_usd": { "type": "null" },
+              "average_usd_per_attempt": { "type": "null" },
+              "cost_per_1000_attempts_usd": { "type": "null" }
+            }
+          },
+          "else": {
+            "properties": {
+              "total_usd": { "$ref": "#/$defs/nonNegativeNumber" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "known_trials": { "const": 0 } },
+            "required": ["known_trials"]
+          },
+          "then": {
+            "properties": {
+              "known_total_usd": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "known_trials": { "const": 0 },
+              "complete": { "const": true }
+            },
+            "required": ["known_trials", "complete"]
+          },
+          "then": {
+            "properties": {
+              "average_usd_per_attempt": { "type": "null" },
+              "cost_per_1000_attempts_usd": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "known_trials": { "type": "integer", "minimum": 1 },
+              "complete": { "const": true }
+            },
+            "required": ["known_trials", "complete"]
+          },
+          "then": {
+            "properties": {
+              "average_usd_per_attempt": { "$ref": "#/$defs/nonNegativeNumber" },
+              "cost_per_1000_attempts_usd": { "$ref": "#/$defs/nonNegativeNumber" }
+            }
+          }
+        }
+      ]
+    },
+    "countMap": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/nonEmptyString" },
+      "additionalProperties": { "$ref": "#/$defs/nonNegativeInteger" }
+    },
+    "errorsByStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "setup": { "$ref": "#/$defs/nonNegativeInteger" },
+        "agent": { "$ref": "#/$defs/nonNegativeInteger" },
+        "detector": { "$ref": "#/$defs/nonNegativeInteger" },
+        "benchmark": { "$ref": "#/$defs/nonNegativeInteger" },
+        "evaluator": { "$ref": "#/$defs/nonNegativeInteger" },
+        "teardown": { "$ref": "#/$defs/nonNegativeInteger" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempted_trials",
+        "successful_trials",
+        "security",
+        "utility",
+        "latency_ms",
+        "cost",
+        "errors",
+        "decision_counts",
+        "decisions",
+        "judge",
+        "stability"
+      ],
+      "properties": {
+        "attempted_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+        "successful_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+        "security": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "attack_trials",
+            "attack_successes",
+            "protected_trials",
+            "asr",
+            "protection_rate"
+          ],
+          "properties": {
+            "attack_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+            "attack_successes": { "$ref": "#/$defs/nonNegativeInteger" },
+            "protected_trials": { "$ref": "#/$defs/nonNegativeInteger" },
+            "asr": { "$ref": "#/$defs/rateMetric" },
+            "protection_rate": { "$ref": "#/$defs/rateMetric" }
+          }
+        },
+        "utility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["all", "benign", "attack"],
+          "properties": {
+            "all": { "$ref": "#/$defs/utilitySummary" },
+            "benign": { "$ref": "#/$defs/utilitySummary" },
+            "attack": { "$ref": "#/$defs/utilitySummary" }
+          }
+        },
+        "latency_ms": { "$ref": "#/$defs/latencyMetrics" },
+        "cost": { "$ref": "#/$defs/costMetrics" },
+        "errors": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["count", "rate", "by_stage", "by_kind"],
+          "properties": {
+            "count": { "$ref": "#/$defs/nonNegativeInteger" },
+            "rate": { "$ref": "#/$defs/rateMetric" },
+            "by_stage": { "$ref": "#/$defs/errorsByStage" },
+            "by_kind": { "$ref": "#/$defs/countMap" }
+          }
+        },
+        "decision_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allow", "ask", "deny"],
+          "properties": {
+            "allow": { "$ref": "#/$defs/nonNegativeInteger" },
+            "ask": { "$ref": "#/$defs/nonNegativeInteger" },
+            "deny": { "$ref": "#/$defs/nonNegativeInteger" }
+          }
+        },
+        "decisions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fpr", "benign_intervention_rate", "ask_rate", "overblocking_rate"],
+          "properties": {
+            "fpr": { "$ref": "#/$defs/rateMetric" },
+            "benign_intervention_rate": { "$ref": "#/$defs/rateMetric" },
+            "ask_rate": { "$ref": "#/$defs/rateMetric" },
+            "overblocking_rate": { "$ref": "#/$defs/rateMetric" }
+          }
+        },
+        "judge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["call_rate"],
+          "properties": {
+            "call_rate": { "$ref": "#/$defs/rateMetric" }
+          }
+        },
+        "stability": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repeated_cases", "decision_stability"],
+          "properties": {
+            "repeated_cases": { "$ref": "#/$defs/nonNegativeInteger" },
+            "decision_stability": {
+              "oneOf": [
+                { "$ref": "#/$defs/unitNumber" },
+                { "type": "null" }
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": { "repeated_cases": { "const": 0 } },
+                "required": ["repeated_cases"]
+              },
+              "then": {
+                "properties": { "decision_stability": { "type": "null" } }
+              },
+              "else": {
+                "properties": { "decision_stability": { "$ref": "#/$defs/unitNumber" } }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

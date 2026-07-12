@@ -13,8 +13,10 @@ export function stableStringify(value: unknown): string {
     .join(",")}}`;
 }
 
-export function computeOperationKey(toolName: string, params: Record<string, unknown>): string {
-  const raw = `${toolName}:${stableStringify(params)}`;
+export const POLICY_CONTRACT_VERSION = "taskspec-v2.1";
+
+export function computeOperationKey(toolName: string, params: Record<string, unknown>, policyContext: unknown = {}): string {
+  const raw = `${POLICY_CONTRACT_VERSION}:${toolName}:${stableStringify(params)}:${stableStringify(policyContext)}`;
   return `sha256:${createHash("sha256").update(raw).digest("hex")}`;
 }
 
@@ -40,7 +42,7 @@ export function formatApprovalDescription(input: {
   const params = typeof input.paramPreview === "string" ? input.paramPreview : safeStringify(input.paramPreview);
   const detail = uniqueStrings(input.violations.length ? input.violations : input.reasons).map(humanizeReason).slice(0, 4);
   const judgeFindings = (input.findings || []).filter((finding) =>
-    finding.finding_type === "learned"
+    finding.finding_type === "semantic"
     && typeof finding.evidence?.semanticRisk === "string"
   );
   const judgeAnalysis = input.includeJudgeAnalysis

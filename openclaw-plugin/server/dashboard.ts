@@ -377,12 +377,25 @@ function compactRecord(record: AgentSentryRecord): AgentSentryRecord {
 }
 
 function enforcementSettings(config: PluginConfig): Record<string, unknown> {
+  const securityStack = [
+    { key: "task_spec", label: "TaskSpec 授权", enabled: true },
+    { key: "deterministic", label: "确定性策略", enabled: config.policy.deterministic },
+    { key: "taint_feedback", label: "污点与证据回流", enabled: config.policy.taintFeedback },
+    { key: "semantic", label: "语义复核", enabled: config.semantic.enabled },
+    { key: "response_cover", label: "污染响应覆盖", enabled: config.responseCover.enabled },
+  ];
   return {
     ok: true,
+    profile: config.profile,
     mode: config.enforcement.mode,
     approvalTimeoutMs: config.enforcement.approvalTimeoutMs,
     runtimeConfigPath: runtimeConfigPath(config),
     modes: ENFORCEMENT_MODES,
+    securityStack,
+    enabledSecurityLayers: securityStack.filter((item) => item.enabled).length,
+    competitionReady: config.enforcement.mode !== "observe"
+      && securityStack.every((item) => item.enabled)
+      && config.policy.restrictWritesToAllowedRoots,
   };
 }
 
@@ -2093,6 +2106,8 @@ async function executeLabActions(input: {
       risk_score: result.risk_score,
       violations: result.policy.violations,
       findings: result.findings.length,
+      finding_types: Array.from(new Set(result.findings.map((finding) => finding.finding_type))),
+      semantic_judge_called: result.findings.some((finding) => finding.finding_type === "semantic"),
       semantic_judge: semanticProfile,
     });
   }

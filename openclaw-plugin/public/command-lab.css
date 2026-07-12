@@ -454,6 +454,67 @@ h2 {
   min-height: 398px;
 }
 
+.demo-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 12px 12px 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--base-900);
+  padding: 4px;
+}
+
+.demo-switch button {
+  min-height: 30px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.demo-switch button.active {
+  border-color: rgba(77, 163, 255, 0.34);
+  background: rgba(77, 163, 255, 0.12);
+  color: var(--strong);
+}
+
+.demo-switch button:last-child.active {
+  border-color: rgba(52, 211, 153, 0.34);
+  background: rgba(52, 211, 153, 0.10);
+  color: var(--safe);
+}
+
+.library-panel {
+  overflow: hidden;
+}
+
+.library-panel > summary {
+  margin: 0;
+  list-style: none;
+  cursor: pointer;
+}
+
+.library-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.library-panel > summary::after {
+  content: "+";
+  flex: none;
+  color: var(--primary);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.library-panel[open] > summary::after {
+  content: "−";
+}
+
+.library-panel > summary .panel-note {
+  margin-left: auto;
+}
+
 .field {
   display: grid;
   gap: 6px;
@@ -719,6 +780,70 @@ textarea:focus {
 
 .flow-card {
   min-height: 520px;
+}
+
+.flow-decision-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--line);
+}
+
+.flow-decision-item {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  min-height: 54px;
+  background: var(--base-900);
+  padding: 7px 9px;
+}
+
+.flow-decision-item span,
+.flow-decision-item strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-decision-item span {
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.flow-decision-item strong {
+  margin-top: 4px;
+  color: var(--strong);
+  font-size: 11px;
+}
+
+.flow-decision-summary.danger .flow-decision-item.verdict {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.flow-decision-summary.danger .flow-decision-item.verdict strong {
+  color: var(--critical);
+}
+
+.flow-decision-summary.warning .flow-decision-item.verdict {
+  background: rgba(251, 191, 36, 0.10);
+}
+
+.flow-decision-summary.warning .flow-decision-item.verdict strong {
+  color: var(--warning);
+}
+
+.flow-decision-summary.success .flow-decision-item.verdict {
+  background: rgba(52, 211, 153, 0.10);
+}
+
+.flow-decision-summary.success .flow-decision-item.verdict strong {
+  color: var(--safe);
 }
 
 .flow-title {
@@ -987,6 +1112,32 @@ pre {
   -ms-overflow-style: none;
 }
 
+.raw-payload {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.raw-payload summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.raw-payload summary small {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.raw-payload pre {
+  margin-top: 8px;
+}
+
 .empty {
   padding: 18px;
   color: var(--faint);
@@ -1076,6 +1227,10 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .flow-decision-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .stage {
     min-height: 220px;
   }
@@ -1092,5 +1247,9 @@ pre {
 
   .status-strip {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .flow-decision-summary {
+    grid-template-columns: 1fr;
   }
 }

@@ -1,7 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { ConfigSchema, PluginConfig } from "./config.ts";
 import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
@@ -9,6 +6,15 @@ import { handleAgentSentryCommand } from "./core/commands.ts";
 import { detectMessageContent, detectToolCall, serializeToolParams } from "./core/detect.ts";
 import { clearProvenanceScanCache, scanProvenance } from "./core/provenance.ts";
 import { computeOperationKey, formatApprovalDescription } from "./core/operation.ts";
+import {
+  notificationRoute,
+  provenanceRootsFor,
+  severityForDecision,
+  severityForVerdict,
+  shouldCoverAssistantResponse,
+  shouldNotify,
+  shouldReturnJudgeAnalysis,
+} from "./core/plugin-helpers.ts";
 import {
   createPolicyState,
   normalizeAction,
@@ -35,6 +41,8 @@ type SessionState = {
   policyState: PolicyState;
   runtimeCheckpoints: Map<string, { checkpoint: EbpfLogCheckpoint | null; toolName: string; params: Record<string, unknown> }>;
 };
+
+const MAX_ACTIVE_SESSIONS = 500;
 
 const plugin = {
   id: "agent-sentry",
@@ -72,6 +80,7 @@ const plugin = {
           await plugin.dashboard.close();
           plugin.dashboard = null;
         }
+        plugin.sessions.clear();
       },
     });
 
@@ -212,7 +221,7 @@ const plugin = {
         updateTaskSpec(state.policyState, [{ role: "user", content: message.content ?? message }], plugin.config!);
       }
 
-      if (shouldCoverAssistantResponse(state, role)) {
+      if (shouldCoverAssistantResponse(plugin.config!.responseCover, state.coverNextAssistantResponse, role)) {
         state.coverNextAssistantResponse = false;
         const coverMessage = plugin.config!.responseCover.message;
         plugin.store!.add({
@@ -264,7 +273,16 @@ const plugin = {
       const state = getSession(ctx);
       state.toolCount += 1;
       const params = (event?.params || {}) as Record<string, unknown>;
-      const operationKey = computeOperationKey(event.toolName, params);
+      const operationKey = computeOperationKey(event.toolName, params, {
+        profile: plugin.config!.profile,
+        policy: plugin.config!.policy,
+        detection: plugin.config!.detection,
+        semantic: plugin.config!.semantic,
+        provenanceScan: plugin.config!.provenanceScan,
+        runtimeIsolation: plugin.config!.runtimeIsolation,
+        enforcement: plugin.config!.enforcement.mode,
+        taskSpec: state.policyState.taskSpec,
+      });
       const normalizedTool = normalizeAction(event.toolName, params).tool;
       const semanticFindings = [
         ...await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
@@ -420,7 +438,8 @@ const plugin = {
             timeoutMs: plugin.config!.enforcement.approvalTimeoutMs,
             timeoutBehavior: "deny",
             onResolution: (decision: string) => {
-              if (decision === "allow-always") plugin.approvalCache!.add(operationKey, event.toolName);
+              const cacheEligible = result.decision === "ask" && !result.policy.deterministic_block;
+              if (decision === "allow-always" && cacheEligible) plugin.approvalCache!.add(operationKey, event.toolName);
               plugin.store!.add({
                 run_id: state.runId,
                 session_key: state.sessionKey,
@@ -428,9 +447,12 @@ const plugin = {
                 layer: "Tool Boundary",
                 severity: decision.startsWith("allow") ? "success" : "warning",
                 title: `Approval ${decision}: ${event.toolName}`,
-                summary: decision === "allow-always" ? "Exact operation added to allow-always cache." : `Operator decision: ${decision}`,
+                summary: decision === "allow-always" && cacheEligible
+                  ? "Exact operation added to allow-always cache."
+                  : `Operator decision: ${decision}`,
                 payload: {
                   decision,
+                  approval_cache_eligible: cacheEligible,
                   toolName: event.toolName,
                   toolCallId: event.toolCallId || "",
                   operation_key: operationKey,
@@ -532,8 +554,20 @@ const plugin = {
           runtimeCheckpoints: new Map(),
         };
         plugin.sessions.set(sessionKey, state);
+        trimSessions();
+      } else {
+        plugin.sessions.delete(sessionKey);
+        plugin.sessions.set(sessionKey, state);
       }
       return state;
+    }
+
+    function trimSessions(): void {
+      while (plugin.sessions.size > MAX_ACTIVE_SESSIONS) {
+        const oldest = plugin.sessions.keys().next().value;
+        if (!oldest) break;
+        plugin.sessions.delete(oldest);
+      }
     }
 
     function runtimeCheckpointKey(toolCallId: string, toolName: string): string {
@@ -593,7 +627,7 @@ const plugin = {
     }
 
     function sendProactiveNotification(ctx: Record<string, unknown>, severity: "warning" | "danger", title: string, summary: string): void {
-      if (!shouldNotify(severity)) return;
+      if (!shouldNotify(plugin.config!.notifications, severity)) return;
       const route = notificationRoute(ctx);
       if (!route) return;
       const message = clampText(
@@ -615,77 +649,5 @@ const plugin = {
     }
   },
 };
-
-function shouldReturnJudgeAnalysis(
-  findings: Array<{ finding_type?: unknown; verdict?: unknown; score?: unknown; evidence?: Record<string, unknown> }>,
-  riskScore: number,
-  decision: string,
-): boolean {
-  const hasJudgeFinding = findings.some((finding) => {
-    const evidence = finding.evidence as Record<string, unknown> | undefined;
-    return finding.finding_type === "learned" && typeof evidence?.semanticRisk === "string";
-  });
-  if (!hasJudgeFinding) return false;
-  return decision === "deny" || riskScore >= 55 || findings.some((finding) =>
-    finding.verdict === "block" || Number(finding.score || 0) >= 60
-  );
-}
-
-function severityForDecision(decision: string): RecordSeverity {
-  if (decision === "deny") return "danger";
-  if (decision === "ask") return "warning";
-  return "success";
-}
-
-function shouldCoverAssistantResponse(state: SessionState, role: string): boolean {
-  return Boolean(
-    plugin.config?.responseCover.enabled
-    && plugin.config.responseCover.coverAssistantAfterContamination
-    && state.coverNextAssistantResponse
-    && role === "assistant",
-  );
-}
-
-function severityForVerdict(verdict: string): RecordSeverity {
-  if (verdict === "block") return "danger";
-  if (verdict === "require_approval") return "warning";
-  return "info";
-}
-
-function shouldNotify(severity: "warning" | "danger"): boolean {
-  if (!plugin.config?.notifications.enableProactiveNotifications) return false;
-  if (plugin.config.notifications.minSeverity === "danger") return severity === "danger";
-  return true;
-}
-
-function notificationRoute(ctx: Record<string, unknown>): { channel: string; target: string } | null {
-  const provider = typeof ctx.messageProvider === "string" ? ctx.messageProvider.toLowerCase() : "";
-  const sessionKey = typeof ctx.sessionKey === "string" ? ctx.sessionKey : "";
-  const target = sessionKey.split(":").pop() || "";
-  if (!target) return null;
-  if (provider === "feishu") return { channel: "feishu", target };
-  if (provider === "qqbot") return { channel: "qqbot", target };
-  return null;
-}
-
-function provenanceRootsFor(workspaceDir: string): string[] {
-  const candidates = [
-    workspaceDir,
-    join(homedir(), ".openclaw", "plugin-skills"),
-    join(homedir(), ".openclaw", "skills"),
-    ...String(process.env.OPENCLAW_SKILLS_DIR || "")
-      .split(":")
-      .map((item) => item.trim())
-      .filter(Boolean),
-  ];
-  const roots: string[] = [];
-  for (const candidate of candidates) {
-    if (!candidate || !existsSync(candidate)) continue;
-    const root = resolve(candidate);
-    if (roots.some((existing) => root === existing || root.startsWith(`${existing}/`))) continue;
-    roots.push(root);
-  }
-  return roots;
-}
 
 export default plugin;

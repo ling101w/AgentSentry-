@@ -1,5 +1,8 @@
 const SECRET_KEY_PATTERN = /(api[_-]?key|token|secret|password|credential|authorization|cookie|session)/i;
 const SECRET_VALUE_PATTERN = /(sk-[a-z0-9_-]{8,}|xox[baprs]-[a-z0-9-]{8,}|gh[pousr]_[a-z0-9_]{12,}|bearer\s+[a-z0-9._-]{12,})/gi;
+const SECRET_ASSIGNMENT_PATTERN = /((?:["']?(?:api[_-]?key|token|secret|password|credential|authorization|cookie|session)["']?)\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|(?!\[)[^\s,;}\]]{8,})/gi;
+const PRIVATE_KEY_PATTERN = /-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/g;
+const AWS_ACCESS_KEY_PATTERN = /\bAKIA[0-9A-Z]{16}\b/g;
 
 export function clampText(value: unknown, maxChars: number): string {
   const text = typeof value === "string" ? value : safeStringify(value);
@@ -36,5 +39,9 @@ export function safeStringify(value: unknown): string {
 }
 
 function redactSecrets(text: string): string {
-  return text.replace(SECRET_VALUE_PATTERN, "[redacted]");
+  return text
+    .replace(PRIVATE_KEY_PATTERN, "[redacted-private-key]")
+    .replace(AWS_ACCESS_KEY_PATTERN, "[redacted]")
+    .replace(SECRET_ASSIGNMENT_PATTERN, '$1"[redacted]"')
+    .replace(SECRET_VALUE_PATTERN, "[redacted]");
 }

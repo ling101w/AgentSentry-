@@ -1,0 +1,21 @@
+{
+  "profile": "competition",
+  "enforcement": { "mode": "approval" },
+  "semantic": {
+    "enabled": true,
+    "mode": "risk-tiered",
+    "judgeToolCalls": true,
+    "judgeMessages": false,
+    "judgeMemoryWrites": true,
+    "judgeProvenance": true
+  },
+  "policy": {
+    "deterministic": true,
+    "taintFeedback": true,
+    "restrictWritesToAllowedRoots": true,
+    "allowedWriteRoots": ["notes", "reports", "output", "src", "tests"]
+  },
+  "runtimeIsolation": { "requireKernelObserverForHighRisk": false, "unavailableAction": "require_approval", "auditAfterExecution": true },
+  "responseCover": { "enabled": true, "coverAssistantAfterContamination": true },
+  "notifications": { "enableProactiveNotifications": true, "minSeverity": "warning" }
+}

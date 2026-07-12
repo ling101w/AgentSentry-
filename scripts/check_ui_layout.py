@@ -9,6 +9,8 @@ from urllib.request import urlopen
 
 from playwright.sync_api import sync_playwright
 
+from playwright_browser import launch_chromium
+
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "reports" / "ui-screenshots"
@@ -26,9 +28,10 @@ VIEWPORTS = [
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     all_issues: list[dict] = []
+    matrix_checks: list[dict] = []
     wait_for_server()
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = launch_chromium(p)
         for name, path, width, height in VIEWPORTS:
             page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
             page.goto(f"{BASE_URL}{path}", wait_until="networkidle", timeout=30000)
@@ -37,11 +40,17 @@ def main() -> int:
             page.screenshot(path=str(screenshot), full_page=True)
             issues = page.evaluate(LAYOUT_CHECK_JS)
             all_issues.extend({"viewport": name, **issue} for issue in issues)
+            if path == "/":
+                matrix_check = page.evaluate(MATRIX_CHECK_JS)
+                matrix_checks.append({"viewport": name, **matrix_check})
+                if not matrix_check.get("ok"):
+                    all_issues.append({"viewport": name, "type": "matrix-structure", **matrix_check})
             page.close()
         browser.close()
 
     report = {
         "screenshots": [str((OUT_DIR / f"{name}.png").relative_to(ROOT)) for name, *_ in VIEWPORTS],
+        "matrix_checks": matrix_checks,
         "issue_count": len(all_issues),
         "issues": all_issues[:200],
     }
@@ -49,6 +58,43 @@ def main() -> int:
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if all_issues else 0
+
+
+MATRIX_CHECK_JS = r"""
+() => {
+  const grid = document.querySelector(".matrix-grid");
+  if (!grid) return { ok: false, reason: "matrix-grid missing" };
+  const headerLabels = Array.from(grid.querySelectorAll(".matrix-head strong"))
+    .map((el) => String(el.textContent || "").trim());
+  const templateColumns = getComputedStyle(grid).gridTemplateColumns
+    .split(/\s+/)
+    .filter(Boolean);
+  const cellCount = grid.querySelectorAll(".matrix-cell").length;
+  const requiredLabels = ["行为基线", "语义复核"];
+  const visibleRequiredLabels = requiredLabels.every((label) => {
+    const element = Array.from(grid.querySelectorAll(".matrix-head strong"))
+      .find((el) => String(el.textContent || "").trim() === label);
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  });
+  let learnedMapsToBehavioral = false;
+  if (typeof renderDefenseMatrix === "function") {
+    const probe = document.createElement("div");
+    probe.innerHTML = renderDefenseMatrix([{ layer: "Foundation", finding_type: "learned" }]);
+    const behavioralCell = probe.querySelector(".matrix-cell.behavioral.active strong");
+    learnedMapsToBehavioral = String(behavioralCell?.textContent || "").trim() === "1";
+  }
+  return {
+    ok: templateColumns.length === 5 && cellCount % 5 === 0 && visibleRequiredLabels && learnedMapsToBehavioral,
+    columnCount: templateColumns.length,
+    cellCount,
+    headerLabels,
+    visibleRequiredLabels,
+    learnedMapsToBehavioral
+  };
+}
+"""
 
 
 def wait_for_server(timeout: float = 45.0) -> None:

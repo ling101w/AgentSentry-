@@ -1,0 +1,21 @@
+{
+  "profile": "balanced",
+  "enforcement": { "mode": "approval" },
+  "semantic": {
+    "enabled": true,
+    "mode": "risk-tiered",
+    "judgeToolCalls": true,
+    "judgeMessages": false,
+    "judgeMemoryWrites": true,
+    "judgeProvenance": false
+  },
+  "policy": {
+    "deterministic": true,
+    "taintFeedback": true,
+    "restrictWritesToAllowedRoots": false,
+    "allowedWriteRoots": []
+  },
+  "runtimeIsolation": { "requireKernelObserverForHighRisk": false, "unavailableAction": "require_approval", "auditAfterExecution": true },
+  "responseCover": { "enabled": true, "coverAssistantAfterContamination": true },
+  "notifications": { "enableProactiveNotifications": true, "minSeverity": "warning" }
+}

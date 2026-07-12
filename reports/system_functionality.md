@@ -10,6 +10,8 @@
 
 详细算法说明见 `reports/technical_design_and_algorithms.md`。
 
+评测口径：文末 520 + 320 条数字来自公开样例的 `/command-lab` 映射回归，只用于已知集回归，不代表独立盲测、生产 FPR 或原生 AgentDojo/InjecAgent 结果。
+
 ## 访问入口
 
 | 地址 | 用途 |

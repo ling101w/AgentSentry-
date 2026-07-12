@@ -2,6 +2,8 @@
 
 更新时间：2026-07-03
 
+评测口径先读 `reports/EVALUATION_METHODOLOGY.md`：历史 840 条均为公开数据映射到 `/command-lab` 的开发回归，不是独立盲测，也不是 AgentDojo/InjecAgent 原生端到端运行。
+
 玄鉴是本参赛作品名称，当前仓库和插件内部仍沿用 `AgentSentry` 作为代码包名。答辩和报告中建议统一使用：
 
 > 玄鉴：面向智能体工具调用链的实时行为监督与风险拦截系统
@@ -11,6 +13,7 @@
 | 文档 | 用途 |
 |---|---|
 | `reports/START_HERE.md` | 最短入口：先看什么、benchmark 文件在哪、怎么在 `/command-lab` 逐条测试 |
+| `reports/EVALUATION_METHODOLOGY.md` | 评测证据等级、标签隔离、盲测与原生 Benchmark 口径 |
 | `reports/competition_report.md` | 正式安全风险分析与行为监督报告 |
 | `reports/system_functionality.md` | 系统功能、架构、真实数据来源和限制 |
 | `reports/project_name_and_benchmark_summary.md` | 作品命名、公开 benchmark 汇总和核心指标 |

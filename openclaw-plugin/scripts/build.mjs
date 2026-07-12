@@ -65,6 +65,8 @@ for (const dir of sourceDirs) {
 }
 
 copyDir(join(rootDir, "public"), join(outDir, "public"));
+copyDir(join(rootDir, "profiles"), join(outDir, "profiles"));
+copyDir(join(rootDir, "manifests"), join(outDir, "manifests"));
 
 async function resolveStripTypeScriptTypes() {
   const moduleApi = await import("node:module");

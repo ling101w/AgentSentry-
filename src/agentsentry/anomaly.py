@@ -7,11 +7,6 @@ from typing import Any
 from .models import Confidentiality, DataValue, DetectionVerdict, FindingType, GuardFinding, Integrity, TaskSpec, ToolAction
 from .policy import unwrap_arg
 
-try:  # pragma: no cover - exercised when sklearn is installed in the runtime image
-    from sklearn.ensemble import IsolationForest
-except Exception:  # pragma: no cover - keeps the prototype usable in constrained installs
-    IsolationForest = None  # type: ignore[assignment]
-
 
 TOOL_ORDER = [
     "read_webpage",
@@ -34,46 +29,35 @@ EXTERNAL_MARKERS = ("exfil", "webhook", "pastebin", "requestbin", "ops-archive",
 
 
 class BehaviorAnomalyDetector:
-    """Small feature-model baseline for runtime anomaly detection.
+    """Explainable online statistical baseline for runtime anomaly detection.
 
     This is intentionally lightweight: the deterministic policy remains the hard
-    boundary, while this model catches unusual tool/argument/sequence patterns
-    and produces an explainable learned finding for the dashboard and reports.
+    boundary. No synthetic training set or fitted ML model participates in the
+    decision; features describe scope, novelty, frequency, and recent trajectory.
     """
 
     def __init__(self) -> None:
-        self.enabled = IsolationForest is not None
-        self.model = None
-        if not self.enabled:
-            return
-        self.model = IsolationForest(n_estimators=80, contamination=0.08, random_state=17)
-        self.model.fit(_training_vectors())
+        self.enabled = True
 
     def assess(self, action: ToolAction, task_spec: TaskSpec, history: list[dict[str, Any]]) -> GuardFinding | None:
         vector = feature_vector(action, task_spec, history)
-        rule_score, indicators = indicator_score(action, task_spec, history)
-        model_score = 0
-        if self.model is not None:
-            raw = float(self.model.decision_function([vector])[0])
-            model_score = max(0, min(100, round((0.08 - raw) * 420)))
-
-        score = max(rule_score, model_score)
+        score, indicators = indicator_score(action, task_spec, history)
         if score < 35:
             return None
 
         verdict = DetectionVerdict.REQUIRE_APPROVAL if score < 70 else DetectionVerdict.BLOCK
         return GuardFinding(
             layer="Behavior Anomaly",
-            finding_type=FindingType.LEARNED,
+            finding_type=FindingType.BEHAVIORAL,
             verdict=verdict,
             reason="tool call is anomalous relative to normal business trajectories",
             score=score,
             evidence={
-                "model": "IsolationForest",
-                "model_score": model_score,
-                "indicator_score": rule_score,
+                "baseline": "online_statistical",
+                "indicator_score": score,
                 "indicators": indicators[:6],
                 "tool": action.tool,
+                "feature_vector": vector,
             },
         )
 
@@ -140,24 +124,6 @@ def indicator_score(action: ToolAction, task_spec: TaskSpec, history: list[dict[
         indicators.append("tool_frequency_spike")
 
     return min(score, 100), indicators
-
-
-def _training_vectors() -> list[list[float]]:
-    synthetic: list[tuple[str, dict[str, Any], str, list[str]]] = [
-        ("read_webpage", {"url": "https://example.com/"}, "summarize webpage", ["read_webpage", "call_api"]),
-        ("call_api", {"url": "http://127.0.0.1:8765/api/health"}, "fetch report from API", ["read_webpage", "call_api"]),
-        ("send_email", {"recipient": "user@example.com", "body": "status update"}, "send email to user@example.com", ["send_email"]),
-        ("write_file", {"path": "notes/report.md", "content": "summary"}, "save report to notes/report.md", ["write_file"]),
-        ("write_file", {"path": "reports/status.md", "content": "summary"}, "write report", ["write_file"]),
-        ("memory_read", {"key": "report_route"}, "read memory", ["memory_read", "memory_write"]),
-        ("memory_write", {"key": "preference", "value": "weekly summary"}, "remember preference", ["memory_read", "memory_write"]),
-    ]
-    vectors: list[list[float]] = []
-    for tool, args, task, allowed in synthetic:
-        spec = TaskSpec(task=task, allowed_tools=allowed, forbidden_tools=[name for name in TOOL_ORDER if name not in allowed])
-        vectors.append(feature_vector(ToolAction(tool=tool, args=args, reason="training"), spec, []))
-        vectors.append(feature_vector(ToolAction(tool=tool, args=args, reason="training"), spec, [{"tool": "read_webpage", "decision": "allow"}]))
-    return vectors
 
 
 def _arg_text(args: dict[str, Any]) -> str:

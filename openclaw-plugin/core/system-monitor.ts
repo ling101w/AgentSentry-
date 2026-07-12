@@ -2,7 +2,7 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { RuntimeIsolationUnavailableAction } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
-import { clampText, safeStringify } from "./redact.ts";
+import { clampText, redactObject, safeStringify } from "./redact.ts";
 import { createRiskVector, finding, type RiskVector } from "./trust.ts";
 
 export type EbpfObserverStatus = {
@@ -75,7 +75,7 @@ const PRIVILEGE_COMMAND_PATTERNS = [
 ];
 
 const SENSITIVE_PATH_PATTERNS = [
-  /(?:^|\/)\.env(?:\.|$)?/i,
+  /(?:^|\/)\.env(?:\.|$)/i,
   /(?:^|\/)openclaw\.json$/i,
   /(?:^|\/)(?:id_rsa|id_ed25519|id_ecdsa|id_dsa)$/i,
   /(?:^|\/)(?:secret|secrets|credentials)(?:\.json|\.txt|\.yaml|\.yml)?$/i,
@@ -163,7 +163,7 @@ export function systemPreflight(
       risk.exfiltration = Math.max(risk.exfiltration, 45);
       findings.push(finding("Tool Boundary", "heuristic", "require_approval", "command performs network egress and requires sandbox egress review", 45, {
         command: clampText(command || text, previewChars),
-        urls: egressUrls.slice(0, 8),
+        urls: redactEvidenceStrings(egressUrls, 8, previewChars),
         monitor,
         isolation_plan: isolationPlan("review"),
       }));
@@ -174,7 +174,7 @@ export function systemPreflight(
   if (sensitivePaths.length) {
     risk.sensitive_data = Math.max(risk.sensitive_data, 85);
     findings.push(finding("Tool Boundary", "deterministic", "block", "tool parameters target sensitive local paths", 90, {
-      paths: sensitivePaths.slice(0, 8),
+      paths: redactEvidenceStrings(sensitivePaths, 8, previewChars),
       monitor,
       isolation_plan: isolationPlan("block"),
     }));
@@ -187,17 +187,20 @@ export function systemPreflight(
   if (protectedPersistencePaths.length) {
     risk.persistence = 90;
     findings.push(finding("Tool Boundary", "deterministic", "block", "tool parameters target memory, startup, or OpenClaw configuration paths", 95, {
-      paths: protectedPersistencePaths.slice(0, 8),
+      paths: redactEvidenceStrings(protectedPersistencePaths, 8, previewChars),
       monitor,
       isolation_plan: isolationPlan("block"),
     }));
   }
 
-  const gatewayUrls = urls.filter((url) => NON_LOCAL_GATEWAY_PATTERN.test(url) || /gatewayURL/i.test(url));
+  const gatewayUrls = Array.from(new Set([
+    ...urls.filter((url) => NON_LOCAL_GATEWAY_PATTERN.test(url)),
+    ...collectGatewayOverrideUrls(params),
+  ]));
   if (gatewayUrls.length) {
     risk.tool_hijack = 100;
     findings.push(finding("Tool Boundary", "deterministic", "block", "Control UI gateway URL override detected before network call", 100, {
-      urls: gatewayUrls.slice(0, 6),
+      urls: redactEvidenceStrings(gatewayUrls, 6, previewChars),
       monitor,
       isolation_plan: isolationPlan("block"),
     }));
@@ -252,11 +255,11 @@ function kernelRuntimeGateFindings(input: {
   if (!guardedSurfaces.length) return [];
 
   const evidence = {
-    toolName: input.toolName,
+    toolName: clampText(input.toolName, input.previewChars),
     guarded_surfaces: guardedSurfaces,
     command: input.command ? clampText(input.command, input.previewChars) : "",
-    paths: input.paths.slice(0, 8),
-    urls: externalUrls.slice(0, 8),
+    paths: redactEvidenceStrings(input.paths, 8, input.previewChars),
+    urls: redactEvidenceStrings(externalUrls, 8, input.previewChars),
     monitor: input.monitor,
     runtime_gate: {
       required: true,
@@ -366,6 +369,16 @@ export function auditRuntimeEventsSince(
   };
 }
 
+export function auditRuntimeEventBatch(
+  events: Array<Record<string, unknown>>,
+  toolName: string,
+  params: Record<string, unknown>,
+  monitor: SystemMonitorStatus,
+  options: { previewChars?: number } = {},
+): { findings: DetectionFinding[]; interestingEvents: Array<Record<string, unknown>> } {
+  return auditEbpfEvents(events, toolName, params, monitor, options.previewChars ?? 1200);
+}
+
 function readEbpfEventsSince(
   checkpoint: EbpfLogCheckpoint,
   maxBytes: number,
@@ -425,11 +438,11 @@ function auditEbpfEvents(
     .slice(0, 12);
 
   if (sensitiveOpenEvents.length) {
-    interestingEvents.push(...sensitiveOpenEvents.map((item) => item.event));
+    interestingEvents.push(...sensitiveOpenEvents.map((item) => redactEvent(item.event, previewChars)));
     findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected sensitive file access after tool was allowed", 80, {
-      toolName,
-      expected_paths: expectedPaths.slice(0, 8),
-      observed_paths: sensitiveOpenEvents.map((item) => item.filename).slice(0, 8),
+      toolName: clampText(toolName, previewChars),
+      expected_paths: redactEvidenceStrings(expectedPaths, 8, previewChars),
+      observed_paths: redactEvidenceStrings(sensitiveOpenEvents.map((item) => item.filename), 8, previewChars),
       monitor,
       runtime_audit: {
         source: "ebpf",
@@ -448,9 +461,9 @@ function auditEbpfEvents(
 
   const unexpectedExecEvents = execEvents.filter(({ text }) => !shellTool || (lowRiskShell && command && !text.includes(command)));
   if (unexpectedExecEvents.length) {
-    interestingEvents.push(...unexpectedExecEvents.map((item) => item.event));
+    interestingEvents.push(...unexpectedExecEvents.map((item) => redactEvent(item.event, previewChars)));
     findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected process execution after non-shell or low-risk tool was allowed", 85, {
-      toolName,
+      toolName: clampText(toolName, previewChars),
       command: command ? clampText(command, previewChars) : "",
       observed_exec: unexpectedExecEvents.map((item) => clampText(item.text, 240)).slice(0, 8),
       monitor,
@@ -624,6 +637,19 @@ function collectUrls(value: unknown, out: string[] = []): string[] {
   return Array.from(new Set(out));
 }
 
+function collectGatewayOverrideUrls(value: unknown, out: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const item of value) collectGatewayOverrideUrls(item, out);
+    return Array.from(new Set(out));
+  }
+  if (!value || typeof value !== "object") return Array.from(new Set(out));
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (/^gateway(?:_?url)?$/i.test(key) && typeof item === "string" && isExternalUrl(item)) out.push(item);
+    collectGatewayOverrideUrls(item, out);
+  }
+  return Array.from(new Set(out));
+}
+
 function isExternalUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -643,9 +669,21 @@ function matchPatterns(text: string, patterns: RegExp[]): string[] {
   const matches: string[] = [];
   for (const pattern of patterns) {
     const match = pattern.exec(text);
-    if (match) matches.push(match[0].slice(0, 180).replace(/\bsk-[a-zA-Z0-9_-]{8,}\b/g, "[redacted]"));
+    if (match) matches.push(clampText(match[0], 180));
   }
   return Array.from(new Set(matches));
+}
+
+function redactEvidenceStrings(values: string[], limit: number, previewChars: number): string[] {
+  const maxChars = Math.max(64, Math.min(previewChars, 512));
+  return values.slice(0, limit).map((value) => clampText(value, maxChars));
+}
+
+function redactEvent(event: Record<string, unknown>, previewChars: number): Record<string, unknown> {
+  const redacted = redactObject(event, Math.max(64, Math.min(previewChars, 512)));
+  return redacted && typeof redacted === "object" && !Array.isArray(redacted)
+    ? redacted as Record<string, unknown>
+    : {};
 }
 
 function isSafeSystemReadPath(path: string): boolean {

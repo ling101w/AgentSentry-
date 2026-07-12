@@ -497,6 +497,8 @@ pre {
 }
 
 .chip.learned,
+.chip.behavioral,
+.chip.semantic,
 .chip.layer,
 .chip.score {
   border-color: #c2d7f4;
@@ -518,7 +520,7 @@ pre {
 
 .matrix-grid {
   display: grid;
-  grid-template-columns: minmax(104px, 1.1fr) repeat(3, minmax(86px, 1fr));
+  grid-template-columns: minmax(104px, 1.1fr) repeat(4, minmax(86px, 1fr));
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -535,11 +537,11 @@ pre {
   font-weight: 800;
 }
 
-.matrix-cell:nth-child(4n) {
+.matrix-cell:nth-child(5n) {
   border-right: 0;
 }
 
-.matrix-cell:nth-last-child(-n + 4) {
+.matrix-cell:nth-last-child(-n + 5) {
   border-bottom: 0;
 }
 
@@ -578,7 +580,9 @@ pre {
   color: var(--warn);
 }
 
-.matrix-cell.active.learned {
+.matrix-cell.active.learned,
+.matrix-cell.active.behavioral,
+.matrix-cell.active.semantic {
   background: var(--blue-soft);
   color: var(--blue);
 }
@@ -617,7 +621,9 @@ pre {
   border-left-color: var(--warn);
 }
 
-.mini-card.finding.learned {
+.mini-card.finding.learned,
+.mini-card.finding.behavioral,
+.mini-card.finding.semantic {
   border-left-color: var(--blue);
 }
 
@@ -802,12 +808,24 @@ pre {
   }
 
   .matrix-grid {
-    grid-template-columns: minmax(86px, 1fr) repeat(3, minmax(70px, 1fr));
+    grid-template-columns: minmax(58px, 0.8fr) repeat(4, minmax(0, 1fr));
   }
 
   .matrix-cell {
-    padding: 7px;
-    font-size: 11px;
+    min-width: 0;
+    padding: 6px 4px;
+    overflow-wrap: anywhere;
+    font-size: 10px;
+  }
+
+  .matrix-head span,
+  .matrix-cell span {
+    font-size: 9px;
+    line-height: 1.25;
+  }
+
+  .matrix-cell strong {
+    font-size: 17px;
   }
 }
 
@@ -823,5 +841,19 @@ pre {
 
   .app-shell {
     padding: 10px;
+  }
+
+  .matrix-grid {
+    grid-template-columns: minmax(50px, 0.72fr) repeat(4, minmax(0, 1fr));
+  }
+
+  .matrix-cell {
+    padding: 5px 3px;
+    font-size: 9px;
+  }
+
+  .matrix-head span,
+  .matrix-cell span {
+    font-size: 8px;
   }
 }

@@ -4,7 +4,6 @@ import type { DetectionFinding } from "./detect.ts";
 import { clampText, safeStringify } from "./redact.ts";
 import {
   analyzeTrustContent,
-  createRiskVector,
   finding,
   riskMax,
   type RiskVector,

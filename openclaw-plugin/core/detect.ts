@@ -1,5 +1,6 @@
 import type { PluginConfig } from "../config.ts";
 import { semanticActionFindings } from "./action-semantics.ts";
+import { toolManifestFindings } from "./tool-manifest.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
 import { systemPreflight } from "./system-monitor.ts";
 import { analyzeTrustContent, riskMax, sourceFromTool } from "./trust.ts";
@@ -15,7 +16,7 @@ import {
 
 export type DetectionFinding = {
   layer: string;
-  finding_type: "deterministic" | "heuristic" | "learned";
+  finding_type: "deterministic" | "heuristic" | "behavioral" | "semantic" | "learned";
   verdict: "pass" | "require_approval" | "block";
   reason: string;
   score: number;
@@ -29,6 +30,17 @@ export type DetectionResult = {
   summary: string;
   policy: PolicyDecision;
 };
+
+type BoundaryNormalization = {
+  value: unknown;
+  anomalies: string[];
+};
+
+const MAX_INPUT_DEPTH = 12;
+const MAX_INPUT_NODES = 4_000;
+const MAX_CONTAINER_ITEMS = 120;
+const MAX_PARAMETER_STRING_CHARS = 65_536;
+const MAX_TOOL_NAME_CHARS = 256;
 
 const HIGH_RISK_TOOL_PATTERNS = [
   /shell|command|exec|terminal|powershell|cmd/i,
@@ -79,13 +91,21 @@ export function detectToolCall(
   state: PolicyState,
   extraFindings: DetectionFinding[] = [],
 ): DetectionResult {
+  const normalizedInput = normalizeToolInput(toolName, params);
+  toolName = normalizedInput.toolName;
+  params = normalizedInput.params;
+  const boundaryFindings = normalizedInput.anomalies.length
+    ? [inputBoundaryFinding("tool", toolName, normalizedInput.anomalies)]
+    : [];
   let action = normalizeAction(toolName, params);
+  const manifestFindings = config.policy.deterministic ? toolManifestFindings(toolName, action.tool, params) : [];
+  const deterministicFindings = [...boundaryFindings, ...manifestFindings];
   if (!config.detection.enabled) {
-    const policy = decideAction(action, state, config, []);
+    const policy = decideAction(action, state, config, deterministicFindings);
     return { decision: policy.decision, risk_score: policy.risk_score, findings: policy.findings, summary: "detection disabled; policy only", policy };
   }
 
-  const findings: DetectionFinding[] = [...extraFindings];
+  const findings: DetectionFinding[] = [...extraFindings, ...deterministicFindings];
   const exposure = applyExposureTaint(action, state, config);
   action = exposure.action;
   findings.push(...exposure.findings);
@@ -224,27 +244,31 @@ export { mostSevereVerdict };
 
 export function detectMessageContent(content: unknown, config: PluginConfig): DetectionFinding[] {
   if (!config.detection.enabled) return [];
-  const text = clampText(content, config.capture.previewChars);
-  const trustAnalysis = analyzeTrustContent(content, { source: "user_input", sourceId: "message", previewChars: config.capture.previewChars });
+  const normalized = normalizeBoundaryValue(content, "message");
+  const text = clampText(normalized.value, config.capture.previewChars);
+  const trustAnalysis = analyzeTrustContent(normalized.value, { source: "user_input", sourceId: "message", previewChars: config.capture.previewChars });
   const matched = matchPatterns(text, PROMPT_INJECTION_PATTERNS);
-  const findings = [...trustAnalysis.findings];
-  if (!matched.length) return findings;
-  return [
-    ...findings,
-    {
+  const findings = [
+    ...(normalized.anomalies.length ? [inputBoundaryFinding("message", "message", normalized.anomalies)] : []),
+    ...trustAnalysis.findings,
+  ];
+  if (matched.length) findings.push({
       layer: "Context Provenance",
       finding_type: "heuristic",
       verdict: "pass",
       reason: "message contains prompt-injection indicators",
       score: 25,
       evidence: { matched: matched.slice(0, 5), preview: text },
-    },
-  ];
+    });
+  const deduped = dedupeDetectionFindings(findings);
+  return config.capture.includeMessageText
+    ? deduped.map((finding) => withRedactedEvidence(finding, config.capture.previewChars))
+    : deduped.map(withoutCapturedMessageEvidence);
 }
 
 export function serializeToolParams(params: Record<string, unknown>, config: PluginConfig): unknown {
   if (!config.capture.includeToolParams) return "[disabled]";
-  return redactObject(params, config.capture.previewChars);
+  return redactObject(normalizeToolParams(params).value, config.capture.previewChars);
 }
 
 function baseToolRisk(toolName: string): number {
@@ -453,4 +477,246 @@ function printableText(value: string): string {
     if (/\s/.test(char) || char >= " ") printable += 1;
   }
   return printable / Math.max(value.length, 1) >= 0.85 ? canonicalText(value) : "";
+}
+
+function normalizeToolInput(toolName: unknown, params: unknown): {
+  toolName: string;
+  params: Record<string, unknown>;
+  anomalies: string[];
+} {
+  const anomalies = new Set<string>();
+  let normalizedToolName = "unknown_tool";
+  if (typeof toolName === "string") {
+    normalizedToolName = toolName.trim() || "unknown_tool";
+    if (!toolName.trim()) anomalies.add("empty_tool_name");
+    if (normalizedToolName.length > MAX_TOOL_NAME_CHARS) {
+      normalizedToolName = normalizedToolName.slice(0, MAX_TOOL_NAME_CHARS);
+      anomalies.add("tool_name_too_long");
+    }
+  } else {
+    anomalies.add(`invalid_tool_name_type:${valueType(toolName)}`);
+  }
+
+  const normalizedParams = normalizeToolParams(params);
+  normalizedParams.anomalies.forEach((item) => anomalies.add(item));
+  return {
+    toolName: normalizedToolName,
+    params: normalizedParams.value,
+    anomalies: Array.from(anomalies).slice(0, 24),
+  };
+}
+
+function normalizeToolParams(params: unknown): { value: Record<string, unknown>; anomalies: string[] } {
+  const normalized = normalizeBoundaryValue(params, "params");
+  if (normalized.value && typeof normalized.value === "object" && !Array.isArray(normalized.value)) {
+    return { value: normalized.value as Record<string, unknown>, anomalies: normalized.anomalies };
+  }
+  return {
+    value: normalized.value === null || normalized.value === undefined ? {} : { value: normalized.value },
+    anomalies: Array.from(new Set([`invalid_params_type:${valueType(params)}`, ...normalized.anomalies])),
+  };
+}
+
+function normalizeBoundaryValue(value: unknown, rootPath: string): BoundaryNormalization {
+  const anomalies = new Set<string>();
+  const ancestors = new WeakSet<object>();
+  let nodes = 0;
+
+  const visit = (current: unknown, path: string, depth: number): unknown => {
+    nodes += 1;
+    if (nodes > MAX_INPUT_NODES) {
+      anomalies.add("input_node_limit_exceeded");
+      return "[truncated]";
+    }
+    if (depth > MAX_INPUT_DEPTH) {
+      anomalies.add(`input_depth_exceeded:${path}`);
+      return "[truncated]";
+    }
+    if (typeof current === "string") {
+      if (current.length <= MAX_PARAMETER_STRING_CHARS) return current;
+      anomalies.add(`input_string_truncated:${path}`);
+      const half = Math.trunc(MAX_PARAMETER_STRING_CHARS / 2);
+      return `${current.slice(0, half)}...[truncated]...${current.slice(-half)}`;
+    }
+    if (current === null || typeof current === "boolean") return current;
+    if (typeof current === "number") {
+      if (Number.isFinite(current)) return current;
+      anomalies.add(`non_finite_number:${path}`);
+      return null;
+    }
+    if (typeof current === "bigint") {
+      anomalies.add(`unsupported_bigint:${path}`);
+      return current.toString();
+    }
+    if (typeof current === "undefined") return null;
+    if (typeof current === "function" || typeof current === "symbol") {
+      anomalies.add(`unsupported_value:${path}`);
+      return "[unsupported]";
+    }
+    if (!current || typeof current !== "object") return String(current);
+    if (ancestors.has(current)) {
+      anomalies.add(`circular_reference:${path}`);
+      return "[circular]";
+    }
+
+    let isArray = false;
+    let isBuffer = false;
+    let isDate = false;
+    try {
+      isArray = Array.isArray(current);
+      isBuffer = Buffer.isBuffer(current);
+      isDate = current instanceof Date;
+    } catch {
+      anomalies.add(`unreadable_object:${path}`);
+      return "[unreadable]";
+    }
+    if (isBuffer) {
+      anomalies.add(`binary_value:${path}`);
+      return clampText(Buffer.from(current as Uint8Array).toString("latin1"), MAX_PARAMETER_STRING_CHARS);
+    }
+    if (isDate) {
+      try {
+        const date = current as Date;
+        return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+      } catch {
+        anomalies.add(`unreadable_date:${path}`);
+        return null;
+      }
+    }
+
+    ancestors.add(current);
+    try {
+      if (isArray) {
+        let length = 0;
+        try {
+          const descriptor = Object.getOwnPropertyDescriptor(current, "length");
+          length = typeof descriptor?.value === "number" && Number.isFinite(descriptor.value)
+            ? Math.max(0, Math.trunc(descriptor.value))
+            : 0;
+        } catch {
+          anomalies.add(`unreadable_array:${path}`);
+          return ["[unreadable]"];
+        }
+        if (length > MAX_CONTAINER_ITEMS) anomalies.add(`array_truncated:${path}`);
+        const out: unknown[] = [];
+        for (let index = 0; index < Math.min(length, MAX_CONTAINER_ITEMS); index += 1) {
+          let descriptor: PropertyDescriptor | undefined;
+          try {
+            descriptor = Object.getOwnPropertyDescriptor(current, String(index));
+          } catch {
+            anomalies.add(`unreadable_property:${path}[${index}]`);
+            out[index] = "[unreadable]";
+            continue;
+          }
+          if (!descriptor) continue;
+          if (!("value" in descriptor)) {
+            anomalies.add(`accessor_property:${path}[${index}]`);
+            out[index] = "[accessor]";
+            continue;
+          }
+          out[index] = visit(descriptor.value, `${path}[${index}]`, depth + 1);
+        }
+        return out;
+      }
+
+      let ownKeys: Array<string | symbol>;
+      try {
+        ownKeys = Reflect.ownKeys(current);
+      } catch {
+        anomalies.add(`unreadable_object:${path}`);
+        return { value: "[unreadable]" };
+      }
+      if (ownKeys.some((key) => typeof key === "symbol")) anomalies.add(`symbol_key:${path}`);
+      const keys = ownKeys.filter((key): key is string => typeof key === "string");
+      if (keys.length > MAX_CONTAINER_ITEMS) anomalies.add(`object_truncated:${path}`);
+      try {
+        const prototype = Object.getPrototypeOf(current);
+        if (prototype !== null && prototype !== Object.prototype) anomalies.add(`non_plain_object:${path}`);
+      } catch {
+        anomalies.add(`unreadable_prototype:${path}`);
+      }
+      const out: Record<string, unknown> = {};
+      for (const key of keys.slice(0, MAX_CONTAINER_ITEMS)) {
+        if (key === "__proto__" || key === "prototype" || key === "constructor") {
+          anomalies.add(`unsafe_key:${path}.${key}`);
+          continue;
+        }
+        let descriptor: PropertyDescriptor | undefined;
+        try {
+          descriptor = Object.getOwnPropertyDescriptor(current, key);
+        } catch {
+          anomalies.add(`unreadable_property:${path}.${key}`);
+          continue;
+        }
+        if (!descriptor?.enumerable) {
+          anomalies.add(`non_enumerable_property:${path}.${key}`);
+          continue;
+        }
+        if (!("value" in descriptor)) {
+          anomalies.add(`accessor_property:${path}.${key}`);
+          out[key] = "[accessor]";
+          continue;
+        }
+        out[key] = visit(descriptor.value, `${path}.${key}`, depth + 1);
+      }
+      return out;
+    } finally {
+      ancestors.delete(current);
+    }
+  };
+
+  return { value: visit(value, rootPath, 0), anomalies: Array.from(anomalies).slice(0, 24) };
+}
+
+function inputBoundaryFinding(surface: "tool" | "message", toolName: string, anomalies: string[]): DetectionFinding {
+  return {
+    layer: "Tool Boundary",
+    finding_type: "deterministic",
+    verdict: "require_approval",
+    reason: `${surface} input is malformed, circular, or exceeds safety limits`,
+    score: 60,
+    evidence: {
+      toolName: clampText(toolName, MAX_TOOL_NAME_CHARS),
+      anomalies: anomalies.slice(0, 24).map((item) => clampText(item, 180)),
+    },
+  };
+}
+
+function withoutCapturedMessageEvidence(finding: DetectionFinding): DetectionFinding {
+  const evidence = finding.evidence || {};
+  const retained: Record<string, unknown> = { capture: "[disabled]" };
+  for (const key of ["source", "path", "toolName", "tags", "risk_vector", "sensitive_kinds", "provenance_untrusted", "trust_label", "taint_profile"]) {
+    if (evidence[key] !== undefined) retained[key] = evidence[key];
+  }
+  return { ...finding, evidence: retained };
+}
+
+function withRedactedEvidence(finding: DetectionFinding, previewChars: number): DetectionFinding {
+  const evidence = redactObject(finding.evidence, previewChars);
+  return {
+    ...finding,
+    evidence: evidence && typeof evidence === "object" && !Array.isArray(evidence)
+      ? evidence as Record<string, unknown>
+      : {},
+  };
+}
+
+function dedupeDetectionFindings(findings: DetectionFinding[]): DetectionFinding[] {
+  const seen = new Set<string>();
+  return findings.filter((finding) => {
+    const key = `${finding.layer}:${finding.finding_type}:${finding.verdict}:${finding.reason}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function valueType(value: unknown): string {
+  if (value === null) return "null";
+  try {
+    if (Array.isArray(value)) return "array";
+  } catch {
+    return "unreadable_object";
+  }
+  return typeof value;
 }

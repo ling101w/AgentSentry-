@@ -1,9 +1,47 @@
+import { readFileSync } from "node:fs";
+
 export type EnforcementMode = "observe" | "approval" | "block";
 export type NotificationSeverity = "warning" | "danger";
 export type SemanticJudgeMode = "off" | "risk-tiered" | "full";
 export type RuntimeIsolationUnavailableAction = "require_approval" | "block";
+export type SecurityProfileName = "observe" | "balanced" | "competition" | "high-security";
+
+export interface SecurityProfileDefinition {
+  profile: SecurityProfileName;
+  enforcement: {
+    mode: EnforcementMode;
+  };
+  semantic: {
+    enabled: boolean;
+    mode: SemanticJudgeMode;
+    judgeToolCalls: boolean;
+    judgeMessages: boolean;
+    judgeProvenance: boolean;
+    judgeMemoryWrites: boolean;
+  };
+  policy: {
+    deterministic: boolean;
+    taintFeedback: boolean;
+    restrictWritesToAllowedRoots: boolean;
+    allowedWriteRoots: string[];
+  };
+  runtimeIsolation: {
+    requireKernelObserverForHighRisk: boolean;
+    unavailableAction: RuntimeIsolationUnavailableAction;
+    auditAfterExecution: boolean;
+  };
+  responseCover: {
+    enabled: boolean;
+    coverAssistantAfterContamination: boolean;
+  };
+  notifications: {
+    enableProactiveNotifications: boolean;
+    minSeverity: NotificationSeverity;
+  };
+}
 
 export class PluginConfig {
+  profile: SecurityProfileName;
   dashboard: {
     enabled: boolean;
     host: string;
@@ -76,6 +114,7 @@ export class PluginConfig {
   };
 
   constructor() {
+    this.profile = "observe";
     this.dashboard = {
       enabled: true,
       host: "127.0.0.1",
@@ -122,7 +161,7 @@ export class PluginConfig {
       deterministic: true,
       taintFeedback: true,
       restrictWritesToAllowedRoots: false,
-      allowlistedRecipients: ["user@example.com", "security@example.com"],
+      allowlistedRecipients: [],
       allowlistedApiHosts: [],
       allowedWriteRoots: [],
       sensitiveAssets: ["secret.txt", "api_key", "token", "password", "system_prompt.txt", ".env", "id_rsa"],
@@ -146,12 +185,16 @@ export class PluginConfig {
       coverAssistantAfterContamination: true,
       message: "AgentSentry detected contaminated tool output in this turn, so the assistant response was covered. Review the AgentSentry dashboard before trusting or reusing the blocked content.",
     };
+    applySecurityProfile(this, "observe");
   }
 
   static fromPluginConfig(raw: unknown): PluginConfig {
     const config = new PluginConfig();
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return config;
     const obj = raw as Record<string, unknown>;
+
+    const profile = readString(obj.profile, config.profile);
+    if (isSecurityProfileName(profile)) applySecurityProfile(config, profile);
 
     const dashboard = objectAt(obj, "dashboard");
     if (dashboard) {
@@ -274,6 +317,206 @@ export class PluginConfig {
 
     return config;
   }
+}
+
+export function applySecurityProfile(config: PluginConfig, profile: SecurityProfileName): PluginConfig {
+  const definition = loadSecurityProfileDefinition(profile);
+
+  config.profile = definition.profile;
+  config.enforcement.mode = definition.enforcement.mode;
+  config.semantic.enabled = definition.semantic.enabled;
+  config.semantic.mode = definition.semantic.mode;
+  config.semantic.judgeToolCalls = definition.semantic.judgeToolCalls;
+  config.semantic.judgeMessages = definition.semantic.judgeMessages;
+  config.semantic.judgeProvenance = definition.semantic.judgeProvenance;
+  config.semantic.judgeMemoryWrites = definition.semantic.judgeMemoryWrites;
+  config.policy.deterministic = definition.policy.deterministic;
+  config.policy.taintFeedback = definition.policy.taintFeedback;
+  config.policy.restrictWritesToAllowedRoots = definition.policy.restrictWritesToAllowedRoots;
+  if (definition.policy.allowedWriteRoots.length && !config.policy.allowedWriteRoots.length) {
+    config.policy.allowedWriteRoots = [...definition.policy.allowedWriteRoots];
+  }
+  config.runtimeIsolation.requireKernelObserverForHighRisk = definition.runtimeIsolation.requireKernelObserverForHighRisk;
+  config.runtimeIsolation.unavailableAction = definition.runtimeIsolation.unavailableAction;
+  config.runtimeIsolation.auditAfterExecution = definition.runtimeIsolation.auditAfterExecution;
+  config.responseCover.enabled = definition.responseCover.enabled;
+  config.responseCover.coverAssistantAfterContamination = definition.responseCover.coverAssistantAfterContamination;
+  config.notifications.enableProactiveNotifications = definition.notifications.enableProactiveNotifications;
+  config.notifications.minSeverity = definition.notifications.minSeverity;
+  return config;
+}
+
+export function loadSecurityProfileDefinition(
+  profile: SecurityProfileName,
+  profileDirectory = new URL("./profiles/", import.meta.url),
+): SecurityProfileDefinition {
+  const profileUrl = new URL(`${profile}.json`, profileDirectory);
+  let source: string;
+  try {
+    source = readFileSync(profileUrl, "utf8");
+  } catch (error) {
+    throw profileLoadError(profile, profileUrl, "could not be read", error);
+  }
+
+  let value: unknown;
+  try {
+    value = JSON.parse(source);
+  } catch (error) {
+    throw profileLoadError(profile, profileUrl, "contains invalid JSON", error);
+  }
+
+  try {
+    return parseSecurityProfileDefinition(value, profile);
+  } catch (error) {
+    throw profileLoadError(profile, profileUrl, "failed validation", error);
+  }
+}
+
+function parseSecurityProfileDefinition(value: unknown, expectedProfile: SecurityProfileName): SecurityProfileDefinition {
+  const root = requireProfileObject(value, "profile");
+  assertOnlyProfileKeys(root, "profile", [
+    "profile",
+    "enforcement",
+    "semantic",
+    "policy",
+    "runtimeIsolation",
+    "responseCover",
+    "notifications",
+  ]);
+
+  const declaredProfile = requireProfileEnum(root.profile, "profile.profile", ["observe", "balanced", "competition", "high-security"]);
+  if (declaredProfile !== expectedProfile) {
+    throw new Error(`profile.profile must be "${expectedProfile}", received "${declaredProfile}"`);
+  }
+
+  const enforcement = requireProfileObject(root.enforcement, "profile.enforcement");
+  assertOnlyProfileKeys(enforcement, "profile.enforcement", ["mode"]);
+  const semantic = requireProfileObject(root.semantic, "profile.semantic");
+  assertOnlyProfileKeys(semantic, "profile.semantic", [
+    "enabled",
+    "mode",
+    "judgeToolCalls",
+    "judgeMessages",
+    "judgeProvenance",
+    "judgeMemoryWrites",
+  ]);
+  const policy = requireProfileObject(root.policy, "profile.policy");
+  assertOnlyProfileKeys(policy, "profile.policy", [
+    "deterministic",
+    "taintFeedback",
+    "restrictWritesToAllowedRoots",
+    "allowedWriteRoots",
+  ]);
+  const runtimeIsolation = requireProfileObject(root.runtimeIsolation, "profile.runtimeIsolation");
+  assertOnlyProfileKeys(runtimeIsolation, "profile.runtimeIsolation", [
+    "requireKernelObserverForHighRisk",
+    "unavailableAction",
+    "auditAfterExecution",
+  ]);
+  const responseCover = requireProfileObject(root.responseCover, "profile.responseCover");
+  assertOnlyProfileKeys(responseCover, "profile.responseCover", ["enabled", "coverAssistantAfterContamination"]);
+  const notifications = requireProfileObject(root.notifications, "profile.notifications");
+  assertOnlyProfileKeys(notifications, "profile.notifications", ["enableProactiveNotifications", "minSeverity"]);
+
+  return {
+    profile: declaredProfile,
+    enforcement: {
+      mode: requireProfileEnum(enforcement.mode, "profile.enforcement.mode", ["observe", "approval", "block"]),
+    },
+    semantic: {
+      enabled: requireProfileBoolean(semantic.enabled, "profile.semantic.enabled"),
+      mode: requireProfileEnum(semantic.mode, "profile.semantic.mode", ["off", "risk-tiered", "full"]),
+      judgeToolCalls: requireProfileBoolean(semantic.judgeToolCalls, "profile.semantic.judgeToolCalls"),
+      judgeMessages: requireProfileBoolean(semantic.judgeMessages, "profile.semantic.judgeMessages"),
+      judgeProvenance: requireProfileBoolean(semantic.judgeProvenance, "profile.semantic.judgeProvenance"),
+      judgeMemoryWrites: requireProfileBoolean(semantic.judgeMemoryWrites, "profile.semantic.judgeMemoryWrites"),
+    },
+    policy: {
+      deterministic: requireProfileBoolean(policy.deterministic, "profile.policy.deterministic"),
+      taintFeedback: requireProfileBoolean(policy.taintFeedback, "profile.policy.taintFeedback"),
+      restrictWritesToAllowedRoots: requireProfileBoolean(
+        policy.restrictWritesToAllowedRoots,
+        "profile.policy.restrictWritesToAllowedRoots",
+      ),
+      allowedWriteRoots: requireProfileStringArray(policy.allowedWriteRoots, "profile.policy.allowedWriteRoots"),
+    },
+    runtimeIsolation: {
+      requireKernelObserverForHighRisk: requireProfileBoolean(
+        runtimeIsolation.requireKernelObserverForHighRisk,
+        "profile.runtimeIsolation.requireKernelObserverForHighRisk",
+      ),
+      unavailableAction: requireProfileEnum(
+        runtimeIsolation.unavailableAction,
+        "profile.runtimeIsolation.unavailableAction",
+        ["require_approval", "block"],
+      ),
+      auditAfterExecution: requireProfileBoolean(runtimeIsolation.auditAfterExecution, "profile.runtimeIsolation.auditAfterExecution"),
+    },
+    responseCover: {
+      enabled: requireProfileBoolean(responseCover.enabled, "profile.responseCover.enabled"),
+      coverAssistantAfterContamination: requireProfileBoolean(
+        responseCover.coverAssistantAfterContamination,
+        "profile.responseCover.coverAssistantAfterContamination",
+      ),
+    },
+    notifications: {
+      enableProactiveNotifications: requireProfileBoolean(
+        notifications.enableProactiveNotifications,
+        "profile.notifications.enableProactiveNotifications",
+      ),
+      minSeverity: requireProfileEnum(notifications.minSeverity, "profile.notifications.minSeverity", ["warning", "danger"]),
+    },
+  };
+}
+
+export function isSecurityProfileName(value: string): value is SecurityProfileName {
+  return value === "observe" || value === "balanced" || value === "competition" || value === "high-security";
+}
+
+function profileLoadError(profile: SecurityProfileName, profileUrl: URL, reason: string, cause: unknown): Error {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return new Error(`AgentSentry security profile "${profile}" at ${profileUrl.pathname} ${reason}: ${detail}`, { cause });
+}
+
+function requireProfileObject(value: unknown, path: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function assertOnlyProfileKeys(
+  value: Record<string, unknown>,
+  path: string,
+  allowedKeys: readonly string[],
+  requiredKeys: readonly string[] = allowedKeys,
+): void {
+  const allowed = new Set(allowedKeys);
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
+  if (unexpected.length) throw new Error(`${path} contains unknown field(s): ${unexpected.join(", ")}`);
+  const missing = requiredKeys.filter((key) => !(key in value));
+  if (missing.length) throw new Error(`${path} is missing required field(s): ${missing.join(", ")}`);
+}
+
+function requireProfileBoolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${path} must be a boolean`);
+  return value;
+}
+
+function requireProfileEnum<const T extends string>(value: unknown, path: string, allowed: readonly T[]): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw new Error(`${path} must be one of: ${allowed.join(", ")}`);
+  }
+  return value as T;
+}
+
+function requireProfileStringArray(value: unknown, path: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item.trim())) {
+    throw new Error(`${path} must be an array of non-empty strings`);
+  }
+  const normalized = value.map((item) => (item as string).trim());
+  if (new Set(normalized).size !== normalized.length) throw new Error(`${path} must not contain duplicate values`);
+  return normalized;
 }
 
 function objectAt(obj: Record<string, unknown>, key: string): Record<string, unknown> | null {

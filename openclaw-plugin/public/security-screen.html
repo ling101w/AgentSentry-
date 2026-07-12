@@ -1187,6 +1187,9 @@
 
     .alert {
       position: relative;
+      width: 100%;
+      height: auto;
+      min-height: 72px;
       border: 1px solid rgba(99, 230, 255, 0.16);
       background:
         linear-gradient(90deg, rgba(255, 255, 255, 0.025), transparent),
@@ -1195,6 +1198,10 @@
       padding: 10px 10px 10px 12px;
       min-height: 76px;
       overflow: hidden;
+      color: var(--text-dim);
+      font: inherit;
+      text-align: left;
+      white-space: normal;
       transition: 0.18s ease;
     }
 
@@ -1233,6 +1240,17 @@
       box-shadow: inset 3px 0 0 rgba(60, 140, 255, 0.72);
     }
 
+    .alert.allowed {
+      border-color: rgba(53, 242, 155, 0.38);
+      background: rgba(7, 40, 35, 0.52);
+      box-shadow: inset 3px 0 0 rgba(53, 242, 155, 0.76);
+    }
+
+    .alert.selected {
+      border-color: rgba(99, 230, 255, 0.72);
+      box-shadow: inset 3px 0 0 var(--cyan), 0 0 18px rgba(64, 230, 255, 0.14);
+    }
+
     .alert-top {
       display: grid;
       grid-template-columns: auto 1fr auto;
@@ -1254,6 +1272,7 @@
     .badge.critical, .badge.high { color: var(--red); background: rgba(255, 77, 94, 0.12); }
     .badge.medium { color: var(--amber); background: rgba(248, 184, 78, 0.12); }
     .badge.info { color: #5ab8ff; background: rgba(60, 140, 255, 0.12); }
+    .badge.allowed { color: var(--green); background: rgba(53, 242, 155, 0.12); }
 
     .alert-type {
       font-weight: 900;
@@ -1763,6 +1782,66 @@
       font-size: 13px;
     }
 
+    .evidence-chain {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 1px;
+      min-height: 48px;
+      overflow: hidden;
+      padding: 0;
+      border-color: rgba(64, 230, 255, 0.26);
+      background: rgba(2, 14, 20, 0.78);
+      pointer-events: none;
+    }
+
+    .evidence-chain span {
+      display: grid;
+      align-content: center;
+      min-width: 0;
+      padding: 6px 9px;
+      border-left: 1px solid rgba(64, 230, 255, 0.10);
+    }
+
+    .evidence-chain span:first-child {
+      border-left: 0;
+    }
+
+    .evidence-chain small,
+    .evidence-chain b {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .evidence-chain small {
+      color: var(--text-faint);
+      font-size: 9px;
+      font-weight: 800;
+    }
+
+    .evidence-chain b {
+      margin-top: 3px;
+      font-size: 11px;
+    }
+
+    .evidence-chain.block span:last-child b {
+      color: var(--red);
+    }
+
+    .evidence-chain.ask span:last-child b {
+      color: var(--amber);
+    }
+
+    .evidence-chain.allow span:last-child b {
+      color: var(--green);
+    }
+
+    .evidence-chain.info span:last-child b {
+      color: #58bfff;
+    }
+
     .mesh-tools {
       position: absolute;
       right: 14px;
@@ -2179,6 +2258,10 @@
         min-height: 126px;
       }
 
+      .mesh-meta-line.evidence-chain {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
       .mesh-meta-line span:nth-child(4),
       .mesh-meta-line span:nth-child(5) {
         display: none;
@@ -2545,6 +2628,10 @@
         font-size: 9px;
       }
 
+      .mesh-meta-line.evidence-chain {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
       .mesh-meta-line span:nth-child(n+4) {
         display: none;
       }
@@ -2827,6 +2914,12 @@
       overflow: hidden;
     }
 
+    .mesh-meta-line.evidence-chain {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 1px;
+      padding: 0;
+    }
+
     .rules-head,
     .rule {
       display: grid;
@@ -2920,6 +3013,10 @@
 
     .modal-alert.medium {
       border-left-color: var(--amber);
+    }
+
+    .modal-alert.allowed {
+      border-left-color: var(--green);
     }
 
     .modal-alert-top {
@@ -3335,6 +3432,25 @@
       }
     }
 
+    @media (max-width: 1366px), (max-height: 820px) {
+      .mesh-meta-line.evidence-chain {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+      }
+
+      .mesh-meta-line.evidence-chain span:nth-child(n) {
+        display: grid;
+        padding: 4px 6px;
+      }
+
+      .evidence-chain small {
+        font-size: 8px;
+      }
+
+      .evidence-chain b {
+        font-size: 9px;
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -3352,15 +3468,15 @@
       </section>
 
       <section class="defense-banner">
-        <div>
-          <div class="defense-main">
+          <div>
+            <div class="defense-main">
             <svg class="shield-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 2.8 19.2 6v5.2c0 4.6-2.9 8.8-7.2 10-4.3-1.2-7.2-5.4-7.2-10V6L12 2.8Z"></path>
               <path d="m8.4 12 2.3 2.3 5-5"></path>
             </svg>
-            实时防护运行中
-          </div>
-          <div class="defense-sub">真实审计链路在线 · 策略、工具调用与 OpenClaw 记录持续汇总</div>
+            <span id="defenseMainText">实时防护运行中</span>
+            </div>
+          <div class="defense-sub" id="defenseSubText">真实审计链路在线 · 策略、工具调用与 OpenClaw 记录持续汇总</div>
         </div>
       </section>
 
@@ -3482,12 +3598,12 @@
               请确认网络可访问 CDN，或把 three.min.js 放到本地后替换脚本地址。
             </div>
           </div>
-          <div class="mesh-meta-line">
-            <span><b>API 调用流</b></span>
-            <span>调用频率 <b id="meshApiCalls" style="color:var(--cyan)">0 次</b></span>
-            <span>未阻断率 <b id="meshSuccessRate" style="color:var(--green)">0.0%</b></span>
-            <span>污染事件 <b id="meshPollutionEvents" style="color:var(--red)">0</b></span>
-            <span>策略命中 <b id="meshPolicyHits" style="color:var(--amber)">0</b></span>
+          <div class="mesh-meta-line evidence-chain" id="evidenceChain" aria-label="最近裁决因果链">
+            <span><small>来源</small><b>等待审计事件</b></span>
+            <span><small>风险证据</small><b>--</b></span>
+            <span><small>授权校验</small><b>--</b></span>
+            <span><small>工具 Sink</small><b>--</b></span>
+            <span><small>裁决</small><b>--</b></span>
           </div>
           <div class="mesh-tools">
             <button type="button" id="meshZoomIn" title="放大拓扑">+</button>
@@ -3573,6 +3689,8 @@
       refreshMs: 5000,
       tick: 0,
       data: null,
+      enforcement: null,
+      selectedAlertIndex: -1,
       interval: null
     };
     const alertModalState = {
@@ -3684,7 +3802,12 @@
 
     async function loadData() {
       try {
-        state.data = await fetchOverviewWithRetry();
+        const [overview, enforcement] = await Promise.all([
+          fetchOverviewWithRetry(),
+          fetchJson("/api/settings/enforcement").catch(() => null)
+        ]);
+        state.data = overview;
+        state.enforcement = enforcement;
         renderAll(state.data);
         const source = state.data.source || {};
         $("#runtimeMode").textContent = source.openclaw_available ? "OPENCLAW" : "API";
@@ -3890,6 +4013,64 @@
       })[String(a || "INFO").toUpperCase()] || String(a || "信息");
     }
 
+    function alertVisualClass(alert) {
+      const action = actionClass(alert?.action);
+      if (action === "allow") return "allowed";
+      if (action === "info") return "info";
+      if (action === "ask") return "medium";
+      return severityClass(alert?.severity);
+    }
+
+    function alertBadgeLabel(alert) {
+      const action = actionClass(alert?.action);
+      return action === "block" ? severityLabel(alert?.severity) : actionLabel(alert?.action);
+    }
+
+    function renderDefenseState() {
+      const enforcement = state.enforcement || {};
+      const stack = Array.isArray(enforcement.securityStack) ? enforcement.securityStack : [];
+      const enabled = stack.filter(item => item.enabled).length;
+      const mode = ({ observe: "观察模式", approval: "审批模式", block: "阻断模式" })[enforcement.mode] || "运行模式未知";
+      const profile = String(enforcement.profile || "custom").toUpperCase();
+      $("#defenseMainText").textContent = enforcement.competitionReady ? "比赛防护链路已就绪" : "实时防护运行中";
+      $("#defenseSubText").textContent = stack.length
+        ? `${profile} / ${mode} · ${enabled}/${stack.length} 防护层已开启`
+        : "真实审计链路在线 · 策略、工具调用与 OpenClaw 记录持续汇总";
+    }
+
+    function renderEvidenceChain(data) {
+      const target = $("#evidenceChain");
+      const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
+      if (!target || !alerts.length) {
+        if (target) target.innerHTML = `<span><small>来源</small><b>等待审计事件</b></span><span><small>风险证据</small><b>--</b></span><span><small>授权校验</small><b>--</b></span><span><small>工具 Sink</small><b>--</b></span><span><small>裁决</small><b>--</b></span>`;
+        return;
+      }
+
+      const selected = state.selectedAlertIndex >= 0 ? alerts[state.selectedAlertIndex] : null;
+      const alert = selected
+        || alerts.find(item => actionClass(item.action) === "block")
+        || alerts.find(item => actionClass(item.action) === "ask")
+        || alerts[0];
+      const action = actionClass(alert.action);
+      const reason = String(alert.reason || alert.rule || "");
+      const authorization = /outside taskspec|intent does not allow|lacks explicit capability|drift/i.test(reason)
+        ? "TaskSpec 越界"
+        : action === "allow"
+          ? "边界内授权"
+          : action === "ask"
+            ? "需要人工确认"
+            : "策略一致性校验";
+      const steps = [
+        ["来源", `${alert.source || "OpenClaw"} / ${alert.type || "运行上下文"}`],
+        ["风险证据", shortRuleName(alert.rule || alert.reason || "等待证据")],
+        ["授权校验", authorization],
+        ["工具 Sink", alert.tool || "未知工具"],
+        ["裁决", actionLabel(alert.action)],
+      ];
+      target.className = `mesh-meta-line evidence-chain ${action}`;
+      target.innerHTML = steps.map(([label, value]) => `<span><small>${escapeHtml(label)}</small><b title="${escapeHtml(value)}">${escapeHtml(value)}</b></span>`).join("");
+    }
+
     function paginate(items, page, pageSize) {
       const total = items.length;
       const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -3946,11 +4127,12 @@
       }
       const visibleAlerts = data.alerts.slice(0, visibleAlertLimit());
       $("#alertStream").innerHTML = visibleAlerts.map((a, i) => {
-        const sc = severityClass(a.severity);
+        const sc = alertVisualClass(a);
         const ac = actionClass(a.action);
-        return `<article class="alert ${sc}" data-alert-index="${i}" data-tip="${escapeHtml(a.reason)}">
+        const selected = i === state.selectedAlertIndex ? "selected" : "";
+        return `<button type="button" class="alert ${sc} ${selected}" data-alert-index="${i}" data-tip="${escapeHtml(a.reason)}">
           <div class="alert-top">
-            <span class="badge ${sc}">${escapeHtml(severityLabel(a.severity))}</span>
+            <span class="badge ${sc}">${escapeHtml(alertBadgeLabel(a))}</span>
             <span class="alert-type">${escapeHtml(a.type)}</span>
             <span class="alert-time">${escapeHtml(a.time)}</span>
           </div>
@@ -3959,11 +4141,15 @@
             <span>动作：<span class="action ${ac}">${escapeHtml(actionLabel(a.action))}</span></span>
           </div>
           <div class="reason">${escapeHtml(a.reason)}</div>
-        </article>`;
+        </button>`;
       }).join("") + `<button class="alert-link" id="openAlertModal" type="button">查看全部告警（${fmt(data.alertCount ?? data.alerts.length)}） →</button>`;
       $("#openAlertModal")?.addEventListener("click", () => openAlertModal(1));
       $$("#alertStream [data-alert-index]").forEach((node) => {
-        node.addEventListener("click", () => openAlertModal(1, Number(node.dataset.alertIndex || 0)));
+        node.addEventListener("click", () => {
+          state.selectedAlertIndex = Number(node.dataset.alertIndex || 0);
+          renderEvidenceChain(data);
+          $$("#alertStream [data-alert-index]").forEach(item => item.classList.toggle("selected", item === node));
+        });
       });
     }
 
@@ -4016,9 +4202,9 @@
         ? `${alertModalState.loading ? `<div class="empty-screen">正在读取第 ${fmt(alertModalState.page)} 页真实告警...</div>` : ""}${rows.map((a, offset) => {
           const index = (alertModalState.page - 1) * alertModalState.pageSize + offset;
           return `
-            <article class="modal-alert ${severityClass(a.severity)}" ${index === alertModalState.focusIndex ? 'data-focus="true"' : ""}>
+            <article class="modal-alert ${alertVisualClass(a)}" ${index === alertModalState.focusIndex ? 'data-focus="true"' : ""}>
               <div class="modal-alert-top">
-                <span>${escapeHtml(severityLabel(a.severity))} · ${escapeHtml(a.type)}</span>
+                <span>${escapeHtml(alertBadgeLabel(a))} · ${escapeHtml(a.type)}</span>
                 <span>${escapeHtml(a.time || "")}</span>
               </div>
               <div class="modal-alert-meta">工具：${escapeHtml(a.tool || "-")} · 动作：${escapeHtml(actionLabel(a.action || "INFO"))}</div>
@@ -4090,7 +4276,13 @@
         .replace(/ABAC blocked high-risk sink because relevant context includes untrusted tainted data/gi, "ABAC 阻断不可信污点流向")
         .replace(/content references sensitive credentials or private assets/gi, "内容引用敏感凭据/私有资产")
         .replace(/OpenClaw business test request/gi, "业务测试请求")
+        .replace(/Business tool blocked:\s*([\w.-]+)/gi, "业务工具已阻断：$1")
         .replace(/tool read_file is outside TaskSpec/gi, "read_file 超出任务边界")
+        .replace(/tool ([\w.-]+) is outside TaskSpec/gi, "$1 超出任务边界")
+        .replace(/dynamic intent tracking detected drift from read-only task to high-risk action/gi, "只读任务漂移到高风险动作")
+        .replace(/task intent does not allow email/gi, "当前任务未授权邮件外发")
+        .replace(/content contains prompt-injection or exfiltration indicators/gi, "检测到提示注入/外传信号")
+        .replace(/content attempts to persist privileged instructions into memory or startup flow/gi, "试图持久化特权指令")
         .replace(/read path references sensitive asset/gi, "读取路径指向敏感资产")
         .replace(/tool arguments carry secret-tainted data/gi, "工具参数携带机密污点")
         .replace(/tool arguments match deterministic trust-risk policy/gi, "命中确定性信任风险策略");
@@ -4174,6 +4366,8 @@
       renderStages(data);
       renderRules(data);
       renderTimeline(data);
+      renderDefenseState();
+      renderEvidenceChain(data);
       updateMeshLabelsFromData(data);
 
       const totalEvents = metricValue(data, "total");
@@ -4190,11 +4384,6 @@
       $("#gaugeArc").setAttribute("stroke-dashoffset", (301.6 * (1 - protection / 100)).toFixed(1));
       $("#riskLevel").textContent = posture.cn;
       $("#riskLevelEn").textContent = posture.en;
-      const meshMeta = data.meshMeta || {};
-      $("#meshApiCalls").textContent = `${fmt(meshMeta.api_calls || 0)} 次`;
-      $("#meshSuccessRate").textContent = `${Number(meshMeta.success_rate || 0).toFixed(1)}%`;
-      $("#meshPollutionEvents").textContent = fmt(meshMeta.pollution_events || 0);
-      $("#meshPolicyHits").textContent = fmt(meshMeta.policy_hits || 0);
       const taint = metricValue(data, "taint");
       const alerts = Number(data.alertCount || 0);
       $("#assessment").textContent = totalEvents
@@ -4576,32 +4765,44 @@
       });
 
       const placed = [];
+      const labelOffsets = [
+        [0, 0],
+        [0, -1], [0, 1], [-1, 0], [1, 0],
+        [-1, -1], [1, -1], [-1, 1], [1, 1],
+        [0, -2], [0, 2], [-2, 0], [2, 0],
+        [-2, -1], [2, -1], [-2, 1], [2, 1]
+      ];
       for (const entry of entries) {
         if (!entry.visible) {
           entry.item.el.style.opacity = "0";
           continue;
         }
-        for (let i = 0; i < 5; i += 1) {
-          const hit = placed.find(other => overlaps(entry, other));
-          if (!hit) break;
-          const preferAbove = entry.y <= hit.y;
-          entry.y = clamp(
-            preferAbove
-              ? hit.y - (entry.height + hit.height) / 2 - 9
-              : hit.y + (entry.height + hit.height) / 2 + 9,
-            topChrome + entry.height / 2,
-            h - bottomChrome - entry.height / 2
-          );
-          if (overlaps(entry, hit)) {
-            entry.x = clamp(
-              entry.x <= hit.x
-                ? hit.x - (entry.width + hit.width) / 2 - 10
-                : hit.x + (entry.width + hit.width) / 2 + 10,
-              entry.width / 2 + 8,
-              w - entry.width / 2 - 8
-            );
+        const anchorX = entry.x;
+        const anchorY = entry.y;
+        const horizontalStep = Math.max(entry.width + 24, 112);
+        const verticalStep = Math.max(entry.height + 14, 54);
+        let selected = null;
+        for (const [offsetX, offsetY] of labelOffsets) {
+          const candidate = {
+            ...entry,
+            x: clamp(anchorX + offsetX * horizontalStep, entry.width / 2 + 8, w - entry.width / 2 - 8),
+            y: clamp(
+              anchorY + offsetY * verticalStep,
+              topChrome + entry.height / 2,
+              h - bottomChrome - entry.height / 2
+            )
+          };
+          if (!placed.some(other => overlaps(candidate, other))) {
+            selected = candidate;
+            break;
           }
         }
+        if (!selected) {
+          entry.item.el.style.opacity = "0";
+          continue;
+        }
+        entry.x = selected.x;
+        entry.y = selected.y;
         entry.item.el.style.left = `${entry.x}px`;
         entry.item.el.style.top = `${entry.y}px`;
         entry.item.el.style.opacity = "1";

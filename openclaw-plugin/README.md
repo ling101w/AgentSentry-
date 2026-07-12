@@ -35,6 +35,7 @@ Runtime commands:
 
 ```text
 /agentsentry status
+/agentsentry profile competition
 /agentsentry config get
 /agentsentry config get enforcement.mode
 /agentsentry config set enforcement.mode approval
@@ -71,16 +72,17 @@ Runtime config changes are persisted to:
 
 The OpenClaw plugin now ports the core AgentSentry guard model into TypeScript:
 
-- TaskSpec inference from the latest user message
+- TaskSpec V2 explicit capability extraction from the latest user message; quoted, negated, vague, memory-derived, and non-concrete side-effect requests do not grant authority
 - workspace provenance scan for malicious `SKILL.md` files, risky configs, embedded secrets, and sensitive workspace files
 - deterministic sink checks for email/message, file, API, shell, and sensitive asset access
 - prompt-injection detection on messages and tool results
-- taint feedback: contaminated tool results tighten later high-risk sinks
+- field-level provenance IDs and taint feedback: only fields that actually influence a high-risk sink inherit taint
+- SHA-256 digest-pinned Tool Security Manifests; unknown tools require approval and integrity changes block
 - trajectory checks for repeated tool use
 - normalized tool names so OpenClaw tools map onto AgentSentry actions
-- optional OpenAI-compatible semantic judge that emits `learned` findings for tool calls and messages
+- isolated OpenAI-compatible semantic judge that emits `semantic` findings and can only tighten deterministic decisions
 - optional semantic workspace provenance scan for `SKILL.md` and configuration files
-- exact-operation approval cache: when an OpenClaw approval is resolved as `allow-always`, the same tool name and parameter hash is allowed without repeated approval
+- policy-versioned exact-operation approval cache: `allow-always` matches the same tool, normalized parameters, and security configuration only
 - persistent approval cache stored at `~/.openclaw/agentsentry/approval-cache.json`
 - optional response covering after contaminated tool results
 
@@ -106,6 +108,15 @@ You can switch `enforcement.mode` in OpenClaw plugin config:
 - `observe`: record only
 - `approval`: ask approval for high-risk tool calls
 - `block`: block high-risk tool calls
+
+Named postures are available under `profiles/`:
+
+```text
+/agentsentry profile observe
+/agentsentry profile balanced
+/agentsentry profile competition
+/agentsentry profile high-security
+```
 
 Proactive notifications are disabled by default. Enable them with:
 
@@ -153,6 +164,10 @@ Response covering is disabled by default. Enable it when you want AgentSentry to
 
 ```powershell
 npm run build
+npm run typecheck
+npm run lint
+npm run test:coverage
 npm run test:policy
+npm run ci
 node -e "import('./dist/index.js').then(m => console.log(m.default.id))"
 ```

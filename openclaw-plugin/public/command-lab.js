@@ -212,6 +212,14 @@ function bindEvents() {
     applyScenario($("scenarioSelect").value, { overwrite: true });
     state.resetNextSubmit = true;
   });
+  document.querySelectorAll("[data-demo-scenario]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const scenario = button.dataset.demoScenario || "external_email_hidden";
+      $("scenarioSelect").value = scenario;
+      applyScenario(scenario, { overwrite: true });
+      state.resetNextSubmit = true;
+    });
+  });
   $("sessionSelect").addEventListener("change", () => {
     state.selectedSession = $("sessionSelect").value;
     state.selectedId = "";
@@ -317,10 +325,17 @@ function renderPresets() {
 function applyScenario(key, { overwrite = false } = {}) {
   const preset = scenarioDefaults[key] || scenarioDefaults.manual;
   renderScenarioSummary(preset);
+  syncDemoSwitch(key);
   if (!overwrite) return;
   $("toolSelect").value = preset.tool || "";
   $("targetInput").value = preset.target || "";
   $("commandInput").value = preset.text || "";
+}
+
+function syncDemoSwitch(scenario) {
+  document.querySelectorAll("[data-demo-scenario]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.demoScenario === scenario);
+  });
 }
 
 function renderScenarioSummary(preset) {
@@ -628,6 +643,7 @@ function render() {
   const records = filteredRecords();
   if (state.selectedId && !records.some((record) => record.id === state.selectedId)) state.selectedId = "";
   renderStats(records);
+  renderFlowDecisionSummary(records);
   renderFlow(records);
   renderStream(records);
   renderDetail(records.find((record) => record.id === state.selectedId));
@@ -636,6 +652,41 @@ function render() {
   const windowRecords = Number(state.stats?.windowRecords ?? state.records.length ?? 0);
   const windowLimit = Number(state.stats?.windowLimit ?? $("limitSelect")?.value ?? windowRecords);
   $("flowWindow").textContent = `${state.selectedSession === ALL_SESSIONS ? "全部会话" : "当前会话"} · 最近 ${Math.min(windowRecords, windowLimit)} / 总 ${formatNumber(total)}`;
+}
+
+function renderFlowDecisionSummary(records) {
+  const target = $("flowDecisionSummary");
+  if (!target) return;
+  const scenarioKey = $("scenarioSelect")?.value || "manual";
+  const scenario = scenarioDefaults[scenarioKey] || scenarioDefaults.manual;
+  const decisionRecord = records.find((record) => record.type === "tool_decision" && /deny|block/i.test(String(record.payload?.decision || record.payload?.verdict || "")))
+    || records.find((record) => record.type === "tool_decision")
+    || records.find((record) => record.type === "alert");
+  const payload = decisionRecord?.payload || {};
+  const rawDecision = payload.decision || payload.verdict || payload.original_decision || (decisionRecord ? "info" : "pending");
+  const authorizationText = records.some((record) => /outside taskspec|lacks explicit capability|intent does not allow|drift/i.test(searchableRecord(record)))
+    ? "超出 TaskSpec"
+    : rawDecision === "allow"
+      ? "边界内授权"
+      : "等待证据";
+  const tool = toolNames[payload.normalized_tool || payload.toolName || scenario.tool] || payload.normalized_tool || payload.toolName || scenario.tool || "自动识别";
+  const targetValue = $("targetInput")?.value.trim() || "由业务链路确定";
+  const verdict = rawDecision === "pending" ? "等待运行" : decisionLabel(rawDecision);
+  const tone = decisionTone(rawDecision);
+  const items = [
+    ["业务任务", scenario.label || "手动请求"],
+    ["授权边界", authorizationText],
+    ["工具 / Sink", tool],
+    ["目标", targetValue],
+    ["最终裁决", verdict],
+  ];
+  target.className = `flow-decision-summary ${tone}`;
+  target.innerHTML = items.map(([label, value], index) => `
+    <div class="flow-decision-item ${index === items.length - 1 ? "verdict" : ""}">
+      <span>${escapeHtml(label)}</span>
+      <strong title="${escapeHtml(value)}">${escapeHtml(compactText(value, 40))}</strong>
+    </div>
+  `).join("");
 }
 
 function filteredRecords() {
@@ -770,7 +821,10 @@ function renderDetail(record) {
       <span>时间</span><strong>${escapeHtml(formatDate(fullRecord.created_at))}</strong>
     </section>
     ${record.payload?.__compact && !state.detailCache.has(record.id) ? '<div class="detail-empty detail-loading">正在读取完整 payload...</div>' : ""}
-    <pre>${escapeHtml(JSON.stringify(fullRecord.payload || {}, null, 2))}</pre>
+    <details class="raw-payload">
+      <summary><span>原始 Payload</span><small>按需展开</small></summary>
+      <pre>${escapeHtml(JSON.stringify(fullRecord.payload || {}, null, 2))}</pre>
+    </details>
   `;
   if (record.payload?.__compact && !state.detailCache.has(record.id)) {
     void loadRecordDetail(record.id);

@@ -176,7 +176,7 @@ export async function scanProvenance(workspaceDir: string, config: PluginConfig)
       result.findings.push(...scanSkillContent(relPath, content, config));
     }
     if (config.provenanceScan.scanConfig && isConfigFile(relPath)) {
-      result.findings.push(...scanConfigContent(relPath, content, config));
+      result.findings.push(...scanConfigContent(relPath, content));
     }
     if (config.provenanceScan.scanSensitiveFiles) {
       result.findings.push(...scanSensitiveFile(relPath, content, config));
@@ -243,7 +243,7 @@ function scanSkillContent(relPath: string, content: string, config: PluginConfig
   return findings;
 }
 
-function scanConfigContent(relPath: string, content: string, config: PluginConfig): DetectionFinding[] {
+function scanConfigContent(relPath: string, content: string): DetectionFinding[] {
   const findings: DetectionFinding[] = [];
   const riskyMatches = matchPatterns(content, RISKY_CONFIG_PATTERNS);
   if (riskyMatches.length) {
@@ -380,7 +380,7 @@ function matchPatterns(content: string, patterns: RegExp[]): string[] {
 
 function finding(
   layer: string,
-  findingType: "deterministic" | "heuristic" | "learned",
+  findingType: DetectionFinding["finding_type"],
   verdict: "pass" | "require_approval" | "block",
   reason: string,
   score: number,
