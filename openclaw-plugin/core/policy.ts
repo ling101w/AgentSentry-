@@ -1,4 +1,5 @@
 import type { PluginConfig } from "../config.ts";
+import type { SemanticGraph } from "./action-semantics.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { decisionFromRisk, mergeDecision } from "./judge/decision-merge.ts";
 import {
@@ -15,8 +16,27 @@ import {
 import { behaviorAnomalyFindingsFor, updateBehaviorProfile, type BehaviorProfile } from "./policy/behavior-baseline.ts";
 import { containsAny, flattenText as flattenValueText, hostFromUrl, isLabeledValue, readFirstString, unique } from "./policy/value-utils.ts";
 import { clampText, safeStringify as redactSafeStringify } from "./redact.ts";
-import { extractFieldProvenance, publicProvenance, transformProvenance, type DataProvenance } from "./taint/provenance-graph.ts";
-import { authorizeCapability, deriveTaskSpecV2, type TaskSpec } from "./task-spec/index.ts";
+import {
+  activateSemanticIntent,
+  beginSemanticAction,
+  completeSemanticAction,
+  createSemanticActionGraph,
+  markSemanticActionEnforcement,
+  semanticActionGraphSnapshot,
+  semanticActionResultContext,
+  setSemanticActionDecision,
+  type SemanticActionGraphState,
+  type SemanticEvidenceBasis,
+  type SemanticProvenanceLink,
+} from "./semantic-action-graph.ts";
+import {
+  extractFieldProvenance,
+  publicProvenance,
+  transformProvenance,
+  type DataProvenance,
+  type FieldProvenance,
+} from "./taint/provenance-graph.ts";
+import { authorizeCapability, deriveTaskSpecV2, isSideEffectToolCall, type TaskSpec } from "./task-spec/index.ts";
 import { resolveToolManifest } from "./tool-manifest.ts";
 import {
   addRisk,
@@ -54,6 +74,7 @@ export type Label = {
   risk_vector?: RiskVector;
   tags?: string[];
   taint_profile?: TaintProfile;
+  provenance_ids?: string[];
 };
 
 export type PolicyState = {
@@ -89,6 +110,7 @@ export type PolicyState = {
     tags: string[];
   }>;
   dataProvenance: DataProvenance[];
+  semanticActionGraph: SemanticActionGraphState;
 };
 
 export type PolicyDecision = {
@@ -103,6 +125,13 @@ export type PolicyDecision = {
   action: AgentSentryAction;
   task_spec: TaskSpec;
   findings: DetectionFinding[];
+  action_graph_node_id: string;
+};
+
+export type PolicyDecisionContext = {
+  toolCallId?: string;
+  semanticGraph?: SemanticGraph;
+  provenanceLinks?: SemanticProvenanceLink[];
 };
 
 const TOOL_ALIASES: Array<[RegExp, string]> = [
@@ -127,6 +156,8 @@ const EXPLICIT_NO_EMAIL = ["do not email", "don't email", "no email", "不要发
 
 export function createPolicyState(): PolicyState {
   const taskSpec = deriveTaskSpec("", []);
+  const semanticActionGraph = createSemanticActionGraph();
+  activateSemanticIntent(semanticActionGraph, taskSpec);
 
   return {
     currentTask: "",
@@ -144,6 +175,7 @@ export function createPolicyState(): PolicyState {
     taintedSources: [],
     taintFlows: [],
     dataProvenance: [],
+    semanticActionGraph,
   };
 }
 
@@ -152,6 +184,7 @@ export function updateTaskSpec(state: PolicyState, messages: unknown, config: Pl
   if (task === null || task === state.currentTask) return;
   state.currentTask = task;
   state.taskSpec = deriveTaskSpec(task, config.policy.sensitiveAssets);
+  activateSemanticIntent(state.semanticActionGraph, state.taskSpec);
 }
 
 export function normalizeAction(toolName: string, params: Record<string, unknown>): AgentSentryAction {
@@ -185,13 +218,17 @@ function specializeStateTool(tool: string, args: Record<string, unknown>): strin
 export function applyExposureTaint(action: AgentSentryAction, state: PolicyState, config: PluginConfig): {
   action: AgentSentryAction;
   findings: DetectionFinding[];
+  links: SemanticProvenanceLink[];
 } {
-  if (!config.detection.enabled || !config.policy.deterministic || !state.exposures.length || !HIGH_RISK_SINKS.has(action.tool)) {
-    return { action, findings: [] };
+  if (!config.detection.enabled || !config.policy.deterministic || !state.exposures.length) {
+    return { action, findings: [], links: [] };
   }
 
   const args = { ...action.args };
   const findings: DetectionFinding[] = [];
+  const links: SemanticProvenanceLink[] = [];
+  const blocksTaintedInput = HIGH_RISK_SINKS.has(action.tool);
+  let matchedAny = false;
   for (const [key, value] of Object.entries(args)) {
     if (isControlArg(key)) continue;
     if (isLabeledValue(value)) continue;
@@ -201,6 +238,8 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
     let exposure = match?.exposure || null;
     let mode = match?.mode || "";
     if (!exposure) continue;
+    const matchEvidence = provenanceEvidenceForMatch(mode);
+    matchedAny = true;
     const inheritedLabel: Label = {
       ...exposure.label,
       influence: mode === "run_exposure_default" ? "payload_default" : "matched",
@@ -219,22 +258,40 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
       })
       : null;
     if (lineage && !state.dataProvenance.some((item) => item.id === lineage.id)) {
-      state.dataProvenance.push(publicProvenance(lineage));
-      if (state.dataProvenance.length > 240) state.dataProvenance = state.dataProvenance.slice(-240);
+      rememberDataProvenance(state, [publicProvenance(lineage)]);
     }
-    findings.push(finding("Tool Boundary", "deterministic", "block", "sink argument inherits malicious or secret taint", 100, {
-      tool: action.tool,
-      arg: key,
-      source: exposure.source,
-      match: mode,
-      provenance_id: lineage?.id || "",
-      parent_ids: lineage?.parentIds || [],
-      provenance_path: lineage?.path || "",
-    }));
+    if (lineage) {
+      links.push({ provenanceId: lineage.id, argPath: provenanceArgPath(key), match: mode, ...matchEvidence });
+    } else if (exposure.provenanceId) {
+      links.push({ provenanceId: exposure.provenanceId, argPath: provenanceArgPath(key), match: mode, ...matchEvidence });
+    }
+    if (blocksTaintedInput) {
+      const observed = matchEvidence.basis !== "conservative";
+      findings.push(finding(
+        "Tool Boundary",
+        observed ? "deterministic" : "heuristic",
+        observed ? "block" : "require_approval",
+        observed
+          ? "sink argument inherits malicious or secret taint"
+          : "sink argument may inherit malicious or secret taint through an inferred match",
+        observed ? 100 : 60,
+        {
+        tool: action.tool,
+        arg: key,
+        source: exposure.source,
+        match: mode,
+        evidence_basis: matchEvidence.basis,
+        confidence: matchEvidence.confidence,
+        provenance_id: lineage?.id || exposure.provenanceId || "",
+        parent_ids: lineage?.parentIds || [],
+        provenance_path: lineage?.path || "",
+        },
+      ));
+    }
   }
 
-  if (!findings.length) return { action, findings };
-  return { action: { ...action, args }, findings };
+  if (!matchedAny) return { action, findings, links };
+  return { action: { ...action, args }, findings, links };
 }
 
 export function decideAction(
@@ -242,6 +299,7 @@ export function decideAction(
   state: PolicyState,
   config: PluginConfig,
   incomingFindings: DetectionFinding[],
+  context: PolicyDecisionContext = {},
 ): PolicyDecision {
   const normalizedAction = normalizePolicyAction(action);
   action = normalizedAction.action;
@@ -266,6 +324,60 @@ export function decideAction(
   const taskSpec = state.taskSpec;
   const assessment = assessAction(action, config);
   const capabilityAuthorization = authorizeCapability(taskSpec, action);
+  let actionGraphNodeId = "";
+  try {
+    const graphAttempt = beginSemanticAction(state.semanticActionGraph, {
+      toolCallId: context.toolCallId,
+      tool: action.tool,
+      originalTool: action.originalTool,
+      authorization: capabilityAuthorization,
+      sink: sinkForAction(action, assessment),
+      effects: {
+        external: assessment.externalSink,
+        persistence: assessment.persistence || assessment.systemMutation,
+        execution: action.tool === "shell_exec" || assessment.dangerousCommand,
+        sensitive: assessment.sensitive,
+        sideEffect: isSideEffectToolCall(action),
+      },
+      semantic: context.semanticGraph,
+      provenance: state.dataProvenance,
+      consumes: context.provenanceLinks,
+    });
+    actionGraphNodeId = graphAttempt.actionNodeId;
+    for (const violation of graphAttempt.violations) {
+      const observedPath = violation.path.certainty === "observed";
+      const blockingPath = violation.path.verdict === "block";
+      findings.push(finding(
+        "Semantic Action Graph",
+        observedPath ? "deterministic" : "heuristic",
+        blockingPath ? "block" : "require_approval",
+        violation.reason,
+        blockingPath ? 100 : 65,
+        {
+        graph_version: state.semanticActionGraph.version,
+        path_id: violation.path.id,
+        risk: violation.path.risk,
+        path_verdict: violation.path.verdict,
+        path_certainty: violation.path.certainty,
+        path_confidence: violation.path.confidence,
+        source_node_id: violation.path.sourceNodeId,
+        action_node_id: violation.path.actionNodeId,
+        sink_node_id: violation.path.sinkNodeId,
+        node_count: violation.path.nodeIds.length,
+        edge_count: violation.path.edgeIds.length,
+        node_ids: compactEvidenceList(violation.path.nodeIds, 32),
+        edge_ids: compactEvidenceList(violation.path.edgeIds, 32),
+        causal_chain: compactEvidenceList(violation.path.steps, 24),
+        },
+      ));
+      if (blockingPath) violations.push(violation.reason);
+    }
+  } catch {
+    findings.push(finding("Semantic Action Graph", "deterministic", "block", "semantic action graph evaluation failed; policy failed closed", 100, {
+      tool: action.tool,
+    }));
+    violations.push("semantic action graph evaluation failed");
+  }
   if (!capabilityAuthorization.authorized && !manifestAllowsUnscopedRead(action)) {
     const verdict = capabilityAuthorization.action === "deny" ? "block" : "require_approval";
     const reason = capabilityAuthorizationReason(capabilityAuthorization.reason, action.tool);
@@ -365,6 +477,7 @@ export function decideAction(
     })
     : "allow";
   const decision = mergeDecision(deterministicDecision, additionalDecision);
+  if (actionGraphNodeId) setSemanticActionDecision(state.semanticActionGraph, actionGraphNodeId, decision);
 
   return {
     decision,
@@ -378,6 +491,7 @@ export function decideAction(
     action,
     task_spec: taskSpec,
     findings: dedupeFindings(findings),
+    action_graph_node_id: actionGraphNodeId,
   };
 }
 
@@ -416,10 +530,95 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
   mergeFindingTrust(state, decision.findings);
 }
 
+export function updateActionGraphEnforcement(
+  state: PolicyState,
+  decision: PolicyDecision,
+  status: "awaiting_approval" | "blocked" | "executing",
+): void {
+  if (!decision.action_graph_node_id) return;
+  markSemanticActionEnforcement(state.semanticActionGraph, decision.action_graph_node_id, {
+    decision: decision.decision,
+    status,
+  });
+}
+
+type ToolResultLifecycle = {
+  disposition: "process" | "duplicate_terminal" | "executed_after_block";
+  graphContext: ReturnType<typeof semanticActionResultContext>;
+  actionNodeId: string;
+  callIdHash: string;
+};
+
+function inspectToolResultLifecycle(
+  state: PolicyState,
+  toolCallId: string,
+  toolName: string,
+  outcome: "succeeded" | "failed",
+): ToolResultLifecycle {
+  const graphContext = semanticActionResultContext(state.semanticActionGraph, { toolCallId, tool: toolName });
+  const actionNodeId = graphContext?.actionNodeId || "";
+  const action = actionNodeId
+    ? state.semanticActionGraph.nodes.find((node) => node.id === actionNodeId && node.kind === "action")
+    : null;
+  if (action?.status === "blocked" && outcome === "succeeded") {
+    return {
+      disposition: "executed_after_block",
+      graphContext,
+      actionNodeId,
+      callIdHash: action.callIdHash || "",
+    };
+  }
+  if (action?.status && ["blocked", "succeeded", "failed", "observed"].includes(action.status)) {
+    return {
+      disposition: "duplicate_terminal",
+      graphContext,
+      actionNodeId,
+      callIdHash: action.callIdHash || "",
+    };
+  }
+  return {
+    disposition: "process",
+    graphContext,
+    actionNodeId,
+    callIdHash: action?.callIdHash || "",
+  };
+}
+
+function enforcementBypassFinding(lifecycle: ToolResultLifecycle, toolName: string): DetectionFinding {
+  return finding(
+    "Tool Boundary",
+    "deterministic",
+    "block",
+    "tool execution was observed after AgentSentry blocked the call",
+    100,
+    {
+      event: "enforcement_bypass",
+      execution_status: "executed_after_block",
+      tool: normalizeToolName(toolName || "unknown_tool"),
+      action_node_id: lifecycle.actionNodeId,
+      call_id_hash: lifecycle.callIdHash,
+    },
+  );
+}
+
 export function labelToolResult(toolCallId: string, result: unknown, state: PolicyState, config: PluginConfig, toolName = ""): Label {
+  const lifecycle = inspectToolResultLifecycle(state, toolCallId, toolName, "succeeded");
+  if (lifecycle.disposition === "duplicate_terminal") {
+    return state.toolResultLabels.get(toolCallId) || {
+      source: toolCallId ? `tool:${toolCallId}` : "tool:unknown",
+      integrity: "untrusted",
+      confidentiality: "public",
+      tainted: false,
+      provenance_untrusted: true,
+      influence: "none",
+      tags: ["duplicate_terminal_result_ignored"],
+    };
+  }
+  const graphContext = lifecycle.graphContext;
   if (!config.detection.enabled) {
     const label = trustedToolLabel(toolCallId);
     if (toolCallId) state.toolResultLabels.set(toolCallId, label);
+    completeSemanticAction(state.semanticActionGraph, { toolCallId, tool: toolName, status: "succeeded" });
     return label;
   }
   const text = safeStringify(result);
@@ -436,6 +635,15 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
         toolName,
         previewChars: config.capture.previewChars,
       });
+      if (graphContext?.consumedProvenanceIds.length) {
+        fieldProvenance = inheritResultProvenance(
+          fieldProvenance,
+          graphContext.consumedProvenanceIds,
+          state,
+          toolCallId || toolName || "tool_result",
+          toolName,
+        );
+      }
     } catch {
       incompleteReason = "field provenance extraction failed";
     }
@@ -453,6 +661,7 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
     risk_vector: analysis.risk_vector,
     tags: unique([...analysis.tags, ...(incompleteReason ? ["analysis_incomplete"] : [])]),
     taint_profile: taintProfileFromLabel(analysis.label) || undefined,
+    provenance_ids: fieldProvenance.map((field) => field.id),
   };
   if (maliciousTaint) {
     label.integrity = "untrusted";
@@ -469,7 +678,7 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
     if (field.integrity === "tainted" || field.confidentiality === "secret") {
       const fieldLabel: Label = {
         source: `${toolCallId ? `tool:${toolCallId}` : "tool:unknown"}::${field.path}`,
-        integrity: field.integrity === "tainted" ? "untrusted" : "trusted",
+        integrity: field.integrity === "trusted" ? "trusted" : "untrusted",
         confidentiality: field.confidentiality,
         tainted: field.integrity === "tainted",
         provenance_untrusted: provenanceUntrusted,
@@ -482,8 +691,16 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
       state.exposures.push({ source: fieldLabel.source, text: field.value, label: fieldLabel, provenanceId: field.id });
     }
   }
-  state.dataProvenance.push(...fieldProvenance.map(publicProvenance));
-  if (state.dataProvenance.length > 240) state.dataProvenance = state.dataProvenance.slice(-240);
+  const publicFields = fieldProvenance.map(publicProvenance);
+  const completeProvenance = mergeDataProvenance(state.dataProvenance, publicFields);
+  completeSemanticAction(state.semanticActionGraph, {
+    toolCallId,
+    tool: toolName,
+    status: "succeeded",
+    produced: publicFields,
+    provenance: completeProvenance,
+  });
+  rememberDataProvenance(state, publicFields);
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, analysis.risk_vector);
   if (toolCallId) state.toolResultLabels.set(toolCallId, label);
   if (!fieldProvenance.length && label.tainted && text.trim()) {
@@ -493,14 +710,33 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
   return label;
 }
 
-export function resultFindings(toolCallId: string, result: unknown, state: PolicyState, config: PluginConfig, toolName = ""): DetectionFinding[] {
+export function resultFindings(
+  toolCallId: string,
+  result: unknown,
+  state: PolicyState,
+  config: PluginConfig,
+  toolName = "",
+  options: { error?: unknown } = {},
+): DetectionFinding[] {
+  const failed = options.error !== undefined && options.error !== null && Boolean(String(options.error).trim());
+  const lifecycle = inspectToolResultLifecycle(state, toolCallId, toolName, failed ? "failed" : "succeeded");
+  if (lifecycle.disposition === "duplicate_terminal") return [];
+  if (failed) {
+    completeSemanticAction(state.semanticActionGraph, { toolCallId, tool: toolName, status: "failed" });
+    return [];
+  }
   if (!config.detection.enabled) {
     labelToolResult(toolCallId, result, state, config, toolName);
-    return [];
+    return lifecycle.disposition === "executed_after_block"
+      ? [enforcementBypassFinding(lifecycle, toolName)]
+      : [];
   }
   const { analysis } = analyzePolicyResult(toolCallId, result, config, toolName);
   const label = labelToolResult(toolCallId, result, state, config, toolName);
   const findings = [...analysis.findings];
+  if (lifecycle.disposition === "executed_after_block") {
+    findings.unshift(enforcementBypassFinding(lifecycle, toolName));
+  }
   const injectionSignal = hasInjectionSignal(safeStringify(result));
   const incomplete = label.tags?.includes("analysis_incomplete") || false;
   if (!findings.length && !injectionSignal && !incomplete) return [];
@@ -525,6 +761,131 @@ export function resultFindings(toolCallId: string, result: unknown, state: Polic
   ];
 }
 
+function inheritResultProvenance(
+  fields: FieldProvenance[],
+  parentIds: string[],
+  state: PolicyState,
+  sourceId: string,
+  toolName: string,
+): FieldProvenance[] {
+  const provenanceById = new Map(state.dataProvenance.map((item) => [item.id, item]));
+  const parents = Array.from(new Set(parentIds))
+    .map((id) => provenanceById.get(id))
+    .filter((item): item is DataProvenance => Boolean(item));
+  if (!parents.length) return fields;
+
+  const ancestorIds = provenanceAncestors(parentIds, provenanceById);
+  const inheritedExposure = [...state.exposures]
+    .reverse()
+    .find((item) => item.provenanceId && ancestorIds.has(item.provenanceId));
+
+  return fields.map((field) => {
+    const derived = transformProvenance({
+      parents,
+      source: sourceId,
+      path: field.path,
+      transformation: `tool:${normalizeToolName(toolName || "unknown_tool")}`,
+      content: field.value,
+    });
+    const confidentiality = strongerConfidentiality(field.confidentiality, derived.confidentiality);
+    const integrity = weakerIntegrity(field.integrity, derived.integrity);
+    const inheritedRisk = inheritedExposure?.label.risk_vector || createRiskVector();
+    return {
+      ...field,
+      id: derived.id,
+      parentIds: [...derived.parentIds],
+      source: derived.source,
+      confidentiality,
+      integrity,
+      transformations: [...derived.transformations],
+      contentFingerprint: derived.contentFingerprint,
+      trustLabel: inheritedExposure?.label.trust_label || field.trustLabel,
+      riskVector: mergeRiskVectors(field.riskVector, inheritedRisk),
+      tags: unique([...field.tags, ...(inheritedExposure?.label.tags || []), "derived_tool_output"]),
+    };
+  });
+}
+
+function provenanceAncestors(ids: string[], provenanceById: Map<string, DataProvenance>): Set<string> {
+  const ancestors = new Set<string>();
+  const pending = [...ids];
+  while (pending.length && ancestors.size < 256) {
+    const id = pending.pop()!;
+    if (!id || ancestors.has(id)) continue;
+    ancestors.add(id);
+    const node = provenanceById.get(id);
+    if (node) pending.push(...node.parentIds);
+  }
+  return ancestors;
+}
+
+function strongerConfidentiality(
+  left: DataProvenance["confidentiality"],
+  right: DataProvenance["confidentiality"],
+): DataProvenance["confidentiality"] {
+  const rank = { public: 0, internal: 1, secret: 2 } as const;
+  return rank[left] >= rank[right] ? left : right;
+}
+
+function weakerIntegrity(
+  left: DataProvenance["integrity"],
+  right: DataProvenance["integrity"],
+): DataProvenance["integrity"] {
+  const rank = { tainted: 0, untrusted: 1, trusted: 2 } as const;
+  return rank[left] <= rank[right] ? left : right;
+}
+
+function mergeDataProvenance(current: DataProvenance[], additions: DataProvenance[]): DataProvenance[] {
+  const ordered = new Map<string, DataProvenance>();
+  for (const node of [...current, ...additions]) {
+    ordered.delete(node.id);
+    ordered.set(node.id, publicProvenance(node));
+  }
+  return [...ordered.values()];
+}
+
+function rememberDataProvenance(state: PolicyState, additions: DataProvenance[]): void {
+  const merged = mergeDataProvenance(state.dataProvenance, additions);
+  if (merged.length <= 240) {
+    state.dataProvenance = merged;
+    return;
+  }
+
+  const byId = new Map(merged.map((node) => [node.id, node]));
+  const protectedIds = new Set<string>(additions.map((node) => node.id));
+  for (const exposure of state.exposures.slice(-80)) {
+    if (exposure.provenanceId) protectedIds.add(exposure.provenanceId);
+  }
+  const pending = [...protectedIds];
+  while (pending.length && protectedIds.size < 240) {
+    const id = pending.pop()!;
+    for (const parentId of byId.get(id)?.parentIds || []) {
+      if (!protectedIds.has(parentId)) {
+        protectedIds.add(parentId);
+        pending.push(parentId);
+      }
+    }
+  }
+
+  const protectedNodes = merged.filter((node) => protectedIds.has(node.id)).slice(-240);
+  const remainingBudget = Math.max(0, 240 - protectedNodes.length);
+  const remainingCandidates = merged.filter((node) => !protectedIds.has(node.id));
+  const remaining = remainingBudget > 0 ? remainingCandidates.slice(-remainingBudget) : [];
+  const order = new Map(merged.map((node, index) => [node.id, index]));
+  const kept = [...protectedNodes, ...remaining].sort((left, right) =>
+    (order.get(left.id) || 0) - (order.get(right.id) || 0)
+  );
+  const keptIds = new Set(kept.map((node) => node.id));
+  state.dataProvenance = kept.map((node) => ({
+    ...node,
+    parentIds: node.parentIds.filter((id) => keptIds.has(id)),
+    transformations: [...node.transformations],
+  }));
+  state.exposures = state.exposures.filter((exposure) =>
+    !exposure.provenanceId || keptIds.has(exposure.provenanceId)
+  );
+}
+
 export function policyTrustSnapshot(state: PolicyState): Record<string, unknown> {
   const labels = state.trustLabels.slice(-10);
   const lowest = minimumTrustLabel(labels);
@@ -534,6 +895,7 @@ export function policyTrustSnapshot(state: PolicyState): Record<string, unknown>
     tainted_sources: state.taintedSources.slice(-12),
     taint_flows: state.taintFlows.slice(-12),
     provenance: state.dataProvenance.slice(-20),
+    semantic_action_graph: semanticActionGraphSnapshot(state.semanticActionGraph),
     lowest_trust: lowest
       ? {
         source: lowest.source,
@@ -1304,7 +1666,8 @@ function printableText(value: string): string {
 function matchExposure(text: string, exposures: PolicyState["exposures"]): { exposure: PolicyState["exposures"][number]; mode: string } | null {
   const normalizedVariants = exposureTextVariants(text);
   if (!normalizedVariants.length) return null;
-  for (const exposure of exposures) {
+  for (let exposureIndex = exposures.length - 1; exposureIndex >= 0; exposureIndex -= 1) {
+    const exposure = exposures[exposureIndex];
     const candidateVariants = exposureTextVariants(exposure.text);
     for (let textIndex = 0; textIndex < normalizedVariants.length; textIndex += 1) {
       const normalized = normalizedVariants[textIndex];
@@ -1325,6 +1688,23 @@ function matchExposure(text: string, exposures: PolicyState["exposures"]): { exp
     }
   }
   return null;
+}
+
+function provenanceEvidenceForMatch(mode: string): { basis: SemanticEvidenceBasis; confidence: number } {
+  if (mode === "exact") return { basis: "observed", confidence: 1 };
+  if (mode === "encoded_exact") return { basis: "decoded", confidence: 0.98 };
+  if (mode === "substring") return { basis: "conservative", confidence: 0.9 };
+  if (mode === "encoded_substring") return { basis: "conservative", confidence: 0.86 };
+  if (mode === "fuzzy") return { basis: "conservative", confidence: 0.82 };
+  if (mode === "encoded_fuzzy") return { basis: "conservative", confidence: 0.78 };
+  return { basis: "conservative", confidence: 0.7 };
+}
+
+function compactEvidenceList(values: string[], limit: number): string[] {
+  if (values.length <= limit) return [...values];
+  const head = Math.ceil(limit / 2);
+  const tail = Math.floor(limit / 2);
+  return [...values.slice(0, head), ...values.slice(-tail)];
 }
 
 function isControlArg(name: string): boolean {

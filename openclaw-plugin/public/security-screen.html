@@ -1784,7 +1784,7 @@
 
     .evidence-chain {
       display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 1px;
       min-height: 48px;
       overflow: hidden;
@@ -1826,14 +1826,28 @@
       font-size: 11px;
     }
 
+    .evidence-chain span:first-child b {
+      color: var(--cyan);
+    }
+
+    .evidence-chain span:nth-child(3) b {
+      color: var(--amber);
+    }
+
+    .evidence-chain.block span:nth-child(2) b,
+    .evidence-chain.block span:nth-child(5) b,
     .evidence-chain.block span:last-child b {
       color: var(--red);
     }
 
+    .evidence-chain.ask span:nth-child(2) b,
+    .evidence-chain.ask span:nth-child(5) b,
     .evidence-chain.ask span:last-child b {
       color: var(--amber);
     }
 
+    .evidence-chain.allow span:nth-child(2) b,
+    .evidence-chain.allow span:nth-child(5) b,
     .evidence-chain.allow span:last-child b {
       color: var(--green);
     }
@@ -1861,6 +1875,500 @@
       color: var(--text-dim);
       background: rgba(8, 32, 42, 0.74);
       backdrop-filter: blur(8px);
+    }
+
+    .mesh-head-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .mesh-view-switch {
+      display: inline-grid;
+      grid-template-columns: repeat(2, 52px);
+      padding: 2px;
+      border: 1px solid rgba(64, 230, 255, 0.22);
+      border-radius: 6px;
+      background: rgba(3, 18, 24, 0.72);
+    }
+
+    .mesh-view-switch button {
+      height: 24px;
+      padding: 0 7px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--text-faint);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .mesh-view-switch button.active {
+      color: var(--text);
+      background: rgba(64, 230, 255, 0.13);
+      box-shadow: inset 0 0 0 1px rgba(64, 230, 255, 0.24);
+    }
+
+    .causal-graph-layer {
+      position: absolute;
+      inset: 0 0 62px;
+      z-index: 4;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+    }
+
+    .mesh-canvas-three.causal-active .causal-graph-layer {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+
+    .mesh-canvas-three.causal-active .three-mesh-stage,
+    .mesh-canvas-three.causal-active .three-label-layer,
+    .mesh-canvas-three.causal-active .three-empty {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .mesh-canvas-three.causal-active .mesh-tools {
+      display: flex;
+      z-index: 9;
+    }
+
+    .causal-graph-toolbar {
+      position: absolute;
+      top: 12px;
+      left: 14px;
+      right: 14px;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 28px;
+      pointer-events: none;
+    }
+
+    .causal-graph-story {
+      position: absolute;
+      top: 47px;
+      left: 14px;
+      right: 14px;
+      z-index: 3;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      min-height: 48px;
+      border-top: 1px solid rgba(64, 230, 255, 0.16);
+      border-bottom: 1px solid rgba(64, 230, 255, 0.16);
+      background: rgba(3, 18, 24, 0.62);
+      pointer-events: none;
+    }
+
+    .causal-graph-story[hidden] {
+      display: none;
+    }
+
+    .causal-story-step {
+      position: relative;
+      min-width: 0;
+      padding: 7px 10px;
+      border-right: 1px solid rgba(64, 230, 255, 0.12);
+    }
+
+    .causal-story-step:last-child {
+      border-right: 0;
+    }
+
+    .causal-story-step small,
+    .causal-story-step b,
+    .causal-story-step span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .causal-story-step small {
+      color: var(--text-faint);
+      font-size: 8px;
+      font-weight: 900;
+    }
+
+    .causal-story-step b {
+      margin-top: 3px;
+      color: var(--text);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .causal-story-step span {
+      margin-top: 2px;
+      color: var(--text-faint);
+      font-size: 8px;
+      font-weight: 700;
+    }
+
+    .causal-story-step.actor b { color: var(--cyan); }
+    .causal-story-step.authorization.allow b { color: var(--green); }
+    .causal-story-step.authorization.review b { color: var(--amber); }
+    .causal-story-step.authorization.block b,
+    .causal-story-step.authorization.critical b { color: var(--red); }
+    .causal-story-step.data b { color: var(--amber); }
+    .causal-story-step.sink.block b,
+    .causal-story-step.sink.critical b,
+    .causal-story-step.verdict.block b,
+    .causal-story-step.verdict.critical b { color: var(--red); }
+    .causal-story-step.sink.allow b,
+    .causal-story-step.verdict.allow b { color: var(--green); }
+    .causal-story-step.sink.review b,
+    .causal-story-step.verdict.review b { color: var(--amber); }
+
+    .causal-graph-badge {
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      height: 23px;
+      padding: 0 8px;
+      border: 1px solid rgba(64, 230, 255, 0.20);
+      border-radius: 5px;
+      background: rgba(3, 18, 24, 0.78);
+      color: var(--text-dim);
+      font-size: 9px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .causal-graph-badge.primary {
+      color: var(--cyan);
+      border-color: rgba(64, 230, 255, 0.38);
+    }
+
+    .causal-graph-badge.observed {
+      color: var(--green);
+      border-color: rgba(53, 242, 155, 0.36);
+    }
+
+    .causal-graph-badge.conservative {
+      color: var(--amber);
+      border-color: rgba(248, 184, 78, 0.38);
+    }
+
+    .causal-graph-badge.verdict {
+      margin-left: auto;
+      color: var(--red);
+      border-color: rgba(255, 77, 94, 0.42);
+    }
+
+    .causal-graph-badge.verdict.allow {
+      color: var(--green);
+      border-color: rgba(53, 242, 155, 0.42);
+    }
+
+    .causal-graph-badge.verdict.critical {
+      color: var(--red);
+      border-color: rgba(255, 77, 94, 0.72);
+      box-shadow: inset 0 0 12px rgba(255, 77, 94, 0.08);
+    }
+
+    .causal-graph-viewport {
+      position: absolute;
+      inset: 44px 10px 4px;
+      overflow: hidden;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .causal-graph-layer.has-story .causal-graph-viewport {
+      top: 103px;
+    }
+
+    .causal-graph-viewport.dragging {
+      cursor: grabbing;
+    }
+
+    .causal-graph-world {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+
+    .causal-graph-svg,
+    .causal-graph-nodes {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .causal-graph-svg {
+      z-index: 1;
+      overflow: visible;
+      pointer-events: auto;
+    }
+
+    .causal-graph-nodes {
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .causal-edge {
+      fill: none;
+      stroke: rgba(64, 230, 255, 0.46);
+      stroke-width: 1.35;
+      vector-effect: non-scaling-stroke;
+      pointer-events: none;
+      transition: opacity 0.16s ease, filter 0.16s ease;
+    }
+
+    .causal-edge-hit {
+      fill: none;
+      stroke: transparent;
+      stroke-width: 14;
+      pointer-events: stroke;
+      cursor: pointer;
+    }
+
+    .causal-edge.dimmed,
+    .causal-edge-label.dimmed {
+      opacity: 0.14;
+    }
+
+    .causal-edge.selected {
+      filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.58));
+    }
+
+    .causal-edge.path {
+      stroke: rgba(255, 77, 94, 0.86);
+      stroke-width: 2.1;
+      stroke-dasharray: 8 7;
+      animation: causalFlow 1.8s linear infinite;
+      filter: drop-shadow(0 0 5px rgba(255, 77, 94, 0.42));
+    }
+
+    .causal-edge.path.decoded {
+      stroke: rgba(64, 230, 255, 0.90);
+      filter: drop-shadow(0 0 5px rgba(64, 230, 255, 0.38));
+    }
+
+    .causal-edge.path.conservative {
+      stroke: rgba(248, 184, 78, 0.92);
+      filter: drop-shadow(0 0 5px rgba(248, 184, 78, 0.38));
+    }
+
+    .causal-edge.path.projection {
+      stroke: rgba(126, 140, 151, 0.86);
+      stroke-dasharray: 4 7;
+      filter: none;
+    }
+
+    .causal-graph-svg[data-trace-kind="authorized"] .causal-edge.path.observed {
+      stroke: rgba(53, 242, 155, 0.92);
+      filter: drop-shadow(0 0 5px rgba(53, 242, 155, 0.34));
+    }
+
+    .causal-edge-label {
+      fill: var(--text-faint);
+      font-size: 9px;
+      font-weight: 800;
+      paint-order: stroke;
+      stroke: rgba(2, 14, 20, 0.96);
+      stroke-width: 4px;
+      stroke-linejoin: round;
+      text-anchor: middle;
+    }
+
+    @keyframes causalFlow {
+      to { stroke-dashoffset: -30; }
+    }
+
+    .causal-node {
+      position: absolute;
+      width: 118px;
+      min-height: 62px;
+      transform: translate(-50%, -50%);
+      padding: 7px 8px;
+      border: 1px solid rgba(64, 230, 255, 0.28);
+      border-radius: 6px;
+      background: rgba(4, 20, 27, 0.90);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28), inset 0 0 18px rgba(64, 230, 255, 0.035);
+      color: var(--text);
+      pointer-events: auto;
+      appearance: none;
+      font-family: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: opacity 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    .causal-node.on-path {
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.32), 0 0 15px rgba(255, 77, 94, 0.12);
+    }
+
+    .causal-node:hover,
+    .causal-node:focus-visible,
+    .causal-node.selected {
+      outline: none;
+      border-color: rgba(255, 255, 255, 0.72);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.38), 0 0 18px rgba(64, 230, 255, 0.26);
+    }
+
+    .causal-node.dimmed {
+      opacity: 0.20;
+    }
+
+    .causal-node[data-kind="collapsed"] {
+      border-style: dashed;
+      border-color: rgba(126, 140, 151, 0.66);
+      background: rgba(4, 20, 27, 0.74);
+    }
+
+    .causal-node[data-kind="intent"] { border-color: rgba(64, 230, 255, 0.52); }
+    .causal-node[data-kind="capability"] { border-color: rgba(53, 242, 155, 0.48); }
+    .causal-node[data-kind="action"] { border-color: rgba(88, 191, 255, 0.50); }
+    .causal-node[data-kind="data"] { border-color: rgba(248, 184, 78, 0.52); }
+    .causal-node[data-kind="sink"] { border-color: rgba(255, 77, 94, 0.62); }
+    .causal-node[data-status="blocked"] { border-color: rgba(255, 77, 94, 0.78); }
+    .causal-node[data-integrity="tainted"],
+    .causal-node[data-confidentiality="secret"] { box-shadow: 0 8px 20px rgba(0, 0, 0, 0.32), 0 0 17px rgba(248, 184, 78, 0.14); }
+
+    .causal-node-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .causal-node-kind,
+    .causal-node-state {
+      color: var(--text-faint);
+      font-size: 8px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .causal-node-state {
+      color: var(--amber);
+    }
+
+    .causal-node-title,
+    .causal-node-meta {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .causal-node-title {
+      margin-top: 5px;
+      color: var(--text);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .causal-node-meta {
+      margin-top: 3px;
+      color: var(--text-faint);
+      font-size: 8px;
+      font-weight: 700;
+    }
+
+    .causal-graph-empty {
+      position: absolute;
+      inset: 44px 12px 10px;
+      display: grid;
+      place-items: center;
+      color: var(--text-faint);
+      font-size: 11px;
+      text-align: center;
+    }
+
+    .causal-graph-inspector {
+      position: absolute;
+      top: 48px;
+      right: 14px;
+      z-index: 8;
+      width: min(268px, calc(100% - 28px));
+      padding: 9px 10px;
+      border: 1px solid rgba(64, 230, 255, 0.30);
+      border-radius: 6px;
+      background: rgba(3, 18, 24, 0.94);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+      color: var(--text);
+    }
+
+    .causal-graph-layer.has-story .causal-graph-inspector {
+      top: 107px;
+    }
+
+    .causal-graph-inspector[hidden] { display: none; }
+
+    .causal-inspector-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--cyan);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .causal-inspector-close {
+      width: 24px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid rgba(126, 140, 151, 0.28);
+      border-radius: 4px;
+      background: rgba(9, 36, 48, 0.78);
+      color: var(--text-dim);
+      cursor: pointer;
+    }
+
+    .causal-inspector-grid {
+      display: grid;
+      grid-template-columns: 64px minmax(0, 1fr);
+      gap: 4px 8px;
+      margin-top: 7px;
+      font-size: 9px;
+      line-height: 1.35;
+    }
+
+    .causal-inspector-grid span { color: var(--text-faint); }
+    .causal-inspector-grid b {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      color: var(--text-dim);
+      font-weight: 800;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .causal-edge.path { animation: none; }
+      .causal-node,
+      .causal-edge { transition: none; }
+    }
+
+    @media (max-width: 1500px), (max-height: 820px) {
+      .mesh-head-legend { display: none; }
+      .mesh-head-actions { gap: 6px; }
+      .causal-graph-toolbar .causal-graph-badge:nth-child(4) { display: none; }
+      .causal-graph-layer { bottom: 54px; }
+      .causal-node { width: 104px; min-height: 56px; padding: 6px 7px; }
+      .causal-node-title { font-size: 10px; }
+      .causal-node-meta { font-size: 8px; }
+      .causal-graph-toolbar { top: 8px; }
+      .causal-graph-viewport { top: 38px; }
+      .causal-graph-story { top: 39px; min-height: 44px; }
+      .causal-graph-layer.has-story .causal-graph-viewport { top: 89px; }
+      .causal-graph-layer.has-story .causal-graph-inspector { top: 93px; }
+      .causal-story-step { padding: 6px 7px; }
+      .causal-story-step b { font-size: 9px; }
     }
 
 
@@ -2915,7 +3423,7 @@
     }
 
     .mesh-meta-line.evidence-chain {
-      grid-template-columns: repeat(5, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 1px;
       padding: 0;
     }
@@ -3434,7 +3942,7 @@
 
     @media (max-width: 1366px), (max-height: 820px) {
       .mesh-meta-line.evidence-chain {
-        grid-template-columns: repeat(5, minmax(0, 1fr));
+        grid-template-columns: repeat(6, minmax(0, 1fr));
       }
 
       .mesh-meta-line.evidence-chain span:nth-child(n) {
@@ -3448,6 +3956,321 @@
 
       .evidence-chain b {
         font-size: 9px;
+      }
+    }
+
+    /* Compact situation console: one focused module instead of four squeezed cards. */
+    .left-col {
+      grid-template-rows: minmax(0, 1fr) !important;
+    }
+
+    .overview-console {
+      height: 100%;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      padding: 12px 13px 11px;
+      overflow: hidden;
+    }
+
+    .overview-console > .panel-header {
+      margin-bottom: 8px;
+    }
+
+    .overview-tabs {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 3px;
+      min-height: 46px;
+      margin-bottom: 9px;
+      padding: 3px;
+      border: 1px solid rgba(64, 230, 255, 0.16);
+      border-radius: 7px;
+      background: rgba(2, 14, 20, 0.72);
+    }
+
+    .overview-tab {
+      min-width: 0;
+      height: 40px;
+      display: grid;
+      grid-template-rows: auto auto;
+      place-items: center;
+      gap: 1px;
+      padding: 4px 3px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--text-faint);
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .overview-tab span,
+    .overview-tab b {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .overview-tab span {
+      color: inherit;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .overview-tab small {
+      margin-right: 3px;
+      color: rgba(64, 230, 255, 0.56);
+      font-size: 8px;
+      font-weight: 900;
+    }
+
+    .overview-tab b {
+      color: var(--text-dim);
+      font-size: 10px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .overview-tab:hover,
+    .overview-tab:focus-visible {
+      color: var(--text);
+      border-color: rgba(64, 230, 255, 0.22);
+      outline: none;
+    }
+
+    .overview-tab.active {
+      color: var(--cyan);
+      border-color: rgba(64, 230, 255, 0.36);
+      background: rgba(64, 230, 255, 0.11);
+      box-shadow: inset 0 0 14px rgba(64, 230, 255, 0.05);
+    }
+
+    .overview-tab.active b {
+      color: var(--text);
+    }
+
+    .overview-panels {
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .overview-pane {
+      height: 100%;
+      min-height: 0;
+      overflow: auto;
+      scrollbar-width: none;
+    }
+
+    .overview-pane::-webkit-scrollbar {
+      display: none;
+    }
+
+    .overview-pane[hidden] {
+      display: none !important;
+    }
+
+    #overviewPanelPosture {
+      display: grid;
+      grid-template-rows: auto auto auto;
+      align-content: start;
+      gap: 9px;
+    }
+
+    #overviewPanelPosture .posture {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 10px;
+    }
+
+    #overviewPanelPosture .gauge {
+      width: clamp(120px, 9vw, 158px);
+    }
+
+    #overviewPanelPosture .assessment,
+    #overviewPanelPosture .running {
+      margin-top: 0;
+    }
+
+    #overviewPanelPosture .assessment {
+      max-height: none;
+      display: block;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    #overviewPanelDomains {
+      display: grid;
+      grid-template-rows: minmax(0, 1fr) auto;
+      gap: 10px;
+    }
+
+    #overviewPanelDomains .lifecycle {
+      align-content: start;
+      gap: 10px;
+    }
+
+    #overviewPanelDomains .bar-row {
+      grid-template-columns: minmax(76px, 0.85fr) minmax(48px, 1fr) 42px 34px;
+      min-height: 28px;
+      gap: 6px;
+      font-size: 11px;
+    }
+
+    #overviewPanelDomains .legend {
+      margin-top: 0;
+      gap: 9px;
+      font-size: 10px;
+    }
+
+    #overviewPanelDecisions .mode-wrap {
+      height: 100%;
+      grid-template-columns: minmax(0, 0.82fr) minmax(0, 1fr);
+      grid-template-rows: minmax(130px, 1fr) auto;
+      gap: 10px;
+      overflow: auto;
+    }
+
+    #overviewPanelDecisions .mode-list {
+      gap: 9px;
+      padding-top: 8px;
+    }
+
+    #overviewPanelDecisions .mode-item {
+      min-height: 28px;
+      font-size: 11px;
+    }
+
+    #overviewPanelDecisions .radar svg {
+      max-height: 168px;
+    }
+
+    #overviewPanelDecisions .mode-table {
+      display: grid;
+      max-height: none;
+    }
+
+    #overviewPanelAttack .attack-chain {
+      height: 100%;
+      grid-template-rows: minmax(0, 1fr) auto;
+      gap: 9px;
+      overflow: auto;
+    }
+
+    #overviewPanelAttack .stages {
+      grid-template-columns: minmax(0, 1fr);
+      align-content: start;
+      gap: 6px;
+    }
+
+    #overviewPanelAttack .stage,
+    #overviewPanelAttack .stage:first-child {
+      min-height: 48px;
+      margin-left: 0;
+      padding: 7px 9px;
+      place-items: stretch;
+      text-align: left;
+      clip-path: none;
+      border-left: 3px solid var(--cyan);
+      border-radius: 6px;
+      background: linear-gradient(90deg, rgba(64, 230, 255, 0.13), rgba(36, 230, 182, 0.045));
+    }
+
+    #overviewPanelAttack .stage:nth-child(4) {
+      border-left-color: var(--amber);
+      background: linear-gradient(90deg, rgba(248, 184, 78, 0.13), rgba(255, 140, 61, 0.045));
+    }
+
+    #overviewPanelAttack .stage:nth-child(5) {
+      border-left-color: var(--red);
+      background: linear-gradient(90deg, rgba(255, 77, 94, 0.14), rgba(255, 140, 61, 0.045));
+    }
+
+    #overviewPanelAttack .stage > div {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 42px 48px;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #overviewPanelAttack .stage .name {
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 11px;
+    }
+
+    #overviewPanelAttack .stage .n {
+      color: var(--text);
+      font-size: 16px;
+      text-align: right;
+    }
+
+    #overviewPanelAttack .stage .p {
+      color: var(--text-faint);
+      font-size: 10px;
+      text-align: right;
+    }
+
+    #overviewPanelAttack .mini-table {
+      max-height: 174px;
+    }
+
+    .bottom-grid {
+      grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.58fr) !important;
+    }
+
+    @media (max-width: 1440px), (max-height: 900px) {
+      .overview-console {
+        padding: 9px 10px 8px;
+      }
+
+      .overview-tabs {
+        min-height: 40px;
+        margin-bottom: 7px;
+      }
+
+      .overview-tab {
+        height: 34px;
+        padding: 3px 2px;
+      }
+
+      .overview-tab span,
+      .overview-tab b {
+        font-size: 8.5px;
+      }
+
+      #overviewPanelPosture .gauge {
+        width: clamp(104px, 8vw, 132px);
+      }
+
+      #overviewPanelPosture .assessment {
+        font-size: 10.5px;
+        line-height: 1.45;
+      }
+
+      #overviewPanelDomains .lifecycle {
+        gap: 7px;
+      }
+
+      #overviewPanelDomains .bar-row {
+        min-height: 24px;
+        font-size: 9.5px;
+      }
+
+      #overviewPanelDecisions .mode-wrap {
+        grid-template-rows: minmax(108px, 1fr) auto;
+      }
+
+      #overviewPanelDecisions .mode-table {
+        display: grid;
+      }
+
+      #overviewPanelAttack .stage,
+      #overviewPanelAttack .stage:first-child {
+        min-height: 40px;
+      }
+
+      #overviewPanelAttack .mini-table {
+        max-height: 142px;
       }
     }
 
@@ -3474,9 +4297,9 @@
               <path d="M12 2.8 19.2 6v5.2c0 4.6-2.9 8.8-7.2 10-4.3-1.2-7.2-5.4-7.2-10V6L12 2.8Z"></path>
               <path d="m8.4 12 2.3 2.3 5-5"></path>
             </svg>
-            <span id="defenseMainText">实时防护运行中</span>
+            <span id="defenseMainText">玄鉴正在苏醒</span>
             </div>
-          <div class="defense-sub" id="defenseSubText">真实审计链路在线 · 策略、工具调用与 OpenClaw 记录持续汇总</div>
+          <div class="defense-sub" id="defenseSubText">审计链路接驳中 · 等待第一道真实事件</div>
         </div>
       </section>
 
@@ -3510,64 +4333,81 @@
 
     <section class="main-grid">
       <aside class="left-col">
-        <section class="panel">
+        <section class="panel overview-console">
           <div class="panel-header">
-            <div class="left">A. 当前防护态势 <small>ⓘ</small></div>
-            <small>实时</small>
+            <div class="left"><span class="diamond"></span><span>态势侧舱</span></div>
+            <small id="overviewPaneMeta">实时</small>
           </div>
-          <div class="posture">
-            <div class="gauge">
-              <svg viewBox="0 0 120 120">
-                <circle cx="60" cy="60" r="48" stroke="rgba(233,251,255,0.08)" stroke-width="12" fill="none"/>
-                <circle id="gaugeArc" cx="60" cy="60" r="48" stroke="url(#gaugeGrad)" stroke-width="12" fill="none" stroke-linecap="round" stroke-dasharray="301.6" stroke-dashoffset="24.1"/>
-                <defs>
-                  <linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0%" stop-color="#35f29b"/>
-                    <stop offset="58%" stop-color="#40e6ff"/>
-                    <stop offset="100%" stop-color="#3c8cff"/>
-                  </linearGradient>
-                </defs>
-              </svg>
-              <div class="value">
-                <div><span class="big" id="protectionIndex">0</span><span class="slash">/100</span></div>
-                <div class="small">防护指数</div>
+          <div class="overview-tabs" id="overviewTabs" role="tablist" aria-label="态势模块">
+            <button type="button" class="overview-tab active" id="overviewTabPosture" role="tab" aria-selected="true" aria-controls="overviewPanelPosture" data-overview-pane="posture">
+              <span><small>01</small>防护</span><b id="overviewSummaryPosture">--</b>
+            </button>
+            <button type="button" class="overview-tab" id="overviewTabDomains" role="tab" aria-selected="false" aria-controls="overviewPanelDomains" data-overview-pane="domains" tabindex="-1">
+              <span><small>02</small>安全域</span><b id="overviewSummaryDomains">--</b>
+            </button>
+            <button type="button" class="overview-tab" id="overviewTabDecisions" role="tab" aria-selected="false" aria-controls="overviewPanelDecisions" data-overview-pane="decisions" tabindex="-1">
+              <span><small>03</small>处置</span><b id="overviewSummaryDecisions">--</b>
+            </button>
+            <button type="button" class="overview-tab" id="overviewTabAttack" role="tab" aria-selected="false" aria-controls="overviewPanelAttack" data-overview-pane="attack" tabindex="-1">
+              <span><small>04</small>攻击链</span><b id="overviewSummaryAttack">--</b>
+            </button>
+          </div>
+          <div class="overview-panels">
+            <section class="overview-pane" id="overviewPanelPosture" role="tabpanel" aria-labelledby="overviewTabPosture" data-overview-panel="posture">
+              <div class="posture">
+                <div class="gauge">
+                  <svg viewBox="0 0 120 120">
+                    <circle cx="60" cy="60" r="48" stroke="rgba(233,251,255,0.08)" stroke-width="12" fill="none"/>
+                    <circle id="gaugeArc" cx="60" cy="60" r="48" stroke="url(#gaugeGrad)" stroke-width="12" fill="none" stroke-linecap="round" stroke-dasharray="301.6" stroke-dashoffset="24.1"/>
+                    <defs>
+                      <linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#35f29b"/>
+                        <stop offset="58%" stop-color="#40e6ff"/>
+                        <stop offset="100%" stop-color="#3c8cff"/>
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                  <div class="value">
+                    <div><span class="big" id="protectionIndex">0</span><span class="slash">/100</span></div>
+                    <div class="small">防护指数</div>
+                  </div>
+                </div>
+                <div class="risk-box stable" id="riskBox">
+                  <div class="label">风险等级</div>
+                  <div class="risk" id="riskLevel">暂无数据</div>
+                  <div class="en" id="riskLevelEn">等待数据</div>
+                </div>
               </div>
-            </div>
-            <div class="risk-box stable" id="riskBox">
-              <div class="label">风险等级</div>
-              <div class="risk" id="riskLevel">暂无数据</div>
-              <div class="en" id="riskLevelEn">等待数据</div>
-            </div>
-          </div>
-          <div class="assessment" id="assessment">
-            等待真实审计事件进入玄鉴。运行实验用例后，系统会自动汇总工具调用、策略裁决、OpenClaw 记录和阻断结果。
-          </div>
-          <div class="running">防护状态：<span class="dot"></span> 稳定运行</div>
-        </section>
+              <div class="assessment" id="assessment">
+                等待真实审计事件进入玄鉴。运行实验用例后，系统会自动汇总工具调用、策略裁决、OpenClaw 记录和阻断结果。
+              </div>
+              <div class="running">防护状态：<span class="dot"></span> 稳定运行</div>
+            </section>
 
-        <section class="panel">
-          <div class="panel-header">
-            <div class="left">B. 安全域拦截分布</div>
-            <small>今日</small>
-          </div>
-          <div class="lifecycle" id="lifecycleBars"></div>
-          <div class="legend">
-            <span><i style="background:var(--red)"></i>拦截</span>
-            <span><i style="background:var(--teal)"></i>放行</span>
-            <span><i style="background:var(--amber)"></i>待审批</span>
-            <span><i style="background:#7e8c97"></i>其他</span>
-          </div>
-        </section>
+            <section class="overview-pane" id="overviewPanelDomains" role="tabpanel" aria-labelledby="overviewTabDomains" data-overview-panel="domains" hidden>
+              <div class="lifecycle" id="lifecycleBars"></div>
+              <div class="legend">
+                <span><i style="background:var(--red)"></i>拦截</span>
+                <span><i style="background:var(--teal)"></i>放行</span>
+                <span><i style="background:var(--amber)"></i>待审批</span>
+                <span><i style="background:#7e8c97"></i>其他</span>
+              </div>
+            </section>
 
-        <section class="panel">
-          <div class="panel-header">
-            <div class="left">C. 实时处置分布</div>
-            <small>真实裁决</small>
-          </div>
-          <div class="mode-wrap">
-            <div class="mode-list" id="modeList"></div>
-            <div class="radar" id="radarChart"></div>
-            <div class="mode-table" id="modeStageTable"></div>
+            <section class="overview-pane" id="overviewPanelDecisions" role="tabpanel" aria-labelledby="overviewTabDecisions" data-overview-panel="decisions" hidden>
+              <div class="mode-wrap">
+                <div class="mode-list" id="modeList"></div>
+                <div class="radar" id="radarChart"></div>
+                <div class="mode-table" id="modeStageTable"></div>
+              </div>
+            </section>
+
+            <section class="overview-pane" id="overviewPanelAttack" role="tabpanel" aria-labelledby="overviewTabAttack" data-overview-panel="attack" hidden>
+              <div class="attack-chain">
+                <div class="stages" id="attackStages"></div>
+                <div class="mini-table" id="attackTable"></div>
+              </div>
+            </section>
           </div>
         </section>
       </aside>
@@ -3576,17 +4416,23 @@
         <div class="panel-header mesh-head">
           <div class="left">
             <span class="diamond"></span>
-            <span title="智能体行为安全拓扑">Agent 行为安全拓扑</span>
+            <span id="meshViewTitle" title="智能体行为安全拓扑">Agent 行为安全拓扑</span>
             <span class="mesh-state-inline">
               <span id="meshStateText">等待真实审计事件</span> · 防护指数 <b id="meshProtection">0</b> · 已阻断 <strong id="meshBlocks">0</strong>
             </span>
           </div>
-          <small>
-            <span style="color:var(--cyan)">━━ 安全调用</span>
-            &nbsp;&nbsp;<span style="color:var(--red)">━━ 高风险调用</span>
-            &nbsp;&nbsp;<span style="color:var(--amber)">••• 污染传播</span>
-            &nbsp;&nbsp;<span style="color:var(--red)">-×- 已拦截</span>
-          </small>
+          <div class="mesh-head-actions">
+            <div class="mesh-view-switch" role="tablist" aria-label="拓扑视图">
+              <button type="button" id="meshViewTopology" class="active" role="tab" aria-selected="true" aria-controls="threeMesh">态势</button>
+              <button type="button" id="meshViewCausal" role="tab" aria-selected="false" aria-controls="causalGraph">因果</button>
+            </div>
+            <small class="mesh-head-legend" id="meshHeadLegend">
+              <span style="color:var(--cyan)">━━ 安全调用</span>
+              &nbsp;&nbsp;<span style="color:var(--red)">━━ 高风险调用</span>
+              &nbsp;&nbsp;<span style="color:var(--amber)">••• 污染传播</span>
+              &nbsp;&nbsp;<span style="color:var(--red)">-×- 已拦截</span>
+            </small>
+          </div>
         </div>
 
         <div class="mesh-canvas mesh-canvas-three" id="meshCanvas">
@@ -3598,12 +4444,25 @@
               请确认网络可访问 CDN，或把 three.min.js 放到本地后替换脚本地址。
             </div>
           </div>
+          <div id="causalGraph" class="causal-graph-layer" aria-live="polite">
+            <div class="causal-graph-toolbar" id="causalGraphToolbar"></div>
+            <div class="causal-graph-story" id="causalGraphStory" aria-label="完整因果链摘要" hidden></div>
+            <div class="causal-graph-viewport" id="causalGraphViewport">
+              <div class="causal-graph-world" id="causalGraphWorld">
+                <svg class="causal-graph-svg" id="causalGraphSvg" aria-label="语义动作有向图"></svg>
+                <div class="causal-graph-nodes" id="causalGraphNodes"></div>
+              </div>
+            </div>
+            <aside class="causal-graph-inspector" id="causalGraphInspector" aria-live="polite" hidden></aside>
+            <div class="causal-graph-empty" id="causalGraphEmpty">选择带有语义动作图证据的告警</div>
+          </div>
           <div class="mesh-meta-line evidence-chain" id="evidenceChain" aria-label="最近裁决因果链">
-            <span><small>来源</small><b>等待审计事件</b></span>
-            <span><small>风险证据</small><b>--</b></span>
-            <span><small>授权校验</small><b>--</b></span>
-            <span><small>工具 Sink</small><b>--</b></span>
-            <span><small>裁决</small><b>--</b></span>
+            <span><small>授权主体</small><b>等待审计事件</b></span>
+            <span><small>授权结论</small><b>--</b></span>
+            <span><small>数据字段</small><b>--</b></span>
+            <span><small>工具链</small><b>--</b></span>
+            <span><small>最终去向</small><b>--</b></span>
+            <span><small>最终裁决</small><b>--</b></span>
           </div>
           <div class="mesh-tools">
             <button type="button" id="meshZoomIn" title="放大拓扑">+</button>
@@ -3627,18 +4486,7 @@
     <section class="bottom-grid">
       <section class="panel">
         <div class="panel-header">
-          <div class="left">A. 攻击链阶段分布</div>
-          <small>今日</small>
-        </div>
-        <div class="attack-chain">
-          <div class="stages" id="attackStages"></div>
-          <div class="mini-table" id="attackTable"></div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-header">
-          <div class="left">B. 策略命中排行</div>
+          <div class="left">策略命中排行</div>
           <small>今日</small>
         </div>
         <div class="rules" id="rulesList"></div>
@@ -3646,7 +4494,7 @@
 
       <section class="panel">
         <div class="panel-header">
-          <div class="left">C. 最近事件时间线</div>
+          <div class="left">最近事件时间线</div>
           <small>实时</small>
         </div>
         <div class="timeline">
@@ -3691,6 +4539,13 @@
       data: null,
       enforcement: null,
       selectedAlertIndex: -1,
+      selectedAlertId: "",
+      meshView: "topology",
+      meshViewTouched: false,
+      overviewPane: "posture",
+      causalGraph: null,
+      causalPan: null,
+      causalAutoOpenedGraphId: "",
       interval: null
     };
     const alertModalState = {
@@ -4026,49 +4881,784 @@
       return action === "block" ? severityLabel(alert?.severity) : actionLabel(alert?.action);
     }
 
+    function overviewPaneMetaLabel(pane) {
+      return ({ posture: "实时", domains: "今日", decisions: "真实裁决", attack: "今日" })[pane] || "实时";
+    }
+
+    function setOverviewPane(pane, focus = false) {
+      const allowed = new Set(["posture", "domains", "decisions", "attack"]);
+      const next = allowed.has(pane) ? pane : "posture";
+      state.overviewPane = next;
+      $$("#overviewTabs [data-overview-pane]").forEach(tab => {
+        const active = tab.dataset.overviewPane === next;
+        tab.classList.toggle("active", active);
+        tab.setAttribute("aria-selected", String(active));
+        tab.tabIndex = active ? 0 : -1;
+        if (active && focus) tab.focus();
+      });
+      $$("[data-overview-panel]").forEach(panel => {
+        panel.hidden = panel.dataset.overviewPanel !== next;
+      });
+      if ($("#overviewPaneMeta")) $("#overviewPaneMeta").textContent = overviewPaneMetaLabel(next);
+    }
+
+    function updateOverviewTabSummaries(data) {
+      const counts = data?.timelineCounts || {};
+      const protection = Math.max(0, Math.min(100, Number(data?.protectionIndex) || 0));
+      const blocked = Number(data?.blockedHighRisk || 0);
+      const decisions = Number(counts.block || 0) + Number(counts.ask || 0) + Number(counts.allow || 0);
+      const attackEvents = Array.isArray(data?.stages)
+        ? data.stages.reduce((sum, stage) => sum + Number(stage?.[1] || 0), 0)
+        : 0;
+      const summaries = [
+        ["#overviewSummaryPosture", `${protection}/100`, `防护指数 ${protection}/100`],
+        ["#overviewSummaryDomains", fmt(blocked), `已阻断 ${fmt(blocked)} 次`],
+        ["#overviewSummaryDecisions", fmt(decisions), `处置裁决 ${fmt(decisions)} 次`],
+        ["#overviewSummaryAttack", fmt(attackEvents), `攻击链阶段事件 ${fmt(attackEvents)} 条`],
+      ];
+      summaries.forEach(([selector, value, title]) => {
+        const target = $(selector);
+        if (!target) return;
+        target.textContent = value;
+        target.title = title;
+      });
+    }
+
     function renderDefenseState() {
       const enforcement = state.enforcement || {};
       const stack = Array.isArray(enforcement.securityStack) ? enforcement.securityStack : [];
       const enabled = stack.filter(item => item.enabled).length;
       const mode = ({ observe: "观察模式", approval: "审批模式", block: "阻断模式" })[enforcement.mode] || "运行模式未知";
       const profile = String(enforcement.profile || "custom").toUpperCase();
-      $("#defenseMainText").textContent = enforcement.competitionReady ? "比赛防护链路已就绪" : "实时防护运行中";
+      $("#defenseMainText").textContent = enforcement.competitionReady ? "玄鉴已启动 · 全域戒备" : "玄鉴在线 · 风险巡弋中";
       $("#defenseSubText").textContent = stack.length
-        ? `${profile} / ${mode} · ${enabled}/${stack.length} 防护层已开启`
-        : "真实审计链路在线 · 策略、工具调用与 OpenClaw 记录持续汇总";
+        ? `${profile} / ${mode} · ${enabled}/${stack.length} 重防线已列阵`
+        : "审计链路已接驳 · 策略、工具调用与 OpenClaw 记录持续汇总";
+    }
+
+    function activeOverviewAlert(data) {
+      const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
+      if (!alerts.length) return null;
+      const selected = state.selectedAlertId
+        ? alerts.find(item => String(item?.id || "") === state.selectedAlertId)
+        : state.selectedAlertIndex >= 0 ? alerts[state.selectedAlertIndex] : null;
+      return selected
+        || alerts.find(item => item?.causal_graph && actionClass(item.action) === "block")
+        || alerts.find(item => actionClass(item.action) === "block")
+        || alerts.find(item => actionClass(item.action) === "ask")
+        || alerts[0];
+    }
+
+    function renderMeshLegend(causal) {
+      const target = $("#meshHeadLegend");
+      if (!target) return;
+      const authorized = state.causalGraph?.graph?.trace_kind === "authorized";
+      target.innerHTML = causal
+        ? `<span style="color:${authorized ? "var(--green)" : "var(--red)"}">━━ 运行时观测</span>&nbsp;&nbsp;<span style="color:var(--cyan)">━━ 解码复现</span>&nbsp;&nbsp;<span style="color:var(--amber)">••• 保守推断</span>&nbsp;&nbsp;<span style="color:#7e8c97">-- 展示折叠</span>`
+        : `<span style="color:var(--cyan)">━━ 安全调用</span>&nbsp;&nbsp;<span style="color:var(--red)">━━ 高风险调用</span>&nbsp;&nbsp;<span style="color:var(--amber)">••• 污染传播</span>&nbsp;&nbsp;<span style="color:var(--red)">-×- 已拦截</span>`;
+    }
+
+    function setMeshView(view) {
+      state.meshView = view === "causal" ? "causal" : "topology";
+      const causal = state.meshView === "causal";
+      $("#meshCanvas")?.classList.toggle("causal-active", causal);
+      $("#meshViewTopology")?.classList.toggle("active", !causal);
+      $("#meshViewCausal")?.classList.toggle("active", causal);
+      $("#meshViewTopology")?.setAttribute("aria-selected", String(!causal));
+      $("#meshViewCausal")?.setAttribute("aria-selected", String(causal));
+      if ($("#meshViewTitle")) $("#meshViewTitle").textContent = causal ? "语义动作因果图" : "Agent 行为安全拓扑";
+      renderMeshLegend(causal);
+      if ($("#meshZoomIn")) $("#meshZoomIn").title = causal ? "放大因果图" : "放大拓扑";
+      if ($("#meshZoomOut")) $("#meshZoomOut").title = causal ? "缩小因果图" : "缩小拓扑";
+      if ($("#meshReset")) $("#meshReset").title = causal ? "适配因果图" : "重置拓扑";
+      if (causal) requestAnimationFrame(() => {
+        applyCausalGraphTransform();
+        drawCausalGraphEdges();
+      });
+      else requestAnimationFrame(updateLabels);
+    }
+
+    function causalKindLabel(kind) {
+      return ({ intent: "意图", capability: "能力", action: "动作", data: "数据", sink: "SINK", collapsed: "折叠段" })[kind] || "节点";
+    }
+
+    function causalRiskLabel(risk) {
+      return ({
+        secret_to_external_sink: "机密数据 → 外部出口",
+        tainted_to_external_sink: "污染指令 → 外部出口",
+        secret_to_persistent_state: "机密数据 → 持久状态",
+        tainted_to_persistent_state: "污染指令 → 持久状态",
+        secret_to_execution: "机密数据 → 进程执行",
+        tainted_to_execution: "污染指令 → 进程执行",
+        unauthorized_side_effect: "未授权能力 → 外部副作用",
+        target_scope_mismatch: "授权范围 → 目标越界",
+        authorized_tool_execution: "显式授权 → 正常执行",
+        execution_after_block: "已阻断 → 仍然执行",
+      })[String(risk || "")] || String(risk || "跨工具数据流");
+    }
+
+    function causalNodeTitle(node) {
+      if (node.kind === "action") return node.tool || node.label || "unknown_tool";
+      if (node.kind === "data") return node.path || node.label || "data_field";
+      if (node.kind === "sink") return node.sink || node.label || "sink";
+      if (node.kind === "collapsed") return `中间 ${Number(node.omitted_node_count) || 0} 个已验证节点`;
+      return node.label || node.kind || "node";
+    }
+
+    function causalNodeState(node) {
+      if (node.kind === "capability") return node.authorized === true ? "已授权" : "未授权";
+      if (node.kind === "data") {
+        if (node.confidentiality === "secret") return "SECRET";
+        if (node.integrity === "tainted") return "TAINTED";
+      }
+      if (node.kind === "action") return node.status || node.decision || "proposed";
+      if (node.kind === "collapsed") return "DISPLAY ONLY";
+      return node.effect || "";
+    }
+
+    function causalNodeMeta(node) {
+      if (node.kind === "intent") return "当前用户任务边界";
+      if (node.kind === "capability") return node.authorized === true ? "显式能力授权" : "仅请求，未获授权";
+      if (node.kind === "action") {
+        const authorization = node.authorized === true ? "authorized" : node.authorized === false ? "unscoped" : "observed";
+        return `${node.status || node.decision || "proposed"} · ${authorization}`;
+      }
+      if (node.kind === "data") return `${node.confidentiality || "public"} / ${node.integrity || "unknown"}`;
+      if (node.kind === "sink") return node.effect || "unknown effect";
+      if (node.kind === "collapsed") return `仅折叠展示 · 省略 ${Number(node.omitted_node_count) || 0} 节点`;
+      return "";
+    }
+
+    function causalCapabilityLabel(node) {
+      const parts = String(node?.label || "").split(":").filter(Boolean);
+      const action = ({ read: "读取", write: "写入", send: "发送", execute: "执行", request: "请求", persist: "持久化" })[parts[0]] || parts[0] || "能力";
+      const resource = ({ file: "文件", email: "邮件", api: "API", shell: "命令", memory: "记忆", skill: "Skill" })[parts[1]] || parts[1] || "资源";
+      return `${action}${resource}`;
+    }
+
+    function compactCausalSequence(values) {
+      const sequence = values.filter(Boolean);
+      if (sequence.length <= 3) return sequence.join(" → ");
+      return `${sequence[0]} → 中间 ${sequence.length - 2} 步 → ${sequence[sequence.length - 1]}`;
+    }
+
+    function causalAuthorizationActorLabel(actor) {
+      return ({
+        user: "当前用户",
+        system: "系统策略",
+        memory: "长期记忆",
+        tool_result: "外部工具结果",
+        unknown: "未知来源",
+      })[String(actor || "").toLowerCase()] || "未记录授权主体";
+    }
+
+    function causalGraphStory(graph, alert) {
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+      const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+      const nodeById = new Map(nodes.map(node => [String(node?.id || ""), node]));
+      const pathIds = (Array.isArray(graph?.path_node_ids) ? graph.path_node_ids : []).map(String);
+      const pathSet = new Set(pathIds);
+      const pathNodes = pathIds.map(id => nodeById.get(id)).filter(Boolean);
+      const pathActions = pathNodes.filter(node => node.kind === "action");
+      const pathData = pathNodes.filter(node => node.kind === "data");
+      const collapsed = pathNodes.find(node => node.kind === "collapsed");
+      const finalSink = [...pathNodes].reverse().find(node => node.kind === "sink")
+        || nodes.find(node => node.kind === "sink" && edges.some(edge => pathSet.has(String(edge.from || "")) && String(edge.to || "") === String(node.id || "")));
+      const sinkTargetEdge = finalSink
+        ? edges.find(edge => String(edge.kind || "") === "targets" && String(edge.to || "") === String(finalSink.id || ""))
+        : null;
+      const finalAction = (sinkTargetEdge ? nodeById.get(String(sinkTargetEdge.from || "")) : null)
+        || pathActions[pathActions.length - 1]
+        || null;
+      const authorizationEdge = finalAction
+        ? edges.find(edge => ["authorizes", "constrains"].includes(String(edge.kind || "")) && String(edge.to || "") === String(finalAction.id || ""))
+        : null;
+      const capability = authorizationEdge ? nodeById.get(String(authorizationEdge.from || "")) : null;
+      const traceKind = String(graph?.trace_kind || "attack");
+
+      const authorizationActor = causalAuthorizationActorLabel(capability?.authorization_actor || capability?.source);
+      const actorDetail = capability
+        ? (capability.authorization_actor === "user" || capability.source === "user")
+          ? "来源：当前用户消息"
+          : "该来源不能自动授予副作用权限"
+        : "当前图中无授权主体证据";
+
+      let authorizationPrimary = "当前任务未授权";
+      let authorizationDetail = "当前图中无有效授权能力边";
+      let authorizationClass = "block";
+      if (traceKind === "enforcement_bypass") {
+        authorizationPrimary = "阻断后仍执行";
+        authorizationDetail = "未获得二次授权";
+        authorizationClass = "critical";
+      } else if (capability && authorizationEdge?.kind === "constrains") {
+        authorizationPrimary = "授权目标越界";
+        authorizationDetail = causalCapabilityLabel(capability);
+        authorizationClass = "review";
+      } else if (capability?.authorized === true && authorizationEdge?.kind === "authorizes") {
+        authorizationPrimary = capability.authorization_reason === "explicit_user_capability" ? "TaskSpec 精确授权" : "TaskSpec 已授权";
+        authorizationDetail = causalCapabilityLabel(capability);
+        authorizationClass = "allow";
+      } else if (String(graph?.risk || "") === "target_scope_mismatch") {
+        authorizationPrimary = "授权目标越界";
+        authorizationDetail = capability ? causalCapabilityLabel(capability) : "目标超出 TaskSpec 范围";
+        authorizationClass = "review";
+      } else if (String(graph?.risk || "") === "unauthorized_side_effect") {
+        authorizationPrimary = "未授权副作用";
+        authorizationDetail = "TaskSpec 未授予该外部副作用";
+      }
+
+      const fullDataFlow = pathData.map(causalNodeTitle).join(" → ");
+      const dataPrimary = fullDataFlow
+        ? compactCausalSequence(pathData.map(causalNodeTitle))
+        : collapsed ? "字段经过折叠链路" : "不涉及字段血缘";
+      const dataDetail = pathData.some(node => node.confidentiality === "secret")
+        ? "包含 SECRET 字段"
+        : pathData.some(node => node.integrity === "tainted") ? "包含 TAINTED 字段" : "无敏感字段证据";
+
+      const fullToolFlow = pathActions.map(causalNodeTitle).join(" → ");
+      const toolPrimary = fullToolFlow ? compactCausalSequence(pathActions.map(causalNodeTitle)) : "未记录工具动作";
+      const toolDetail = pathActions.length ? `${pathActions.length} 个动作节点` : "路径中无 action 节点";
+      const sinkPrimary = finalSink ? causalNodeTitle(finalSink) : "未解析最终 Sink";
+      const sinkDetail = finalSink?.effect || "无去向证据";
+
+      const graphVerdict = traceKind === "authorized"
+        ? "正常放行"
+        : traceKind === "enforcement_bypass"
+          ? "执行绕过"
+          : String(graph?.verdict || "").toLowerCase() === "review" ? "人工复核" : "阻断";
+      const finalDecision = actionClass(alert?.action);
+      const verdictClass = traceKind === "enforcement_bypass"
+        ? "critical"
+        : finalDecision === "allow" ? "allow" : finalDecision === "ask" ? "review" : "block";
+      const verdictPrimary = traceKind === "enforcement_bypass"
+        ? "CRITICAL · 执行绕过"
+        : finalDecision === "allow"
+          ? "ALLOW · 正常放行"
+          : finalDecision === "ask" ? "ASK · 人工复核" : "BLOCK · 已阻断";
+
+      return [
+        { key: "actor", label: "授权主体", primary: authorizationActor, detail: actorDetail },
+        { key: `authorization ${authorizationClass}`, label: "授权结论", primary: authorizationPrimary, detail: authorizationDetail },
+        { key: "data", label: "数据字段", primary: dataPrimary, detail: dataDetail, title: fullDataFlow || dataPrimary },
+        { key: "tools", label: "经过工具", primary: toolPrimary, detail: toolDetail, title: fullToolFlow || toolPrimary },
+        { key: `sink ${verdictClass}`, label: "最终去向", primary: sinkPrimary, detail: sinkDetail },
+        { key: `verdict ${verdictClass}`, label: "最终裁决", primary: verdictPrimary, detail: `图路径：${graphVerdict} · ${causalRiskLabel(graph?.risk)}` },
+      ];
+    }
+
+    function renderCausalGraphStory(graph, alert) {
+      const target = $("#causalGraphStory");
+      const layer = $("#causalGraph");
+      if (!target || !layer) return;
+      const steps = causalGraphStory(graph, alert);
+      target.innerHTML = steps.map((step, index) => {
+        const title = step.title || `${step.primary} · ${step.detail}`;
+        return `<div class="causal-story-step ${escapeHtml(step.key)}" title="${escapeHtml(title)}">
+          <small>0${index + 1} · ${escapeHtml(step.label)}</small>
+          <b>${escapeHtml(step.primary)}</b>
+          <span>${escapeHtml(step.detail)}</span>
+        </div>`;
+      }).join("");
+      target.hidden = false;
+      layer.classList.add("has-story");
+    }
+
+    function autoOpenCausalGraph(data) {
+      const alert = activeOverviewAlert(data);
+      const graph = alert?.causal_graph && typeof alert.causal_graph === "object" ? alert.causal_graph : null;
+      if (!graph || !state.causalGraph || state.meshViewTouched) return;
+      const graphId = `${String(alert?.id || "alert")}:${String(graph.path_id || graph.risk || "graph")}`;
+      if (graphId === state.causalAutoOpenedGraphId) return;
+      state.causalAutoOpenedGraphId = graphId;
+      setMeshView("causal");
+    }
+
+    function causalGraphLayout(graph, viewportWidth = 640, viewportHeight = 320) {
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+      const nodeById = new Map(nodes
+        .map(node => [String(node.id || ""), node])
+        .filter(([id]) => Boolean(id)));
+      const pathIds = (Array.isArray(graph?.path_node_ids) ? graph.path_node_ids : [])
+        .map(String)
+        .filter(id => nodeById.has(id));
+      const pathSet = new Set(pathIds);
+      const pathOrder = new Map(pathIds.map((id, index) => [id, index]));
+      const edges = (Array.isArray(graph?.edges) ? graph.edges : [])
+        .filter(edge => nodeById.has(String(edge?.from || "")) && nodeById.has(String(edge?.to || "")));
+      const outgoing = new Map([...nodeById.keys()].map(id => [id, []]));
+      const incoming = new Map([...nodeById.keys()].map(id => [id, []]));
+      const indegree = new Map([...nodeById.keys()].map(id => [id, 0]));
+      edges.forEach(edge => {
+        const from = String(edge.from);
+        const to = String(edge.to);
+        outgoing.get(from).push(to);
+        incoming.get(to).push(from);
+        indegree.set(to, (indegree.get(to) || 0) + 1);
+      });
+
+      const compareIds = (left, right) => {
+        const leftPath = pathOrder.has(left) ? pathOrder.get(left) : Number.MAX_SAFE_INTEGER;
+        const rightPath = pathOrder.has(right) ? pathOrder.get(right) : Number.MAX_SAFE_INTEGER;
+        if (leftPath !== rightPath) return leftPath - rightPath;
+        const leftSequence = Number(nodeById.get(left)?.sequence) || 0;
+        const rightSequence = Number(nodeById.get(right)?.sequence) || 0;
+        return leftSequence - rightSequence || left.localeCompare(right);
+      };
+      const queue = [...nodeById.keys()].filter(id => indegree.get(id) === 0).sort(compareIds);
+      const rank = new Map([...nodeById.keys()].map(id => [id, 0]));
+      const topological = [];
+      while (queue.length) {
+        const current = queue.shift();
+        topological.push(current);
+        [...(outgoing.get(current) || [])].sort(compareIds).forEach(next => {
+          rank.set(next, Math.max(rank.get(next) || 0, (rank.get(current) || 0) + 1));
+          indegree.set(next, (indegree.get(next) || 0) - 1);
+          if (indegree.get(next) === 0) {
+            queue.push(next);
+            queue.sort(compareIds);
+          }
+        });
+      }
+      [...nodeById.keys()]
+        .filter(id => !topological.includes(id))
+        .sort(compareIds)
+        .forEach(id => {
+          rank.set(id, Math.max(0, ...((incoming.get(id) || []).map(parent => (rank.get(parent) || 0) + 1))));
+          topological.push(id);
+        });
+
+      const layers = new Map();
+      topological.forEach(id => {
+        const level = rank.get(id) || 0;
+        layers.set(level, [...(layers.get(level) || []), id]);
+      });
+      const orderInLayer = new Map();
+      [...layers.keys()].sort((a, b) => a - b).forEach(level => {
+        const layer = layers.get(level);
+        layer.sort((left, right) => {
+          const barycenter = id => {
+            const parents = incoming.get(id) || [];
+            const values = parents.map(parent => orderInLayer.get(parent)).filter(Number.isFinite);
+            return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+          };
+          const leftCenter = barycenter(left);
+          const rightCenter = barycenter(right);
+          if (leftCenter !== null && rightCenter !== null && leftCenter !== rightCenter) return leftCenter - rightCenter;
+          if (leftCenter !== null && rightCenter === null) return -1;
+          if (leftCenter === null && rightCenter !== null) return 1;
+          return compareIds(left, right);
+        });
+        layer.forEach((id, index) => orderInLayer.set(id, index));
+      });
+
+      const maxRank = Math.max(0, ...rank.values());
+      const maxLayerSize = Math.max(1, ...[...layers.values()].map(layer => layer.length));
+      const gapX = 158;
+      const gapY = 88;
+      const paddingX = 78;
+      const paddingY = 58;
+      const worldWidth = Math.max(Math.round(viewportWidth || 640), paddingX * 2 + maxRank * gapX);
+      const worldHeight = Math.max(Math.round(viewportHeight || 320), paddingY * 2 + (maxLayerSize - 1) * gapY);
+      const positions = new Map();
+      [...layers.entries()].forEach(([level, layer]) => {
+        const layerHeight = (layer.length - 1) * gapY;
+        const startY = (worldHeight - layerHeight) / 2;
+        layer.forEach((id, index) => positions.set(id, {
+          x: maxRank === 0 ? worldWidth / 2 : paddingX + level * ((worldWidth - paddingX * 2) / maxRank),
+          y: startY + index * gapY,
+        }));
+      });
+      return { positions, pathSet, worldWidth, worldHeight };
+    }
+
+    function renderCausalGraph(data) {
+      const toolbar = $("#causalGraphToolbar");
+      const nodesTarget = $("#causalGraphNodes");
+      const world = $("#causalGraphWorld");
+      const viewport = $("#causalGraphViewport");
+      const empty = $("#causalGraphEmpty");
+      const story = $("#causalGraphStory");
+      const layer = $("#causalGraph");
+      if (!toolbar || !nodesTarget || !world || !viewport || !empty || !story || !layer) return;
+      const alert = activeOverviewAlert(data);
+      const graph = alert?.causal_graph && typeof alert.causal_graph === "object" ? alert.causal_graph : null;
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes.filter(node => node && typeof node === "object") : [];
+      const edges = Array.isArray(graph?.edges) ? graph.edges.filter(edge => edge && typeof edge === "object") : [];
+      if (!graph || nodes.length < 2 || !edges.length) {
+        state.causalGraph = null;
+        nodesTarget.innerHTML = "";
+        $("#causalGraphSvg").replaceChildren();
+        $("#causalGraphInspector").hidden = true;
+        story.hidden = true;
+        story.innerHTML = "";
+        layer.classList.remove("has-story");
+        toolbar.innerHTML = `<span class="causal-graph-badge primary">SAG V2</span><span class="causal-graph-badge">暂无类型化路径</span>`;
+        empty.style.display = "grid";
+        return;
+      }
+
+      const previous = state.causalGraph;
+      const samePath = previous?.graph?.path_id && previous.graph.path_id === graph.path_id;
+      const viewportRect = viewport.getBoundingClientRect();
+      const layout = causalGraphLayout(graph, viewportRect.width, viewportRect.height);
+      state.causalGraph = {
+        graph,
+        layout,
+        transform: samePath ? previous.transform : null,
+        selectedNodeId: samePath ? previous.selectedNodeId : "",
+        selectedEdgeId: samePath ? previous.selectedEdgeId : "",
+      };
+      if (state.meshView === "causal") renderMeshLegend(true);
+      world.style.width = `${layout.worldWidth}px`;
+      world.style.height = `${layout.worldHeight}px`;
+      const certainty = graph.certainty === "observed" ? "observed" : "conservative";
+      const confidence = Math.round(Math.max(0, Math.min(1, Number(graph.confidence) || 0)) * 100);
+      const traceKind = String(graph.trace_kind || "attack");
+      const graphVerdict = traceKind === "authorized"
+        ? "正常放行"
+        : traceKind === "enforcement_bypass"
+          ? "执行绕过"
+          : String(graph.verdict || "").toLowerCase() === "review" ? "人工复核" : "阻断";
+      const verdictClass = traceKind === "authorized" ? "allow" : traceKind === "enforcement_bypass" ? "critical" : "";
+      const finalVerdict = actionLabel(alert.action);
+      const sourceNodeCount = Math.max(nodes.length, Number(graph.session_node_count) || 0);
+      const sourceEdgeCount = Math.max(edges.length, Number(graph.session_edge_count) || 0);
+      const partial = graph.snapshot_truncated === true || graph.projection_truncated === true;
+      toolbar.innerHTML = `
+        <span class="causal-graph-badge primary">SAG V${escapeHtml(graph.version || 2)}</span>
+        <span class="causal-graph-badge">${escapeHtml(causalRiskLabel(graph.risk))}</span>
+        <span class="causal-graph-badge ${certainty}">${certainty === "observed" ? "观测证据" : "保守推断"} · ${confidence}%</span>
+        <span class="causal-graph-badge ${partial ? "conservative" : ""}">${partial ? "局部图" : "全图"} · ${nodes.length}/${sourceNodeCount} 节点 · ${edges.length}/${sourceEdgeCount} 边</span>
+        <span class="causal-graph-badge verdict ${verdictClass}">图裁决 ${graphVerdict} · 最终 ${escapeHtml(finalVerdict)}</span>`;
+      renderCausalGraphStory(graph, alert);
+      nodesTarget.innerHTML = nodes.map(node => {
+        const id = String(node.id || "");
+        const point = layout.positions.get(id) || { x: 50, y: 50 };
+        const title = causalNodeTitle(node);
+        const status = causalNodeState(node);
+        const meta = causalNodeMeta(node);
+        return `<button type="button" class="causal-node ${layout.pathSet.has(id) ? "on-path" : "support"}"
+          data-node-id="${escapeHtml(id)}"
+          data-kind="${escapeHtml(node.kind || "unknown")}"
+          data-status="${escapeHtml(node.status || "")}"
+          data-integrity="${escapeHtml(node.integrity || "")}"
+          data-confidentiality="${escapeHtml(node.confidentiality || "")}"
+          style="left:${point.x}px;top:${point.y}px"
+          aria-pressed="false"
+          title="${escapeHtml(`${causalKindLabel(node.kind)} · ${title} · ${meta}`)}">
+          <div class="causal-node-top"><span class="causal-node-kind">${escapeHtml(causalKindLabel(node.kind))}</span><span class="causal-node-state">${escapeHtml(status)}</span></div>
+          <div class="causal-node-title">${escapeHtml(title)}</div>
+          <div class="causal-node-meta">${escapeHtml(meta)}</div>
+        </button>`;
+      }).join("");
+      empty.style.display = "none";
+      if (!state.causalGraph.transform) fitCausalGraph();
+      else applyCausalGraphTransform();
+      renderCausalGraphInspector();
+      requestAnimationFrame(() => {
+        updateCausalGraphSelection();
+        drawCausalGraphEdges();
+      });
+    }
+
+    function clampCausalGraphTransform(transform) {
+      const entry = state.causalGraph;
+      const viewport = $("#causalGraphViewport");
+      if (!entry || !viewport) return transform;
+      const box = viewport.getBoundingClientRect();
+      const scale = Math.max(0.28, Math.min(1.8, Number(transform?.scale) || 1));
+      const scaledWidth = entry.layout.worldWidth * scale;
+      const scaledHeight = entry.layout.worldHeight * scale;
+      const margin = 24;
+      const minX = Math.min(margin, box.width - scaledWidth - margin);
+      const maxX = Math.max(box.width - scaledWidth - margin, margin);
+      const minY = Math.min(margin, box.height - scaledHeight - margin);
+      const maxY = Math.max(box.height - scaledHeight - margin, margin);
+      return {
+        scale,
+        x: scaledWidth <= box.width ? (box.width - scaledWidth) / 2 : Math.max(minX, Math.min(maxX, Number(transform?.x) || 0)),
+        y: scaledHeight <= box.height ? (box.height - scaledHeight) / 2 : Math.max(minY, Math.min(maxY, Number(transform?.y) || 0)),
+      };
+    }
+
+    function applyCausalGraphTransform() {
+      const entry = state.causalGraph;
+      const world = $("#causalGraphWorld");
+      if (!entry || !world) return;
+      entry.transform = clampCausalGraphTransform(entry.transform || { scale: 1, x: 0, y: 0 });
+      const { x, y, scale } = entry.transform;
+      world.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    }
+
+    function fitCausalGraph() {
+      const entry = state.causalGraph;
+      const viewport = $("#causalGraphViewport");
+      if (!entry || !viewport) return;
+      const box = viewport.getBoundingClientRect();
+      const scale = Math.min(
+        1,
+        Math.max(0.28, (box.width - 20) / entry.layout.worldWidth),
+        Math.max(0.28, (box.height - 20) / entry.layout.worldHeight),
+      );
+      entry.transform = {
+        scale,
+        x: (box.width - entry.layout.worldWidth * scale) / 2,
+        y: (box.height - entry.layout.worldHeight * scale) / 2,
+      };
+      applyCausalGraphTransform();
+    }
+
+    function zoomCausalGraph(factor, anchor = null) {
+      const entry = state.causalGraph;
+      const viewport = $("#causalGraphViewport");
+      if (!entry || !viewport) return;
+      const current = entry.transform || { scale: 1, x: 0, y: 0 };
+      const box = viewport.getBoundingClientRect();
+      const point = anchor || { x: box.width / 2, y: box.height / 2 };
+      const nextScale = Math.max(0.28, Math.min(1.8, current.scale * factor));
+      const ratio = nextScale / current.scale;
+      entry.transform = {
+        scale: nextScale,
+        x: point.x - (point.x - current.x) * ratio,
+        y: point.y - (point.y - current.y) * ratio,
+      };
+      applyCausalGraphTransform();
+    }
+
+    function causalSelectionSets() {
+      const entry = state.causalGraph;
+      const graph = entry?.graph;
+      const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+      const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+      const nodeIds = new Set(nodes.map(node => String(node.id || "")).filter(Boolean));
+      const selectedNodeId = String(entry?.selectedNodeId || "");
+      const selectedEdgeId = String(entry?.selectedEdgeId || "");
+      if (!selectedNodeId && !selectedEdgeId) return { active: false, nodeIds, edgeIds: new Set(edges.map(edge => String(edge.id || ""))) };
+
+      const selectedEdge = edges.find(edge => String(edge.id || "") === selectedEdgeId);
+      const seeds = selectedNodeId
+        ? [selectedNodeId]
+        : selectedEdge ? [String(selectedEdge.from || ""), String(selectedEdge.to || "")] : [];
+      const incoming = new Map();
+      const outgoing = new Map();
+      edges.forEach(edge => {
+        const from = String(edge.from || "");
+        const to = String(edge.to || "");
+        incoming.set(to, [...(incoming.get(to) || []), from]);
+        outgoing.set(from, [...(outgoing.get(from) || []), to]);
+      });
+      const focused = new Set(seeds.filter(Boolean));
+      const walk = (start, adjacency) => {
+        const pending = [start];
+        while (pending.length) {
+          const current = pending.pop();
+          for (const next of adjacency.get(current) || []) {
+            if (focused.has(next)) continue;
+            focused.add(next);
+            pending.push(next);
+          }
+        }
+      };
+      seeds.forEach(id => {
+        walk(id, incoming);
+        walk(id, outgoing);
+      });
+      const edgeIds = new Set(edges
+        .filter(edge => focused.has(String(edge.from || "")) && focused.has(String(edge.to || "")))
+        .map(edge => String(edge.id || "")));
+      if (selectedEdgeId) edgeIds.add(selectedEdgeId);
+      return { active: true, nodeIds: focused, edgeIds };
+    }
+
+    function updateCausalGraphSelection() {
+      const entry = state.causalGraph;
+      if (!entry) return;
+      const selectedNodeId = String(entry.selectedNodeId || "");
+      const selectedEdgeId = String(entry.selectedEdgeId || "");
+      const focus = causalSelectionSets();
+      $$(".causal-node", $("#causalGraphNodes")).forEach(node => {
+        const id = String(node.dataset.nodeId || "");
+        const selected = id === selectedNodeId;
+        node.classList.toggle("selected", selected);
+        node.classList.toggle("dimmed", focus.active && !focus.nodeIds.has(id));
+        node.setAttribute("aria-pressed", String(selected));
+      });
+      $$(".causal-edge, .causal-edge-label", $("#causalGraphSvg")).forEach(edge => {
+        const id = String(edge.dataset.edgeId || "");
+        edge.classList.toggle("selected", id === selectedEdgeId);
+        edge.classList.toggle("dimmed", focus.active && !focus.edgeIds.has(id));
+      });
+    }
+
+    function renderCausalGraphInspector() {
+      const inspector = $("#causalGraphInspector");
+      const entry = state.causalGraph;
+      if (!inspector || !entry) return;
+      const nodes = Array.isArray(entry.graph?.nodes) ? entry.graph.nodes : [];
+      const edges = Array.isArray(entry.graph?.edges) ? entry.graph.edges : [];
+      const node = nodes.find(item => String(item.id || "") === String(entry.selectedNodeId || ""));
+      const edge = edges.find(item => String(item.id || "") === String(entry.selectedEdgeId || ""));
+      if (!node && !edge) {
+        inspector.hidden = true;
+        inspector.innerHTML = "";
+        return;
+      }
+      const rows = node ? [
+        ["类型", causalKindLabel(node.kind)],
+        ["节点", causalNodeTitle(node)],
+        ["状态", causalNodeState(node) || "--"],
+        ["说明", causalNodeMeta(node) || "--"],
+        ...(node.authorization_reason ? [["授权依据", node.authorization_reason]] : []),
+        ...(Array.isArray(node.transformations) && node.transformations.length ? [["数据变换", node.transformations.join(" → ")]] : []),
+        ...(node.kind === "collapsed" ? [["可信边界", "展示折叠，不代表新增证据"]] : []),
+      ] : [
+        ["关系", causalEdgeLabel(edge)],
+        ["证据", edge.display_only ? "展示折叠" : edge.basis === "decoded" ? "解码复现" : edge.basis === "conservative" ? "保守推断" : "运行时观测"],
+        ["置信度", `${Math.round(Math.max(0, Math.min(1, Number(edge.confidence) || 0)) * 100)}%`],
+        ["参数字段", edge.arg_path || edge.match || "--"],
+        ...(edge.display_only || edge.synthetic ? [["可信边界", "展示桥接，不代表新增证据"]] : []),
+      ];
+      inspector.hidden = false;
+      inspector.innerHTML = `
+        <div class="causal-inspector-head"><span>${node ? "节点证据" : "边证据"}</span><button type="button" class="causal-inspector-close" aria-label="关闭详情" title="关闭详情">×</button></div>
+        <div class="causal-inspector-grid">${rows.map(([label, value]) => `<span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b>`).join("")}</div>`;
+    }
+
+    function selectCausalGraphItem(nodeId = "", edgeId = "") {
+      if (!state.causalGraph) return;
+      state.causalGraph.selectedNodeId = nodeId;
+      state.causalGraph.selectedEdgeId = edgeId;
+      renderCausalGraphInspector();
+      updateCausalGraphSelection();
+    }
+
+    function causalEdgeLabel(edge) {
+      const kind = ({ declares: "声明", governs: "约束", authorizes: "授权", constrains: "范围限制", requests: "请求", consumes: "消费", produces: "产生", derives: "派生", targets: "指向", summary: "折叠展示" })[edge.kind] || edge.kind || "流转";
+      if (!edge.on_path) return kind;
+      const basis = edge.display_only ? "折叠" : edge.basis === "decoded" ? "解码" : edge.basis === "conservative" ? "推断" : "观测";
+      return `${kind} · ${basis}`;
+    }
+
+    function drawCausalGraphEdges() {
+      if (state.meshView !== "causal" || !state.causalGraph) return;
+      const svg = $("#causalGraphSvg");
+      const viewport = $("#causalGraphViewport");
+      if (!svg || !viewport) return;
+      const graph = state.causalGraph.graph;
+      const edges = Array.isArray(graph.edges) ? graph.edges : [];
+      const viewportRect = viewport.getBoundingClientRect();
+      if (!viewportRect.width || !viewportRect.height) return;
+      svg.replaceChildren();
+      svg.dataset.traceKind = String(graph.trace_kind || "attack");
+      svg.setAttribute("viewBox", `0 0 ${state.causalGraph.layout.worldWidth} ${state.causalGraph.layout.worldHeight}`);
+      const ns = "http://www.w3.org/2000/svg";
+      const defs = document.createElementNS(ns, "defs");
+      const markerColors = { observed: graph.trace_kind === "authorized" ? "#35f29b" : "#ff4d5e", decoded: "#40e6ff", conservative: "#f8b84e", projection: "#7e8c97", support: "#40e6ff" };
+      Object.entries(markerColors).forEach(([name, color]) => {
+        const marker = document.createElementNS(ns, "marker");
+        marker.setAttribute("id", `causal-arrow-${name}`);
+        marker.setAttribute("markerWidth", "7");
+        marker.setAttribute("markerHeight", "7");
+        marker.setAttribute("refX", "6");
+        marker.setAttribute("refY", "3.5");
+        marker.setAttribute("orient", "auto");
+        const arrow = document.createElementNS(ns, "path");
+        arrow.setAttribute("d", "M0,0 L7,3.5 L0,7 Z");
+        arrow.setAttribute("fill", color);
+        marker.appendChild(arrow);
+        defs.appendChild(marker);
+      });
+      svg.appendChild(defs);
+
+      const nodeBox = id => {
+        const node = $(`[data-node-id="${CSS.escape(String(id || ""))}"]`, $("#causalGraphNodes"));
+        if (!node) return null;
+        const point = state.causalGraph.layout.positions.get(String(id || ""));
+        if (!point) return null;
+        const width = node.offsetWidth;
+        const height = node.offsetHeight;
+        return {
+          left: point.x - width / 2,
+          right: point.x + width / 2,
+          top: point.y - height / 2,
+          bottom: point.y + height / 2,
+          x: point.x,
+          y: point.y,
+        };
+      };
+
+      edges.forEach(edge => {
+        const from = nodeBox(edge.from);
+        const to = nodeBox(edge.to);
+        if (!from || !to) return;
+        const vertical = Math.abs(to.y - from.y) > 48;
+        const forward = to.x >= from.x;
+        const start = vertical
+          ? { x: from.x, y: to.y >= from.y ? from.bottom : from.top }
+          : { x: forward ? from.right : from.left, y: from.y };
+        const end = vertical
+          ? { x: to.x, y: to.y >= from.y ? to.top : to.bottom }
+          : { x: forward ? to.left : to.right, y: to.y };
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const curve = vertical
+          ? `M${start.x},${start.y} C${start.x},${start.y + dy * 0.52} ${end.x},${end.y - dy * 0.52} ${end.x},${end.y}`
+          : `M${start.x},${start.y} C${start.x + dx * 0.48},${start.y} ${end.x - dx * 0.48},${end.y} ${end.x},${end.y}`;
+        const basis = edge.display_only ? "projection" : edge.basis === "decoded" ? "decoded" : edge.basis === "conservative" ? "conservative" : "observed";
+        const edgeId = String(edge.id || "");
+        const hitPath = document.createElementNS(ns, "path");
+        hitPath.setAttribute("d", curve);
+        hitPath.setAttribute("class", "causal-edge-hit");
+        hitPath.dataset.edgeId = edgeId;
+        hitPath.setAttribute("tabindex", "0");
+        hitPath.setAttribute("role", "button");
+        hitPath.setAttribute("aria-label", `${causalEdgeLabel(edge)}，置信度 ${Math.round((Number(edge.confidence) || 0) * 100)}%`);
+        svg.appendChild(hitPath);
+        const path = document.createElementNS(ns, "path");
+        path.setAttribute("d", curve);
+        path.setAttribute("class", `causal-edge ${edge.on_path ? "path" : "support"} ${basis}`);
+        path.setAttribute("marker-end", `url(#causal-arrow-${edge.on_path ? basis : "support"})`);
+        path.dataset.edgeId = edgeId;
+        const title = document.createElementNS(ns, "title");
+        title.textContent = `${causalEdgeLabel(edge)} · confidence ${Math.round((Number(edge.confidence) || 0) * 100)}%`;
+        path.appendChild(title);
+        svg.appendChild(path);
+
+        const label = document.createElementNS(ns, "text");
+        label.setAttribute("x", String((start.x + end.x) / 2));
+        label.setAttribute("y", String((start.y + end.y) / 2 - 5));
+        label.setAttribute("class", "causal-edge-label");
+        label.dataset.edgeId = edgeId;
+        label.textContent = causalEdgeLabel(edge);
+        svg.appendChild(label);
+      });
+      updateCausalGraphSelection();
     }
 
     function renderEvidenceChain(data) {
       const target = $("#evidenceChain");
       const alerts = Array.isArray(data?.alerts) ? data.alerts : [];
       if (!target || !alerts.length) {
-        if (target) target.innerHTML = `<span><small>来源</small><b>等待审计事件</b></span><span><small>风险证据</small><b>--</b></span><span><small>授权校验</small><b>--</b></span><span><small>工具 Sink</small><b>--</b></span><span><small>裁决</small><b>--</b></span>`;
+        if (target) target.innerHTML = `<span><small>授权主体</small><b>等待审计事件</b></span><span><small>授权结论</small><b>--</b></span><span><small>数据字段</small><b>--</b></span><span><small>工具链</small><b>--</b></span><span><small>最终去向</small><b>--</b></span><span><small>最终裁决</small><b>--</b></span>`;
         return;
       }
 
-      const selected = state.selectedAlertIndex >= 0 ? alerts[state.selectedAlertIndex] : null;
-      const alert = selected
-        || alerts.find(item => actionClass(item.action) === "block")
-        || alerts.find(item => actionClass(item.action) === "ask")
-        || alerts[0];
+      const alert = activeOverviewAlert(data);
       const action = actionClass(alert.action);
-      const reason = String(alert.reason || alert.rule || "");
-      const authorization = /outside taskspec|intent does not allow|lacks explicit capability|drift/i.test(reason)
-        ? "TaskSpec 越界"
-        : action === "allow"
-          ? "边界内授权"
-          : action === "ask"
-            ? "需要人工确认"
-            : "策略一致性校验";
-      const steps = [
-        ["来源", `${alert.source || "OpenClaw"} / ${alert.type || "运行上下文"}`],
-        ["风险证据", shortRuleName(alert.rule || alert.reason || "等待证据")],
-        ["授权校验", authorization],
-        ["工具 Sink", alert.tool || "未知工具"],
-        ["裁决", actionLabel(alert.action)],
-      ];
+      const graph = alert?.causal_graph && typeof alert.causal_graph === "object" ? alert.causal_graph : null;
+      const story = graph ? causalGraphStory(graph, alert) : [];
+      const steps = story.length === 6
+        ? story.map(step => [step.label === "经过工具" ? "工具链" : step.label, step.primary, step.title || `${step.primary} · ${step.detail}`])
+        : [
+          ["授权主体", "未生成因果图", "当前事件没有授权主体图证据"],
+          ["授权结论", "无图证据", "当前事件没有 TaskSpec 授权图证据"],
+          ["数据字段", "无图证据", "当前事件没有字段级血缘图证据"],
+          ["工具链", "无图证据", "当前事件没有工具链图证据"],
+          ["最终去向", "无图证据", "当前事件没有 Sink 图证据"],
+          ["最终裁决", actionLabel(alert.action), "仅显示事件裁决，未生成因果图"],
+        ];
       target.className = `mesh-meta-line evidence-chain ${action}`;
-      target.innerHTML = steps.map(([label, value]) => `<span><small>${escapeHtml(label)}</small><b title="${escapeHtml(value)}">${escapeHtml(value)}</b></span>`).join("");
+      target.innerHTML = steps.map(([label, value, title]) => `<span><small>${escapeHtml(label)}</small><b title="${escapeHtml(title || value)}">${escapeHtml(value)}</b></span>`).join("");
     }
 
     function paginate(items, page, pageSize) {
@@ -4122,15 +5712,22 @@
 
     function renderAlerts(data) {
       if (!data.alerts.length) {
+        state.selectedAlertId = "";
+        state.selectedAlertIndex = -1;
         $("#alertStream").innerHTML = `<div class="empty-screen">${escapeHtml(data.summary || "暂无真实告警。")}</div>`;
         return;
+      }
+      if (state.selectedAlertId && !data.alerts.some(alert => String(alert?.id || "") === state.selectedAlertId)) {
+        state.selectedAlertId = "";
+        state.selectedAlertIndex = -1;
       }
       const visibleAlerts = data.alerts.slice(0, visibleAlertLimit());
       $("#alertStream").innerHTML = visibleAlerts.map((a, i) => {
         const sc = alertVisualClass(a);
         const ac = actionClass(a.action);
-        const selected = i === state.selectedAlertIndex ? "selected" : "";
-        return `<button type="button" class="alert ${sc} ${selected}" data-alert-index="${i}" data-tip="${escapeHtml(a.reason)}">
+        const alertId = String(a.id || "");
+        const selected = alertId && alertId === state.selectedAlertId ? "selected" : "";
+        return `<button type="button" class="alert ${sc} ${selected}" data-alert-index="${i}" data-alert-id="${escapeHtml(alertId)}" data-tip="${escapeHtml(a.reason)}">
           <div class="alert-top">
             <span class="badge ${sc}">${escapeHtml(alertBadgeLabel(a))}</span>
             <span class="alert-type">${escapeHtml(a.type)}</span>
@@ -4147,7 +5744,10 @@
       $$("#alertStream [data-alert-index]").forEach((node) => {
         node.addEventListener("click", () => {
           state.selectedAlertIndex = Number(node.dataset.alertIndex || 0);
+          state.selectedAlertId = String(node.dataset.alertId || "");
           renderEvidenceChain(data);
+          renderCausalGraph(data);
+          if (activeOverviewAlert(data)?.causal_graph) setMeshView("causal");
           $$("#alertStream [data-alert-index]").forEach(item => item.classList.toggle("selected", item === node));
         });
       });
@@ -4358,6 +5958,7 @@
 
     function renderAll(data) {
       state.tick += 1;
+      updateOverviewTabSummaries(data);
       renderKpis(data);
       renderLifecycle(data);
       renderModes(data);
@@ -4368,6 +5969,8 @@
       renderTimeline(data);
       renderDefenseState();
       renderEvidenceChain(data);
+      renderCausalGraph(data);
+      autoOpenCausalGraph(data);
       updateMeshLabelsFromData(data);
 
       const totalEvents = metricValue(data, "total");
@@ -4988,12 +6591,24 @@
       });
 
       $("#meshZoomIn")?.addEventListener("click", () => {
+        if (state.meshView === "causal") {
+          zoomCausalGraph(1.18);
+          return;
+        }
         mesh3d.cameraTargetZ = Math.max(300, mesh3d.cameraTargetZ - 36);
       });
       $("#meshZoomOut")?.addEventListener("click", () => {
+        if (state.meshView === "causal") {
+          zoomCausalGraph(1 / 1.18);
+          return;
+        }
         mesh3d.cameraTargetZ = Math.min(560, mesh3d.cameraTargetZ + 36);
       });
       $("#meshReset")?.addEventListener("click", () => {
+        if (state.meshView === "causal") {
+          fitCausalGraph();
+          return;
+        }
         mesh3d.cameraTargetZ = 500;
         mesh3d.manualRotationX = 0;
         mesh3d.manualRotationY = 0;
@@ -5056,12 +6671,106 @@
       });
       $("#realBtn").addEventListener("click", () => setMode());
       $("#pauseBtn").addEventListener("click", () => setPaused(!state.paused));
+      const overviewTabs = $$("#overviewTabs [data-overview-pane]");
+      overviewTabs.forEach((tab, index) => {
+        tab.addEventListener("click", () => setOverviewPane(String(tab.dataset.overviewPane || "posture")));
+        tab.addEventListener("keydown", event => {
+          let nextIndex = index;
+          if (event.key === "ArrowLeft") nextIndex = (index - 1 + overviewTabs.length) % overviewTabs.length;
+          else if (event.key === "ArrowRight") nextIndex = (index + 1) % overviewTabs.length;
+          else if (event.key === "Home") nextIndex = 0;
+          else if (event.key === "End") nextIndex = overviewTabs.length - 1;
+          else return;
+          event.preventDefault();
+          setOverviewPane(String(overviewTabs[nextIndex]?.dataset.overviewPane || "posture"), true);
+        });
+      });
+      setOverviewPane(state.overviewPane);
+      $("#meshViewTopology").addEventListener("click", () => {
+        state.meshViewTouched = true;
+        setMeshView("topology");
+      });
+      $("#meshViewCausal").addEventListener("click", () => {
+        state.meshViewTouched = true;
+        setMeshView("causal");
+      });
+      $(".mesh-view-switch")?.addEventListener("keydown", event => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const causal = event.key === "ArrowRight";
+        state.meshViewTouched = true;
+        setMeshView(causal ? "causal" : "topology");
+        $(causal ? "#meshViewCausal" : "#meshViewTopology")?.focus();
+      });
+      $("#causalGraphNodes")?.addEventListener("click", event => {
+        const node = event.target.closest(".causal-node");
+        if (!node) return;
+        const id = String(node.dataset.nodeId || "");
+        selectCausalGraphItem(state.causalGraph?.selectedNodeId === id ? "" : id, "");
+      });
+      $("#causalGraphSvg")?.addEventListener("click", event => {
+        const edge = event.target.closest(".causal-edge-hit");
+        if (!edge) return;
+        const id = String(edge.dataset.edgeId || "");
+        selectCausalGraphItem("", state.causalGraph?.selectedEdgeId === id ? "" : id);
+      });
+      $("#causalGraphSvg")?.addEventListener("keydown", event => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        const edge = event.target.closest(".causal-edge-hit");
+        if (!edge) return;
+        event.preventDefault();
+        selectCausalGraphItem("", String(edge.dataset.edgeId || ""));
+      });
+      $("#causalGraphInspector")?.addEventListener("click", event => {
+        if (event.target.closest(".causal-inspector-close")) selectCausalGraphItem();
+      });
+      const causalViewport = $("#causalGraphViewport");
+      causalViewport?.addEventListener("pointerdown", event => {
+        if (state.meshView !== "causal" || event.button !== 0) return;
+        if (event.target.closest(".causal-node, .causal-edge-hit")) return;
+        const transform = state.causalGraph?.transform;
+        if (!transform) return;
+        state.causalPan = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, x: transform.x, y: transform.y };
+        causalViewport.setPointerCapture?.(event.pointerId);
+        causalViewport.classList.add("dragging");
+      });
+      causalViewport?.addEventListener("pointermove", event => {
+        if (!state.causalPan || state.causalPan.pointerId !== event.pointerId || !state.causalGraph) return;
+        state.causalGraph.transform.x = state.causalPan.x + event.clientX - state.causalPan.clientX;
+        state.causalGraph.transform.y = state.causalPan.y + event.clientY - state.causalPan.clientY;
+        applyCausalGraphTransform();
+      });
+      const endCausalPan = event => {
+        if (!state.causalPan || state.causalPan.pointerId !== event.pointerId) return;
+        state.causalPan = null;
+        causalViewport?.classList.remove("dragging");
+        causalViewport?.releasePointerCapture?.(event.pointerId);
+      };
+      causalViewport?.addEventListener("pointerup", endCausalPan);
+      causalViewport?.addEventListener("pointercancel", endCausalPan);
+      causalViewport?.addEventListener("wheel", event => {
+        if (state.meshView !== "causal" || !state.causalGraph) return;
+        event.preventDefault();
+        const box = causalViewport.getBoundingClientRect();
+        zoomCausalGraph(event.deltaY < 0 ? 1.12 : 1 / 1.12, { x: event.clientX - box.left, y: event.clientY - box.top });
+      }, { passive: false });
+      window.addEventListener("resize", () => requestAnimationFrame(() => {
+        if (state.meshView === "causal" && state.data) {
+          renderCausalGraph(state.data);
+          fitCausalGraph();
+        } else {
+          drawCausalGraphEdges();
+        }
+      }));
       $("#alertModalClose").addEventListener("click", closeAlertModal);
       $("#alertModal").addEventListener("click", (event) => {
         if (event.target === $("#alertModal")) closeAlertModal();
       });
       document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") closeAlertModal();
+        if (event.key === "Escape") {
+          closeAlertModal();
+          selectCausalGraphItem();
+        }
       });
       $("#fullscreenBtn").addEventListener("click", async () => {
         if (!document.fullscreenElement) {

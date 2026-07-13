@@ -11,7 +11,8 @@ AgentSentry is a runnable OpenClaw supervision plugin for an LLM-agent tool chai
 - OpenAI-compatible JSON-action agent interface.
 - Sandboxed tools: webpage, file read/write, email, API, memory.
 - TaskSpec V2 explicit capability authorization with recipient, path, host, method, command, evidence, and expiry constraints.
-- Field-level provenance and taint-to-sink checks, Tool Security Manifests, Memory Guard, and a monotonic semantic Judge.
+- Session-scoped Semantic Action Graph V2 linking TaskSpec intent, capabilities, actions, field-level provenance, transformations, and sinks into evidence-qualified directed paths.
+- Field-level taint-to-sink checks, Tool Security Manifests, Memory Guard, and a monotonic semantic Judge.
 - Lightweight statistical behavior baselines for intent drift and unusual tool trajectories. These are not trained anomaly models.
 - Four-domain feedback architecture: context provenance, state integrity, intent authorization, tool boundary, and evidence feedback.
 - SQLite event store and a FastAPI-served monitoring dashboard.
@@ -74,6 +75,27 @@ The OpenClaw plugin now also has optional semantic workspace provenance scan and
 /agentsentry config set semantic.judgeProvenance true
 /agentsentry config set responseCover.enabled true
 ```
+
+## Semantic Action Graph V2
+
+AgentSentry deliberately keeps two semantic layers separate:
+
+1. `core/action-semantics.ts` is a per-call fact extractor. It recursively inspects the current tool arguments, expands common encodings, and reports flat categories such as sensitive references, local reads, network writes, persistence, and privileged effects. It can detect a dangerous combination inside one attempted call, but it does not by itself prove causality across calls.
+2. `core/semantic-action-graph.ts` is a session-scoped directed acyclic graph. It connects TaskSpec intent and explicit capabilities to tool actions, field-level provenance, transformations, and final sinks across the OpenClaw and Command Lab lifecycles.
+
+The V2 topology uses five node types (`intent`, `capability`, `action`, `data`, `sink`) and nine directed edge types (`declares`, `governs`, `authorizes`, `constrains`, `requests`, `consumes`, `produces`, `derives`, `targets`). `constrains` preserves the relevant capability boundary when an action has a capability candidate but its concrete recipient, path, host, HTTP method, or command is outside that scope. This lets the graph distinguish a side effect with no explicit capability (`unauthorized_side_effect`) from a concrete target that exceeds an existing capability (`target_scope_mismatch`).
+
+Action nodes use `proposed`, `awaiting_approval`, `blocked`, `executing`, `succeeded`, `failed`, and `observed` lifecycle states. Only a successful tool call creates a `produces` edge, so a denied or failed action cannot later appear as a valid data source. If a supposedly blocked call nevertheless reports success, the blocked node remains immutable: the graph records a lifecycle anomaly, creates a separate `observed` execution node with `post_block_execution` evidence, and emits a score-100 deterministic `enforcement_bypass / executed_after_block` finding. Replayed terminal callbacks are ignored, so the same result cannot append provenance, exposures, nodes, edges, or findings twice.
+
+Every edge carries an evidence `basis` (`observed`, `decoded`, or `conservative`) and a confidence value. `exact` and `encoded_exact` matches support observed-grade deterministic lineage; substring/fuzzy matches do not. For example, when a secret field returned by `read_webpage` is consumed by `summarize_text` and becomes an opaque value such as `summary-ref-7f4a9c01`, the graph preserves it only as a conservative black-box hypothesis, not as proof that the output contains the secret. That graph evidence requests approval and, when enabled, semantic review. An independent hard rule, such as an exact taint-to-sink match or explicit authorization violation, may still make the merged final decision `deny`. Conversely, if only `$.public_summary` enters the transform, a secret sibling such as `$.account_token` is not connected.
+
+When more than one directed route reaches the same sink, route selection is evidence-first: any fully observed/decoded route outranks every route containing a conservative edge; among eligible routes the graph maximizes the minimum edge confidence, then chooses the shortest deterministic route. Report limits are applied only after observed paths have been ranked ahead of conservative candidates, so a newer weak hypothesis cannot hide stronger causal evidence.
+
+The graph stores hashes, fingerprints, JSON paths, classifications, tool names, and transformation labels rather than raw task text, tool arguments, or tool results. It is bounded and rejects cycles and dangling edges. OpenClaw derives a namespaced SHA-256 identity from the structured `(sessionKey, sessionId)` tuple, preventing tuple or raw-key collisions. At the 500-session limit it evicts only idle state; if every slot has in-flight graph/runtime work, it refuses the new session instead of allowing an untracked one.
+
+Recent snapshots expose at most 36 nodes, 40 edges, and 6 complete paths under `trust.semantic_action_graph`, reserve active intent/capability/pending authorization context, and enforce a 64 KiB serialized hard limit. A separate Judge projection has a 2,400-byte UTF-8 default ceiling and degrades through smaller structured variants; the enclosing Judge envelope can assign it an even smaller sub-budget. It contains bounded authorization context, recent actions, causal paths, graph counts, and lifecycle anomalies rather than the full audit snapshot.
+
+The dashboard API emits a sanitized causal subgraph with `trace_kind=attack`, `authorized`, or `enforcement_bypass`; bypass evidence takes precedence, followed by attack paths and then a precisely authorized allow trace. A long path remains connected by retaining its head and tail and inserting a synthetic collapsed node plus summary edges marked `display_only=true`, confidence `0`, so layout continuity is never mistaken for new evidence. On `/security-screen`, the existing 3D topology remains available under **态势**, while **因果** uses a topological DAG layout, fit/pan/zoom controls, and clickable node/edge inspection with upstream and downstream focus.
 
 Useful runtime commands:
 

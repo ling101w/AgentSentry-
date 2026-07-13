@@ -8,7 +8,7 @@ type SemanticFact = {
   variants: string[];
 };
 
-type SemanticGraph = {
+export type SemanticGraph = {
   operations: string[];
   sensitiveSources: string[];
   externalSinks: string[];

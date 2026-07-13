@@ -1,7 +1,8 @@
 import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
-import { policyTrustSnapshot, type PolicyState } from "./policy.ts";
+import type { PolicyState } from "./policy.ts";
+import { semanticActionGraphJudgeProjection } from "./semantic-action-graph.ts";
 import { hostFromUrl, isLocalHost } from "./policy/value-utils.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -386,16 +387,20 @@ function semanticContextPack(input: {
     reason: finding.reason,
     score: finding.score,
   }));
+  const graphBudget = Math.max(512, Math.min(1800, Math.trunc(max * 0.28)));
   const pack = {
     phase: input.phase,
     judge_gate: input.gate,
-    user_authorized_task: input.task || state?.currentTask || "(unknown)",
+    semantic_action_graph: state
+      ? semanticActionGraphJudgeProjection(state.semanticActionGraph, graphBudget)
+      : null,
+    user_authorized_task: boundedJudgeText(input.task || state?.currentTask || "(unknown)", Math.min(720, Math.trunc(max * 0.12))),
     task_spec: state?.taskSpec ? {
-      allowed_tools: state.taskSpec.allowed_tools,
-      forbidden_tools: state.taskSpec.forbidden_tools,
-      allowed_targets: state.taskSpec.allowed_targets.slice(0, 12),
+      allowed_tools: state.taskSpec.allowed_tools.slice(0, 12).map((item) => clampText(item, 80)),
+      forbidden_tools: state.taskSpec.forbidden_tools.slice(0, 12).map((item) => clampText(item, 80)),
+      allowed_targets: state.taskSpec.allowed_targets.slice(0, 12).map((item) => clampText(item, 120)),
       output_policy: state.taskSpec.output_policy,
-      sensitive_assets: state.taskSpec.sensitive_assets,
+      sensitive_assets: state.taskSpec.sensitive_assets.slice(0, 12).map((item) => clampText(item, 80)),
     } : null,
     recent_tool_trajectory: state?.history.slice(-10) || [],
     session_risk_state: state ? {
@@ -411,7 +416,16 @@ function semanticContextPack(input: {
         reason: flow.reason,
         tags: flow.tags,
       })),
-      trust: policyTrustSnapshot(state),
+      recent_trust_labels: state.trustLabels.slice(-4).map((label) => ({
+        source: clampText(label.source, 96),
+        integrity: label.integrity,
+        confidentiality: label.confidentiality,
+        tainted: label.tainted,
+        tags: (Array.isArray(label.evidence?.tags) ? label.evidence.tags : [])
+          .filter((tag): tag is string => typeof tag === "string")
+          .slice(0, 6)
+          .map((tag) => clampText(tag, 64)),
+      })),
     } : null,
     relevant_exposures: state ? state.exposures.slice(-6).map((exposure) => ({
       source: exposure.source,

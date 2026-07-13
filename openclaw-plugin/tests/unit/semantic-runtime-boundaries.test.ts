@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginConfig } from "../../config.ts";
 import { mergeDecision } from "../../core/judge/decision-merge.ts";
+import { createPolicyState } from "../../core/policy.ts";
+import { activateSemanticIntent, beginSemanticAction } from "../../core/semantic-action-graph.ts";
 import {
   parseJudgeResponse,
   semanticJudgeMemoryWrite,
@@ -8,6 +10,7 @@ import {
   semanticJudgeProvenanceFile,
   semanticJudgeToolCall,
 } from "../../core/semantic.ts";
+import { authorizeCapability, deriveTaskSpecV2 } from "../../core/task-spec/index.ts";
 
 const API_ENV = "AGENTSENTRY_SEMANTIC_RUNTIME_TEST_KEY";
 
@@ -279,6 +282,48 @@ describe("semantic entry envelopes and bounded inputs", () => {
       expect(bounded).toContain("[truncated middle]");
       expect(bounded).not.toContain("MIDDLE_SENTINEL");
     }
+  });
+
+  it("sends a bounded causal projection to the Judge instead of the full session graph", async () => {
+    process.env[API_ENV] = "unit-test-key";
+    const fetchMock = vi.fn(async () => responseWithContent(judgeContent()));
+    vi.stubGlobal("fetch", fetchMock);
+    const config = judgeConfig("full");
+    const state = createPolicyState();
+    const taskSpec = deriveTaskSpecV2("Summarize the quarterly report.", []);
+    state.currentTask = taskSpec.task;
+    state.taskSpec = taskSpec;
+    activateSemanticIntent(state.semanticActionGraph, taskSpec);
+    const authorization = authorizeCapability(taskSpec, {
+      tool: "send_email",
+      args: { recipient: "outside@example.invalid", body: "summary" },
+    });
+    beginSemanticAction(state.semanticActionGraph, {
+      toolCallId: "judge-projection-call",
+      tool: "send_email",
+      originalTool: "send_email",
+      authorization,
+      sink: "send_email",
+      effects: { external: true, persistence: false, execution: false, sensitive: false, sideEffect: true },
+      provenance: [],
+    });
+
+    await semanticJudgeToolCall(
+      "send_email",
+      { recipient: "outside@example.invalid", body: "summary" },
+      taskSpec.task,
+      config,
+      { policyState: state },
+    );
+
+    const content = String(envelopeFromCall(fetchMock.mock.calls[0]).evidence.content);
+    expect(content.length).toBeLessThanOrEqual(config.semantic.maxInputChars);
+    expect(content).toContain('"semantic_action_graph"');
+    expect(content).toContain('"graph_counts"');
+    expect(content).toContain("unauthorized_side_effect");
+    expect(content).toContain("send_email");
+    expect(content).not.toContain('"attack_paths"');
+    expect(content).not.toContain('"contentFingerprint"');
   });
 });
 

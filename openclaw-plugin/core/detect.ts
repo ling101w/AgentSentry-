@@ -31,6 +31,10 @@ export type DetectionResult = {
   policy: PolicyDecision;
 };
 
+export type DetectionContext = {
+  toolCallId?: string;
+};
+
 type BoundaryNormalization = {
   value: unknown;
   anomalies: string[];
@@ -90,6 +94,7 @@ export function detectToolCall(
   config: PluginConfig,
   state: PolicyState,
   extraFindings: DetectionFinding[] = [],
+  context: DetectionContext = {},
 ): DetectionResult {
   const normalizedInput = normalizeToolInput(toolName, params);
   toolName = normalizedInput.toolName;
@@ -100,8 +105,12 @@ export function detectToolCall(
   let action = normalizeAction(toolName, params);
   const manifestFindings = config.policy.deterministic ? toolManifestFindings(toolName, action.tool, params) : [];
   const deterministicFindings = [...boundaryFindings, ...manifestFindings];
+  const semanticAction = semanticActionFindings(toolName, params, config);
   if (!config.detection.enabled) {
-    const policy = decideAction(action, state, config, deterministicFindings);
+    const policy = decideAction(action, state, config, deterministicFindings, {
+      toolCallId: context.toolCallId,
+      semanticGraph: semanticAction.graph,
+    });
     return { decision: policy.decision, risk_score: policy.risk_score, findings: policy.findings, summary: "detection disabled; policy only", policy };
   }
 
@@ -124,7 +133,6 @@ export function detectToolCall(
   findings.push(...trustAnalysis.findings);
   risk += Math.min(55, Math.trunc(riskMax(trustAnalysis.risk_vector) / 2));
 
-  const semanticAction = semanticActionFindings(toolName, params, config);
   findings.push(...semanticAction.findings);
   risk += Math.min(80, semanticAction.risk);
 
@@ -197,7 +205,11 @@ export function detectToolCall(
     });
   }
 
-  const policy = decideAction(action, state, config, findings);
+  const policy = decideAction(action, state, config, findings, {
+    toolCallId: context.toolCallId,
+    semanticGraph: semanticAction.graph,
+    provenanceLinks: exposure.links,
+  });
   return {
     decision: policy.decision,
     risk_score: Math.max(Math.min(risk, 150), policy.risk_score),

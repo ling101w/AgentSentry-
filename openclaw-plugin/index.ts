@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { ConfigSchema, PluginConfig } from "./config.ts";
 import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
@@ -20,6 +21,7 @@ import {
   normalizeAction,
   policyTrustSnapshot,
   resultFindings,
+  updateActionGraphEnforcement,
   updateAfterDecision,
   updateAfterMessage,
   updateTaskSpec,
@@ -35,6 +37,8 @@ import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
 type SessionState = {
   runId: string;
   sessionKey: string;
+  sourceSessionKey: string;
+  sessionId: string;
   messageCount: number;
   toolCount: number;
   coverNextAssistantResponse: boolean;
@@ -296,12 +300,20 @@ const plugin = {
           })
           : []),
       ];
-      const result = detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings);
+      const result = detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings, {
+        toolCallId: event.toolCallId || "",
+      });
       const cachedApproval = plugin.approvalCache!.has(operationKey) && result.decision === "ask" && !result.policy.deterministic_block;
       const effectiveDecision = cachedApproval ? "allow" : result.decision;
       const effectivePolicy = cachedApproval ? { ...result.policy, decision: "allow" as const } : result.policy;
       const cacheEntry = cachedApproval ? plugin.approvalCache!.recordHit(operationKey) : null;
       const severity = severityForDecision(effectiveDecision);
+      const graphStatus = plugin.config!.enforcement.mode === "approval" && (effectiveDecision === "deny" || effectiveDecision === "ask")
+        ? "awaiting_approval"
+        : plugin.config!.enforcement.mode === "block" && effectiveDecision === "deny"
+          ? "blocked"
+          : "executing";
+      updateActionGraphEnforcement(state.policyState, effectivePolicy, graphStatus);
       const payload = {
         toolName: event.toolName,
         normalized_tool: result.policy.action.tool,
@@ -440,6 +452,12 @@ const plugin = {
             onResolution: (decision: string) => {
               const cacheEligible = result.decision === "ask" && !result.policy.deterministic_block;
               if (decision === "allow-always" && cacheEligible) plugin.approvalCache!.add(operationKey, event.toolName);
+              const approved = decision.startsWith("allow");
+              updateActionGraphEnforcement(
+                state.policyState,
+                { ...result.policy, decision: approved ? "allow" : "deny" },
+                approved ? "executing" : "blocked",
+              );
               plugin.store!.add({
                 run_id: state.runId,
                 session_key: state.sessionKey,
@@ -470,7 +488,14 @@ const plugin = {
 
     api.on("after_tool_call", (event, ctx) => {
       const state = getSession(ctx);
-      const findings = resultFindings(event?.toolCallId || "", event?.result, state.policyState, plugin.config!, event?.toolName || "");
+      const findings = resultFindings(
+        event?.toolCallId || "",
+        event?.result,
+        state.policyState,
+        plugin.config!,
+        event?.toolName || "",
+        { error: event?.error },
+      );
       const checkpointKey = runtimeCheckpointKey(event?.toolCallId || "", event?.toolName || "");
       const runtimeCheckpoint = state.runtimeCheckpoints.get(checkpointKey) || null;
       if (runtimeCheckpoint) state.runtimeCheckpoints.delete(checkpointKey);
@@ -538,35 +563,57 @@ const plugin = {
         });
         sendProactiveNotification(ctx, "warning", "eBPF runtime audit finding", runtimeFindings.map((finding) => finding.reason).join("; "));
       }
+      trimSessions();
     });
 
     function getSession(ctx: Record<string, unknown>): SessionState {
       const sessionKey = typeof ctx.sessionKey === "string" ? ctx.sessionKey : "unknown";
-      let state = plugin.sessions.get(sessionKey);
+      const sessionId = typeof ctx.sessionId === "string" && ctx.sessionId.trim() ? ctx.sessionId.trim() : "default";
+      const sessionMaterial = JSON.stringify([sessionKey, sessionId]);
+      const sessionHash = createHash("sha256").update(sessionMaterial).digest("hex");
+      const sessionIdentity = `session:${sessionHash}`;
+      const auditSessionKey = sessionId === "default" ? sessionKey : `${sessionKey}#${sessionHash.slice(0, 12)}`;
+      let state = plugin.sessions.get(sessionIdentity);
       if (!state) {
+        ensureSessionCapacity();
         state = {
-          sessionKey,
-          runId: runIdForSession(sessionKey),
+          sessionKey: auditSessionKey,
+          sourceSessionKey: sessionKey,
+          sessionId,
+          runId: runIdForSession(sessionMaterial),
           messageCount: 0,
           toolCount: 0,
           coverNextAssistantResponse: false,
           policyState: createPolicyState(),
           runtimeCheckpoints: new Map(),
         };
-        plugin.sessions.set(sessionKey, state);
-        trimSessions();
+        plugin.sessions.set(sessionIdentity, state);
       } else {
-        plugin.sessions.delete(sessionKey);
-        plugin.sessions.set(sessionKey, state);
+        plugin.sessions.delete(sessionIdentity);
+        plugin.sessions.set(sessionIdentity, state);
       }
       return state;
     }
 
+    function ensureSessionCapacity(): void {
+      while (plugin.sessions.size >= MAX_ACTIVE_SESSIONS) {
+        const evictable = [...plugin.sessions.entries()].find(([, state]) =>
+          state.policyState.semanticActionGraph.pendingCalls.size === 0 && state.runtimeCheckpoints.size === 0
+        );
+        if (!evictable) {
+          throw new Error("AgentSentry active session capacity reached with in-flight calls; refusing untracked session state");
+        }
+        plugin.sessions.delete(evictable[0]);
+      }
+    }
+
     function trimSessions(): void {
       while (plugin.sessions.size > MAX_ACTIVE_SESSIONS) {
-        const oldest = plugin.sessions.keys().next().value;
-        if (!oldest) break;
-        plugin.sessions.delete(oldest);
+        const evictable = [...plugin.sessions.entries()].find(([, state]) =>
+          state.policyState.semanticActionGraph.pendingCalls.size === 0 && state.runtimeCheckpoints.size === 0
+        );
+        if (!evictable) break;
+        plugin.sessions.delete(evictable[0]);
       }
     }
 

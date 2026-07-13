@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -317,9 +318,69 @@ describe("OpenClaw plugin hooks", () => {
     expect(plugin.sessions.size).toBe(0);
   });
 
+  it("isolates action graphs for different session IDs under the same session key", async () => {
+    const harness = createHarness();
+    await harness.service.start();
+    const first = { sessionKey: "hooks:shared", sessionId: "session-one", workspaceDir: harness.stateDir };
+    const second = { sessionKey: "hooks:shared", sessionId: "session-two", workspaceDir: harness.stateDir };
+
+    await invoke(harness, "before_prompt_build", {
+      messages: [{ role: "user", content: "Read the vendor report." }],
+    }, first);
+    await invoke(harness, "after_tool_call", {
+      toolName: "read_webpage",
+      toolCallId: "session-one-source",
+      result: { account_token: "token=fixture_secret_value_1234567890" },
+    }, first);
+    await invoke(harness, "before_prompt_build", {
+      messages: [{ role: "user", content: "Send the public report to teacher@example.edu." }],
+    }, second);
+
+    const shared = [...plugin.sessions.values()].filter((state) => state.sourceSessionKey === "hooks:shared");
+    expect(shared).toHaveLength(2);
+    expect(new Set(shared.map((state) => state.sessionKey)).size).toBe(2);
+    const firstState = shared.find((state) => state.sessionId === "session-one")?.policyState;
+    const secondState = shared.find((state) => state.sessionId === "session-two")?.policyState;
+    expect(firstState?.dataProvenance.length).toBeGreaterThan(0);
+    expect(firstState?.semanticActionGraph.nodes.some((node) => node.kind === "data")).toBe(true);
+    expect(secondState?.dataProvenance).toEqual([]);
+    expect(secondState?.semanticActionGraph.nodes.some((node) => node.kind === "data")).toBe(false);
+  });
+
+  it("separates a raw default key from another session tuple's SHA-256 value", async () => {
+    const harness = createHarness();
+    await harness.service.start();
+    const scoped = { sessionKey: "hooks:collision", sessionId: "scoped", workspaceDir: harness.stateDir };
+    const oldStyleHash = createHash("sha256")
+      .update(JSON.stringify([scoped.sessionKey, scoped.sessionId]))
+      .digest("hex");
+    const rawDefault = { sessionKey: oldStyleHash, workspaceDir: harness.stateDir };
+
+    await invoke(harness, "before_prompt_build", {
+      messages: [{ role: "user", content: "Read the vendor report." }],
+    }, scoped);
+    await invoke(harness, "before_prompt_build", {
+      messages: [{ role: "user", content: "Send the public report to teacher@example.edu." }],
+    }, rawDefault);
+
+    const states = [...plugin.sessions.values()].filter((state) =>
+      state.sourceSessionKey === scoped.sessionKey || state.sourceSessionKey === rawDefault.sessionKey
+    );
+    expect(states).toHaveLength(2);
+    expect(new Set(states.map((state) => state.runId)).size).toBe(2);
+  });
+
   it("bounds active sessions with least-recently-used eviction", async () => {
     const harness = createHarness();
     await harness.service.start();
+    await invoke(harness, "before_tool_call", {
+      toolName: "read_webpage",
+      toolCallId: "pending-lru-call",
+      params: { url: "https://vendor.example/report" },
+    }, {
+      sessionKey: "hooks:lru:pending",
+      workspaceDir: harness.stateDir,
+    });
     for (let index = 0; index < 505; index += 1) {
       await invoke(harness, "llm_input", { systemPrompt: "ordinary" }, {
         sessionKey: `hooks:lru:${index}`,
@@ -327,8 +388,10 @@ describe("OpenClaw plugin hooks", () => {
       });
     }
     expect(plugin.sessions.size).toBe(500);
-    expect(plugin.sessions.has("hooks:lru:0")).toBe(false);
-    expect(plugin.sessions.has("hooks:lru:504")).toBe(true);
+    const activeSessionKeys = () => new Set([...plugin.sessions.values()].map((state) => state.sourceSessionKey));
+    expect(activeSessionKeys().has("hooks:lru:pending")).toBe(true);
+    expect(activeSessionKeys().has("hooks:lru:0")).toBe(false);
+    expect(activeSessionKeys().has("hooks:lru:504")).toBe(true);
 
     await invoke(harness, "llm_input", { systemPrompt: "refresh" }, {
       sessionKey: "hooks:lru:5",
@@ -338,8 +401,37 @@ describe("OpenClaw plugin hooks", () => {
       sessionKey: "hooks:lru:new",
       workspaceDir: harness.stateDir,
     });
-    expect(plugin.sessions.has("hooks:lru:5")).toBe(true);
-    expect(plugin.sessions.has("hooks:lru:6")).toBe(false);
+    expect(activeSessionKeys().has("hooks:lru:5")).toBe(true);
+    expect(activeSessionKeys().has("hooks:lru:6")).toBe(false);
     expect(plugin.sessions.size).toBe(500);
+  });
+
+  it("refuses a new untracked session when every capacity slot is in flight", async () => {
+    const harness = createHarness();
+    await harness.service.start();
+    await invoke(harness, "llm_input", { systemPrompt: "seed" }, {
+      sessionKey: "hooks:capacity:seed",
+      workspaceDir: harness.stateDir,
+    });
+    const template = [...plugin.sessions.values()][0];
+    template.policyState.semanticActionGraph.pendingCalls.set("id:pinned", ["pinned-action"]);
+    plugin.sessions.clear();
+    for (let index = 0; index < 500; index += 1) {
+      plugin.sessions.set(`pinned:${index}`, {
+        ...template,
+        sessionKey: `hooks:capacity:${index}`,
+        sourceSessionKey: `hooks:capacity:${index}`,
+        sessionId: "default",
+        runId: `run-capacity-${index}`,
+        runtimeCheckpoints: new Map(),
+      });
+    }
+
+    await expect(invoke(harness, "llm_input", { systemPrompt: "must not become untracked" }, {
+      sessionKey: "hooks:capacity:overflow",
+      workspaceDir: harness.stateDir,
+    })).rejects.toThrow("active session capacity reached");
+    expect(plugin.sessions.size).toBe(500);
+    expect([...plugin.sessions.values()].some((state) => state.sourceSessionKey === "hooks:capacity:overflow")).toBe(false);
   });
 });
