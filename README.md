@@ -23,9 +23,9 @@ Current scope: deterministic policy enforces explicit TaskSpec capabilities and 
 ## 推荐入口
 
 - 文档入口：`reports/START_HERE.md`
-- OpenClaw 插件主控制台：`http://127.0.0.1:8765/`
-- 业务测试台和 benchmark 逐条复测：`http://127.0.0.1:8765/command-lab`
-- 安全态势大屏：`http://127.0.0.1:8765/security-screen`
+- OpenClaw 插件主控制台：运行 `/agentsentry` 获取带认证 bootstrap token 的本地 URL
+- 业务测试台和 benchmark 逐条复测：从已认证控制台进入 `/command-lab`
+- 安全态势大屏：从已认证控制台进入 `/security-screen`
 - OpenClaw Control UI：`http://127.0.0.1:18789/`
 
 `8000` 是早期 FastAPI 离线原型和辅助研究入口；当前比赛展示与真实 OpenClaw 插件链路以 `8765` 为准。
@@ -46,7 +46,7 @@ After OpenClaw loads the plugin, run:
 /agentsentry status
 ```
 
-Open `http://127.0.0.1:8765/`. The earlier FastAPI research prototype remains available on port `8000`, but it is not the competition's primary evidence chain.
+Open the authenticated URL printed by `/agentsentry`. A bare `http://127.0.0.1:8765/` intentionally returns `401` in a fresh browser. The earlier FastAPI research prototype remains available on port `8000`, but it is not the competition's primary evidence chain.
 
 ## OpenClaw Plugin
 
@@ -58,7 +58,7 @@ npm run build
 .\setup.ps1 -Force
 ```
 
-After installing, use `/agentsentry` in OpenClaw. The dashboard defaults to http://127.0.0.1:8765 and JSONL records are stored under `~/.openclaw/agentsentry/records.jsonl`.
+After installing, use `/agentsentry` in OpenClaw and open the returned authenticated URL. The dashboard binds to loopback by default; its bare base URL requires authentication. JSONL records are stored under `~/.openclaw/agentsentry/records.jsonl`.
 
 The plugin dashboard includes:
 
@@ -91,7 +91,7 @@ Every edge carries an evidence `basis` (`observed`, `decoded`, or `conservative`
 
 When more than one directed route reaches the same sink, route selection is evidence-first: any fully observed/decoded route outranks every route containing a conservative edge; among eligible routes the graph maximizes the minimum edge confidence, then chooses the shortest deterministic route. Report limits are applied only after observed paths have been ranked ahead of conservative candidates, so a newer weak hypothesis cannot hide stronger causal evidence.
 
-The graph stores hashes, fingerprints, JSON paths, classifications, tool names, and transformation labels rather than raw task text, tool arguments, or tool results. It is bounded and rejects cycles and dangling edges. OpenClaw derives a namespaced SHA-256 identity from the structured `(sessionKey, sessionId)` tuple, preventing tuple or raw-key collisions. At the 500-session limit it evicts only idle state; if every slot has in-flight graph/runtime work, it refuses the new session instead of allowing an untracked one.
+The graph stores hashes, fingerprints, JSON paths, classifications, tool names, and transformation labels rather than raw task text, tool arguments, or tool results. It is bounded and rejects cycles and dangling edges. OpenClaw derives a namespaced SHA-256 identity from the structured `(sessionKey, sessionId)` tuple, preventing tuple or raw-key collisions. At the configured session limit (256 by default) it evicts only idle state; if every slot has in-flight graph/runtime work, it refuses the new session instead of allowing an untracked one.
 
 Recent snapshots expose at most 36 nodes, 40 edges, and 6 complete paths under `trust.semantic_action_graph`, reserve active intent/capability/pending authorization context, and enforce a 64 KiB serialized hard limit. A separate Judge projection has a 2,400-byte UTF-8 default ceiling and degrades through smaller structured variants; the enclosing Judge envelope can assign it an even smaller sub-budget. It contains bounded authorization context, recent actions, causal paths, graph counts, and lifecycle anomalies rather than the full audit snapshot.
 

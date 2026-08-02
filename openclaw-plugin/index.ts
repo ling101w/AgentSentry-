@@ -30,6 +30,7 @@ import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
 import { semanticJudgeAmbiguousAction } from "./core/semantic.ts";
+import { SessionRegistry } from "./core/session-registry.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
 
@@ -46,8 +47,9 @@ type SessionState = {
   runtimeCheckpoints: Map<string, { checkpoint: EbpfLogCheckpoint | null; toolName: string; params: Record<string, unknown> }>;
 };
 
-const MAX_ACTIVE_SESSIONS = 256;
-const SESSION_IDLE_TTL_MS = 30 * 60 * 1000;
+function sessionCanEvict(state: SessionState): boolean {
+  return state.policyState.semanticActionGraph.pendingCalls.size === 0 && state.runtimeCheckpoints.size === 0;
+}
 
 const plugin = {
   id: "agent-sentry",
@@ -59,7 +61,7 @@ const plugin = {
   approvalCache: null as ApprovalCache | null,
   dashboard: null as DashboardServer | null,
   startupConfig: null as PluginConfig | null,
-  sessions: new Map<string, SessionState>(),
+  sessions: new SessionRegistry<SessionState>({ canEvict: sessionCanEvict }),
 
   register(api: OpenClawPluginApi) {
     const baseConfig = PluginConfig.fromPluginConfig(api.pluginConfig);
@@ -67,6 +69,11 @@ const plugin = {
     plugin.config = loadRuntimeConfig(baseConfig);
     plugin.store = new RecordStore(plugin.config);
     plugin.approvalCache = new ApprovalCache(plugin.config);
+    plugin.sessions = new SessionRegistry<SessionState>({
+      idleTtlMs: plugin.config.storage.sessionIdleTtlMs,
+      maxSessions: plugin.config.storage.maxSessions,
+      canEvict: sessionCanEvict,
+    });
 
     api.registerService({
       id: "agent-sentry-dashboard",
@@ -96,7 +103,7 @@ const plugin = {
       acceptsArgs: true,
       requireAuth: true,
       handler: (ctx) => {
-        const dashboard = plugin.dashboard?.url || `http://${plugin.config!.dashboard.host}:${plugin.config!.dashboard.port}`;
+        const dashboard = plugin.dashboard?.accessUrl || `http://${plugin.config!.dashboard.host}:${plugin.config!.dashboard.port}`;
         return handleAgentSentryCommand(ctx, plugin.config!, plugin.startupConfig!, {
           dashboardUrl: dashboard,
           recordsPath: plugin.store!.recordsPath,
@@ -289,7 +296,10 @@ const plugin = {
         enforcement: plugin.config!.enforcement.mode,
         taskSpec: state.policyState.taskSpec,
       });
-      const detectionContext = { toolCallId: event.toolCallId || "" };
+      const detectionContext = {
+        toolCallId: event.toolCallId || "",
+        workspaceDir: typeof ctx.workspaceDir === "string" ? ctx.workspaceDir : "",
+      };
       const preliminary = detectToolCall(event.toolName, params, plugin.config!, state.policyState, [], detectionContext);
       const semanticFindings = await semanticJudgeAmbiguousAction({
         action: preliminary.policy.action,
@@ -563,7 +573,6 @@ const plugin = {
     });
 
     function getSession(ctx: Record<string, unknown>): SessionState {
-      evictIdleSessions();
       const sessionKey = typeof ctx.sessionKey === "string" ? ctx.sessionKey : "unknown";
       const sessionId = typeof ctx.sessionId === "string" && ctx.sessionId.trim() ? ctx.sessionId.trim() : "default";
       const sessionMaterial = JSON.stringify([sessionKey, sessionId]);
@@ -572,7 +581,6 @@ const plugin = {
       const auditSessionKey = sessionId === "default" ? sessionKey : `${sessionKey}#${sessionHash.slice(0, 12)}`;
       let state = plugin.sessions.get(sessionIdentity);
       if (!state) {
-        ensureSessionCapacity();
         state = {
           sessionKey: auditSessionKey,
           sourceSessionKey: sessionKey,
@@ -586,43 +594,12 @@ const plugin = {
           runtimeCheckpoints: new Map(),
         };
         plugin.sessions.set(sessionIdentity, state);
-      } else {
-        state.lastAccessedAt = Date.now();
-        plugin.sessions.delete(sessionIdentity);
-        plugin.sessions.set(sessionIdentity, state);
       }
       return state;
     }
 
-    function evictIdleSessions(now = Date.now()): void {
-      const cutoff = now - SESSION_IDLE_TTL_MS;
-      for (const [key, state] of plugin.sessions) {
-        if (state.lastAccessedAt > cutoff) continue;
-        if (state.policyState.semanticActionGraph.pendingCalls.size || state.runtimeCheckpoints.size) continue;
-        plugin.sessions.delete(key);
-      }
-    }
-
-    function ensureSessionCapacity(): void {
-      while (plugin.sessions.size >= MAX_ACTIVE_SESSIONS) {
-        const evictable = [...plugin.sessions.entries()].find(([, state]) =>
-          state.policyState.semanticActionGraph.pendingCalls.size === 0 && state.runtimeCheckpoints.size === 0
-        );
-        if (!evictable) {
-          throw new Error("AgentSentry active session capacity reached with in-flight calls; refusing untracked session state");
-        }
-        plugin.sessions.delete(evictable[0]);
-      }
-    }
-
     function trimSessions(): void {
-      while (plugin.sessions.size > MAX_ACTIVE_SESSIONS) {
-        const evictable = [...plugin.sessions.entries()].find(([, state]) =>
-          state.policyState.semanticActionGraph.pendingCalls.size === 0 && state.runtimeCheckpoints.size === 0
-        );
-        if (!evictable) break;
-        plugin.sessions.delete(evictable[0]);
-      }
+      plugin.sessions.evictExpired();
     }
 
     function runtimeCheckpointKey(toolCallId: string, toolName: string): string {

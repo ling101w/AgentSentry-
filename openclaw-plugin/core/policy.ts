@@ -17,7 +17,7 @@ import { behaviorAnomalyFindingsFor, updateBehaviorProfile, type BehaviorProfile
 import { containsAny, flattenText as flattenValueText, hostFromUrl, isLabeledValue, readFirstString, unique } from "./policy/value-utils.ts";
 import { clampText, safeStringify as redactSafeStringify } from "./redact.ts";
 import { targetAllowed } from "./security/url.ts";
-import { matchAllowedWritePath } from "./path-security.ts";
+import { matchAllowedWritePath, matchWorkspaceReadPath } from "./path-security.ts";
 import { isAbsolute, resolve } from "node:path";
 import {
   activateSemanticIntent,
@@ -145,6 +145,7 @@ export type PolicyEvaluation = { decision: PolicyDecision; effects: PolicyEffect
 
 export type PolicyDecisionContext = {
   toolCallId?: string;
+  workspaceDir?: string;
   semanticGraph?: SemanticGraph;
   provenanceLinks?: SemanticProvenanceLink[];
   provenanceAdditions?: DataProvenance[];
@@ -478,7 +479,9 @@ function evaluateMutable(
     findings.push(...alignmentFindings);
   }
 
-  const policyViolations = config.policy.deterministic ? deterministicViolations(action, taskSpec, state, config) : [];
+  const policyViolations = config.policy.deterministic
+    ? deterministicViolations(action, taskSpec, state, config, context.workspaceDir || "")
+    : [];
   for (const violation of policyViolations) {
     violations.push(violation);
     findings.push(finding("Tool Boundary", "deterministic", "block", violation, 100, { tool: action.tool }));
@@ -1010,7 +1013,13 @@ function capabilityAuthorizationReason(reason: string, tool: string): string {
   return messages[reason] || `tool ${tool} failed capability authorization: ${reason}`;
 }
 
-function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, state: PolicyState, config: PluginConfig): string[] {
+function deterministicViolations(
+  action: AgentSentryAction,
+  taskSpec: TaskSpec,
+  state: PolicyState,
+  config: PluginConfig,
+  workspaceDir: string,
+): string[] {
   const violations: string[] = [];
   const assessment = assessAction(action, config);
   const argsAnalysis = analyzeTrustContent(action.args, {
@@ -1060,9 +1069,15 @@ function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, 
     if (assessment.systemMutation) violations.push("write path targets protected system path");
     if (config.policy.sensitiveAssets.some((asset) => asset && path.includes(asset.toLowerCase()))) violations.push("write path references sensitive asset");
     if (config.policy.restrictWritesToAllowedRoots) {
-      const allowedRoots = config.policy.allowedWriteRoots.map((root) => isAbsolute(root) ? root : resolve(process.cwd(), root));
-      const boundary = matchAllowedWritePath(requestedPath, allowedRoots, process.cwd());
-      if (!boundary.allowed) violations.push(boundary.reason || "write path is outside allowed roots");
+      const needsWorkspace = !isAbsolute(requestedPath) || config.policy.allowedWriteRoots.some((root) => !isAbsolute(root));
+      if (needsWorkspace && !workspaceDir.trim()) {
+        violations.push("write path cannot be authorized without a workspace root");
+      } else {
+        const writeBaseDir = workspaceDir || process.cwd();
+        const allowedRoots = config.policy.allowedWriteRoots.map((root) => isAbsolute(root) ? root : resolve(writeBaseDir, root));
+        const boundary = matchAllowedWritePath(requestedPath, allowedRoots, writeBaseDir);
+        if (!boundary.allowed) violations.push(boundary.reason || "write path is outside allowed roots");
+      }
     }
     if (config.policy.sensitiveAssets.some((asset) => asset && content.toLowerCase().includes(asset.toLowerCase()))) {
       violations.push("content contains secret-tainted data");
@@ -1080,7 +1095,10 @@ function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, 
   }
 
   if (action.tool === "read_file") {
-    const path = readFirstString(action.args, ["path", "file", "filename", "target"]).replace(/\\/g, "/").toLowerCase();
+    const requestedPath = readFirstString(action.args, ["path", "file", "filename", "target"]);
+    const path = requestedPath.replace(/\\/g, "/").toLowerCase();
+    const boundary = matchWorkspaceReadPath(requestedPath, workspaceDir);
+    if (!boundary.allowed) violations.push(boundary.reason || "read path is outside workspace root");
     if (isSensitivePath(path, config)) {
       violations.push("read path references sensitive asset");
     }

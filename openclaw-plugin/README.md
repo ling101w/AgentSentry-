@@ -5,7 +5,7 @@ This package embeds XuanJian/AgentSentry into OpenClaw as a local runtime superv
 - `openclaw.plugin.json` declares the plugin and config UI hints.
 - `package.json` exposes `openclaw.extensions`.
 - `dist/index.js` is built from the TypeScript source and loaded by OpenClaw.
-- A local dashboard is served at `http://127.0.0.1:8765` by default.
+- A local authenticated dashboard binds to `http://127.0.0.1:8765` by default.
 
 ## Install
 
@@ -28,6 +28,8 @@ Then in OpenClaw:
 ```text
 /agentsentry
 ```
+
+Open the authenticated bootstrap URL returned by that command. The bare bind URL intentionally returns `401` in a fresh browser; the bootstrap URL installs an HttpOnly session cookie and immediately redirects to a token-free address.
 
 The setup script uses `--dangerously-force-unsafe-install` because the plugin intentionally writes a local JSONL record file and starts a local HTTP dashboard. It also enables `plugins.entries.agent-sentry.hooks.allowConversationAccess` in `~/.openclaw/openclaw.json`, which is needed for TaskSpec inference and the dashboard timeline.
 
@@ -104,7 +106,7 @@ Directed route selection prefers evidence strength over convenience. If any rout
 
 For transformations, lineage is routed through `input data -> action -> output data`. If a secret webpage field becomes an opaque summary reference and that reference is later sent externally, the graph retains a conservative source-to-sink hypothesis even though the output has no sensitive keyword; it does not describe that hypothesis as observed fact. Provenance remains field-specific: consuming `$.public_summary` does not connect an unrelated secret sibling such as `$.account_token`.
 
-The graph itself stores no raw user task, tool argument, or tool result. It keeps bounded hashes, fingerprints, JSON paths, classifications, tool names, and transformation labels and validates cycles and dangling edges. Session state uses a `session:`-namespaced SHA-256 of the structured `(sessionKey, sessionId)` tuple. The 500-session cache never evicts an in-flight graph call or runtime checkpoint; when all slots are busy, the plugin fails closed for a new session rather than running it without tracked state.
+The graph itself stores no raw user task, tool argument, or tool result. It keeps bounded hashes, fingerprints, JSON paths, classifications, tool names, and transformation labels and validates cycles and dangling edges. Session state uses a `session:`-namespaced SHA-256 of the structured `(sessionKey, sessionId)` tuple. The configurable cache (256 sessions by default) never evicts an in-flight graph call or runtime checkpoint; when all slots are busy, the plugin fails closed for a new session rather than running it without tracked state.
 
 `policyTrustSnapshot()` publishes at most 36 nodes, 40 edges, and 6 complete paths in `semantic_action_graph`, reserving active authorization nodes before recent supporting data. Serialized output has a 64 KiB hard limit and degrades to a truncated/minimal snapshot rather than exceeding it. Long report lists keep their head and tail, including the final sink, while findings expose a bounded `causal_chain` plus path certainty and confidence for audit consumers.
 

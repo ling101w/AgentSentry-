@@ -4,11 +4,9 @@ import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PluginConfig } from "../dist/config.js";
-import { normalizeAction } from "../dist/core/adapters/openclaw-tools.js";
-import { capabilityContains, checkCapability } from "../dist/core/authorization/capability.js";
-import { deriveTaskSpec } from "../dist/core/authorization/task-spec.js";
-import { matchAllowedWritePath, pathInsideCanonicalRoot } from "../dist/core/path-security.js";
-import { createPolicyState, resultFindings, targetMatches, updateAfterDecision, updateTaskSpec } from "../dist/core/policy.js";
+import { matchAllowedWritePath, matchWorkspaceReadPath, pathInsideCanonicalRoot } from "../dist/core/path-security.js";
+import { createPolicyState, normalizeAction, resultFindings, targetMatches, updateAfterDecision, updateTaskSpec } from "../dist/core/policy.js";
+import { authorizeCapability, deriveTaskSpecV2 } from "../dist/core/task-spec/index.js";
 import { detectToolCall } from "../dist/core/detect.js";
 import { semanticActionCacheKey, semanticJudgeAmbiguousAction, clearSemanticActionCache } from "../dist/core/semantic.js";
 import { isForbiddenIpAddress, validateHttpUrl } from "../dist/core/ssrf-http.js";
@@ -76,6 +74,8 @@ function fuzzFilesystemBoundaries() {
     assert.equal(matchAllowedWritePath(join(root, "nested", safeName), [root]).allowed, true);
     assert.equal(matchAllowedWritePath(join(root, "..", "outside", safeName), [root]).allowed, false);
     assert.equal(matchAllowedWritePath(join(link, safeName), [root]).allowed, false);
+    assert.equal(matchWorkspaceReadPath(join("nested", safeName), root).allowed, true);
+    assert.equal(matchWorkspaceReadPath(join("escape-link", safeName), root).allowed, false);
     assert.equal(pathInsideCanonicalRoot(`C:\\safe\\root\\${safeName}`, "C:\\safe\\root", "win32"), true);
     assert.equal(pathInsideCanonicalRoot(`C:\\safe\\rooted\\${safeName}`, "C:\\safe\\root", "win32"), false);
     assert.equal(pathInsideCanonicalRoot(`\\\\server\\share\\root\\${safeName}`, "\\\\server\\share\\root", "win32"), true);
@@ -102,17 +102,18 @@ function fuzzToolAliases() {
 function fuzzCapabilities() {
   for (let index = 0; index < 400; index++) {
     const origin = `https://api${index % 7}.example.com/v1/resource`;
-    const spec = deriveTaskSpec(`Fetch ${origin}.`, []);
+    const spec = deriveTaskSpecV2(`Fetch ${origin}.`, []);
     const allowed = normalizeAction("call_api", { url: origin });
     const wrongPort = normalizeAction("call_api", { url: origin.replace(".com", ".com:444") });
-    assert.equal(checkCapability(allowed, spec).allowed, true);
-    assert.equal(checkCapability(wrongPort, spec).allowed, false);
-    assert(checkCapability(allowed, spec).graphPath.length >= 2);
+    assert.equal(authorizeCapability(spec, allowed).action, "allow");
+    assert.equal(authorizeCapability(spec, wrongPort).action, "deny");
 
     const root = `workspace-${index}`;
-    assert.equal(capabilityContains({ kind: "fs.read", roots: [root] }, { kind: "fs.read", roots: [`${root}/docs/a.md`] }), true);
-    assert.equal(capabilityContains({ kind: "fs.read", roots: [root] }, { kind: "fs.read", roots: [`${root}-other/a.md`] }), false);
-    assert.equal(capabilityContains({ kind: "email.send", recipients: ["user@example.com"] }, { kind: "email.send", recipients: ["attacker@example.com"] }), false);
+    const pathSpec = deriveTaskSpecV2(`Read ${root}/docs/a.md.`, []);
+    assert.equal(authorizeCapability(pathSpec, normalizeAction("read_file", { path: `${root}/docs/a.md` })).action, "allow");
+    assert.equal(authorizeCapability(pathSpec, normalizeAction("read_file", { path: `${root}-other/docs/a.md` })).action, "deny");
+    const emailSpec = deriveTaskSpecV2("Send report.md to user@example.com.", []);
+    assert.equal(authorizeCapability(emailSpec, normalizeAction("send_email", { recipient: "attacker@example.com", body: "report" })).action, "deny");
   }
 }
 

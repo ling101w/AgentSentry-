@@ -13,20 +13,8 @@ export default defineConfig({
         "index.ts",
         "core/**/*.ts"
       ],
-      // These modules are exercised by the isolated security/property harnesses.
-      // V8 coverage cannot merge coverage from their separate Node processes.
       exclude: [
-        "core/adapters/**",
-        "core/authorization/**",
-        "core/behavior/**",
-        "core/policy/decision.ts",
-        "core/policy/deterministic.ts",
-        "core/policy/risk.ts",
-        "core/policy/types.ts",
-        "core/session-registry.ts",
         "core/ssrf-http.ts",
-        "core/taint/graph.ts",
-        "core/taint/propagation.ts"
       ],
       thresholds: {
         statements: 82,

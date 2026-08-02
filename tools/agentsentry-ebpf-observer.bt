@@ -5,8 +5,10 @@
  *   sudo bpftrace /home/ubuntu/AgentSentry-/tools/agentsentry-ebpf-observer.bt
  *
  * The OpenClaw plugin still performs the blocking decision before tool execution.
- * This observer adds kernel-level evidence for exec/open/connect behavior when
- * the host allows eBPF attachment.
+ * This observer adds kernel-level evidence for exec/open behavior when
+ * the host allows eBPF attachment. Connect records are syscall observations
+ * only: they contain process/fd metadata and do not extract or classify the
+ * destination sockaddr.
  */
 
 BEGIN
@@ -47,7 +49,7 @@ tracepoint:syscalls:sys_enter_connect
 /comm == "node" || comm == "curl" || comm == "wget" || comm == "python" || comm == "python3"/
 {
   printf(
-    "{\"event\":\"connect\",\"ts_ns\":%llu,\"pid\":%d,\"uid\":%d,\"comm\":\"%s\",\"fd\":%d}\n",
+    "{\"event\":\"connect\",\"ts_ns\":%llu,\"pid\":%d,\"uid\":%d,\"comm\":\"%s\",\"fd\":%d,\"destination\":\"unavailable\",\"classification\":\"syscall_only\"}\n",
     nsecs,
     pid,
     uid,

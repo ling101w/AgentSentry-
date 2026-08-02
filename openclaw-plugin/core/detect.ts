@@ -33,6 +33,7 @@ export type DetectionResult = {
 
 export type DetectionContext = {
   toolCallId?: string;
+  workspaceDir?: string;
 };
 
 type BoundaryNormalization = {
@@ -96,6 +97,7 @@ export function detectToolCall(
   extraFindings: DetectionFinding[] = [],
   context: DetectionContext = {},
 ): DetectionResult {
+  const workspaceDir = typeof context.workspaceDir === "undefined" ? process.cwd() : context.workspaceDir;
   const normalizedInput = normalizeToolInput(toolName, params);
   toolName = normalizedInput.toolName;
   params = normalizedInput.params;
@@ -109,6 +111,7 @@ export function detectToolCall(
   if (!config.detection.enabled) {
     const policy = decideAction(action, state, config, deterministicFindings, {
       toolCallId: context.toolCallId,
+      workspaceDir,
       semanticGraph: semanticAction.graph,
     });
     return { decision: policy.decision, risk_score: policy.risk_score, findings: policy.findings, summary: "detection disabled; policy only", policy };
@@ -207,6 +210,7 @@ export function detectToolCall(
 
   const policy = decideAction(action, state, config, findings, {
     toolCallId: context.toolCallId,
+    workspaceDir,
     semanticGraph: semanticAction.graph,
     provenanceLinks: exposure.links,
     provenanceAdditions: exposure.additions,

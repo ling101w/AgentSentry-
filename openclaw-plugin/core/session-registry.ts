@@ -5,10 +5,12 @@ export class SessionRegistry<T extends { lastAccessedAt: number }> {
   private readonly entries = new Map<string, T>();
   private readonly idleTtlMs: number;
   private readonly maxSessions: number;
+  private readonly canEvict: (value: T) => boolean;
 
-  constructor(options: { idleTtlMs?: number; maxSessions?: number } = {}) {
+  constructor(options: { idleTtlMs?: number; maxSessions?: number; canEvict?: (value: T) => boolean } = {}) {
     this.idleTtlMs = options.idleTtlMs ?? DEFAULT_SESSION_IDLE_TTL_MS;
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS;
+    this.canEvict = options.canEvict ?? (() => true);
   }
 
   get size(): number {
@@ -28,13 +30,17 @@ export class SessionRegistry<T extends { lastAccessedAt: number }> {
   set(key: string, value: T, now = Date.now()): void {
     this.evictExpired(now);
     value.lastAccessedAt = now;
-    this.entries.delete(key);
-    this.entries.set(key, value);
-    while (this.entries.size > this.maxSessions) {
-      const oldest = this.entries.keys().next().value;
-      if (oldest === undefined) break;
-      this.entries.delete(oldest);
+    if (this.entries.has(key)) {
+      this.entries.delete(key);
+      this.entries.set(key, value);
+      return;
     }
+    while (this.entries.size >= this.maxSessions) {
+      const oldest = [...this.entries.entries()].find(([, candidate]) => this.canEvict(candidate));
+      if (!oldest) throw new Error("AgentSentry active session capacity reached with in-flight calls; refusing untracked session state");
+      this.entries.delete(oldest[0]);
+    }
+    this.entries.set(key, value);
   }
 
   evictExpired(now = Date.now()): number {
@@ -42,6 +48,7 @@ export class SessionRegistry<T extends { lastAccessedAt: number }> {
     let removed = 0;
     for (const [key, value] of this.entries) {
       if (value.lastAccessedAt > cutoff) continue;
+      if (!this.canEvict(value)) continue;
       this.entries.delete(key);
       removed += 1;
     }
@@ -50,5 +57,21 @@ export class SessionRegistry<T extends { lastAccessedAt: number }> {
 
   clear(): void {
     this.entries.clear();
+  }
+
+  delete(key: string): boolean {
+    return this.entries.delete(key);
+  }
+
+  values(): IterableIterator<T> {
+    return this.entries.values();
+  }
+
+  entriesIterator(): IterableIterator<[string, T]> {
+    return this.entries.entries();
+  }
+
+  [Symbol.iterator](): IterableIterator<[string, T]> {
+    return this.entries[Symbol.iterator]();
   }
 }

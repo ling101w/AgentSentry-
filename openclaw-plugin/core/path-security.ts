@@ -8,6 +8,8 @@ export type PathBoundaryResult = {
   reason?: string;
 };
 
+export type PathBoundaryOperation = "read" | "write";
+
 export function canonicalizePath(inputPath: string): string {
   let cursor = resolve(inputPath);
   const missing: string[] = [];
@@ -29,26 +31,30 @@ export function canonicalizePath(inputPath: string): string {
   return missing.length ? resolve(canonicalAncestor, ...missing) : canonicalAncestor;
 }
 
-export function pathWithinRoot(targetPath: string, allowedRoot: string): PathBoundaryResult {
+export function pathWithinRoot(
+  targetPath: string,
+  allowedRoot: string,
+  operation: PathBoundaryOperation = "write",
+): PathBoundaryResult {
   if (!isAbsolute(allowedRoot)) {
-    return { allowed: false, target: resolve(targetPath), reason: `allowed write root must be absolute: ${allowedRoot}` };
+    return { allowed: false, target: resolve(targetPath), reason: `allowed ${operation} root must be absolute: ${allowedRoot}` };
   }
 
   try {
     const canonicalRoot = canonicalizePath(allowedRoot);
     if (statExists(canonicalRoot) && !statSync(canonicalRoot).isDirectory()) {
-      return { allowed: false, target: resolve(targetPath), root: canonicalRoot, reason: `allowed write root is not a directory: ${allowedRoot}` };
+      return { allowed: false, target: resolve(targetPath), root: canonicalRoot, reason: `allowed ${operation} root is not a directory: ${allowedRoot}` };
     }
     const canonicalTarget = canonicalizePath(targetPath);
     const escaped = !pathInsideCanonicalRoot(canonicalTarget, canonicalRoot);
     return escaped
-      ? { allowed: false, target: canonicalTarget, root: canonicalRoot, reason: `write path escapes allowed root: ${allowedRoot}` }
+      ? { allowed: false, target: canonicalTarget, root: canonicalRoot, reason: `${operation} path escapes allowed root: ${allowedRoot}` }
       : { allowed: true, target: canonicalTarget, root: canonicalRoot };
   } catch (error) {
     return {
       allowed: false,
       target: resolve(targetPath),
-      reason: `cannot canonicalize write path: ${error instanceof Error ? error.message : String(error)}`,
+      reason: `cannot canonicalize ${operation} path: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }
@@ -74,6 +80,19 @@ export function matchAllowedWritePath(requestedPath: string, allowedRoots: strin
 
 function isMissingPathError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT");
+}
+
+export function matchWorkspaceReadPath(requestedPath: string, workspaceDir: string): PathBoundaryResult {
+  if (!workspaceDir.trim()) {
+    return { allowed: false, target: resolve(requestedPath || "."), reason: "read path cannot be authorized without a workspace root" };
+  }
+  if (!requestedPath.trim()) {
+    return { allowed: false, target: resolve(workspaceDir), reason: "missing read path" };
+  }
+
+  const workspaceRoot = resolve(workspaceDir);
+  const targetPath = isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(workspaceRoot, requestedPath);
+  return pathWithinRoot(targetPath, workspaceRoot, "read");
 }
 
 function statExists(value: string): boolean {

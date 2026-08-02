@@ -290,7 +290,7 @@ export function systemMonitorStatus(): SystemMonitorStatus {
     return withIsolation({
       pre_exec_policy: "active",
       ebpf: "attached",
-      reason: `AgentSentry eBPF observer is active via ${observer.detected_by}; kernel exec/open/connect events are written to ${observer.log_path}`,
+      reason: `AgentSentry eBPF observer is active via ${observer.detected_by}; exec/open evidence and destination-unaware connect syscall observations are written to ${observer.log_path}`,
       observer,
     });
   }
@@ -557,16 +557,23 @@ function isolationStatus(ebpf: SystemMonitorStatus["ebpf"]): SystemMonitorStatus
       "persistence surface denylist",
       "privileged command denylist",
       "gateway override denylist",
-      "network egress review",
+      "application pre-exec network command and URL review",
     ],
     limitations: ebpf === "available" || ebpf === "attached"
-      ? ["kernel probes require privileged service deployment"]
-      : ["kernel eBPF enforcement is unavailable to this user service", "post-exec syscall observation is not attached"],
+      ? [
+        "kernel probes require privileged service deployment",
+        "connect events are syscall-only and do not extract, allowlist, or classify destination addresses",
+      ]
+      : [
+        "kernel eBPF enforcement is unavailable to this user service",
+        "post-exec syscall observation is not attached",
+        "connect destination anomaly detection is not provided by the observer",
+      ],
     recommended_runtime: [
       "run OpenClaw tools as a low-privilege user",
       "mount workspace read-write and system paths read-only",
       "apply outbound network allowlist",
-      "enable seccomp/AppArmor or eBPF observer when host policy permits",
+      "enable seccomp/AppArmor or a destination-aware network monitor when host policy permits",
     ],
   };
 }

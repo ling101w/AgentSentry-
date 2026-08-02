@@ -153,6 +153,15 @@ async function flushRecords(): Promise<void> {
 }
 
 describe("OpenClaw plugin hooks", () => {
+  it("returns the authenticated access URL from the dashboard command without persisting its token", async () => {
+    const harness = createHarness({ dashboard: { enabled: true, port: 0 } });
+    await harness.service.start();
+    const result = harness.command.handler({ args: "" }) as { text: string };
+    expect(result.text).toMatch(/Dashboard: http:\/\/127\.0\.0\.1:\d+\/\?access_token=[A-Za-z0-9_-]+/);
+    await flushRecords();
+    expect(rawRecords(harness)).not.toContain("access_token=");
+  });
+
   it("registers every lifecycle hook and records a redacted LLM input", async () => {
     const harness = createHarness({ capture: { includeSystemPromptPreview: true, previewChars: 800 } });
     expect([...harness.handlers.keys()]).toEqual(expect.arrayContaining([

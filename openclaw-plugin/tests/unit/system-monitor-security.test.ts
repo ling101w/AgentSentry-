@@ -40,6 +40,9 @@ describe("system monitor pre-execution policy", () => {
     expect(["attached", "available", "unavailable"]).toContain(status.ebpf);
     expect(["kernel-assisted", "pre-exec"]).toContain(status.isolation.mode);
     expect(status.isolation.controls).toContain("sensitive path denylist");
+    expect(status.isolation.controls).toContain("application pre-exec network command and URL review");
+    expect(status.isolation.limitations.some((item) => item.includes("connect") && item.includes("destination"))).toBe(true);
+    expect(status.reason).not.toContain("kernel exec/open/connect events");
     expect(status.observer.log_path).toBe("/var/log/agentsentry-ebpf.jsonl");
   });
 
