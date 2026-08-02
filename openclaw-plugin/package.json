@@ -16,7 +16,7 @@
     "test:policy": "npm run build && node ./scripts/policy-smoke.mjs && node ./scripts/agentdojo-policy-bridge.mjs --self-test",
     "test:security": "npm run build && node ./scripts/security-smoke.mjs",
     "test:property": "npm run build && node ./scripts/property-fuzz.mjs",
-    "ci": "npm run typecheck && npm run lint && npm run test:coverage && npm run test:policy",
+    "ci": "npm run typecheck && npm run lint && npm run test:coverage && npm run test:policy && npm run test:security && npm run test:property",
     "sbom": "node ./scripts/generate-sbom.mjs"
   },
   "peerDependencies": {
