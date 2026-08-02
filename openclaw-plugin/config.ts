@@ -46,10 +46,14 @@ export class PluginConfig {
     enabled: boolean;
     host: string;
     port: number;
+    allowRemote: boolean;
+    authToken: string;
   };
   storage: {
     stateDir: string;
     maxRecords: number;
+    sessionIdleTtlMs: number;
+    maxSessions: number;
   };
   capture: {
     includeMessageText: boolean;
@@ -119,10 +123,14 @@ export class PluginConfig {
       enabled: true,
       host: "127.0.0.1",
       port: 8765,
+      allowRemote: false,
+      authToken: "",
     };
     this.storage = {
       stateDir: "",
       maxRecords: 10000,
+      sessionIdleTtlMs: 30 * 60 * 1000,
+      maxSessions: 256,
     };
     this.capture = {
       includeMessageText: true,
@@ -145,7 +153,7 @@ export class PluginConfig {
       baseUrl: "https://api.openai.com/v1",
       model: "gpt-4o-mini",
       apiKeyEnv: "AGENTSENTRY_API_KEY",
-      timeoutMs: 12000,
+      timeoutMs: 1500,
       maxInputChars: 6000,
     };
     this.provenanceScan = {
@@ -201,12 +209,16 @@ export class PluginConfig {
       config.dashboard.enabled = readBoolean(dashboard.enabled, config.dashboard.enabled);
       config.dashboard.host = readString(dashboard.host, config.dashboard.host);
       config.dashboard.port = readPositiveInt(dashboard.port, config.dashboard.port);
+      config.dashboard.allowRemote = readBoolean(dashboard.allowRemote, config.dashboard.allowRemote);
+      config.dashboard.authToken = readString(dashboard.authToken, config.dashboard.authToken);
     }
 
     const storage = objectAt(obj, "storage");
     if (storage) {
       config.storage.stateDir = readString(storage.stateDir, config.storage.stateDir);
       config.storage.maxRecords = readPositiveInt(storage.maxRecords, config.storage.maxRecords);
+      config.storage.sessionIdleTtlMs = readPositiveInt(storage.sessionIdleTtlMs, config.storage.sessionIdleTtlMs);
+      config.storage.maxSessions = readPositiveInt(storage.maxSessions, config.storage.maxSessions);
     }
 
     const capture = objectAt(obj, "capture");

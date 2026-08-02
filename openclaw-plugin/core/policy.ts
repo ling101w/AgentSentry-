@@ -16,6 +16,9 @@ import {
 import { behaviorAnomalyFindingsFor, updateBehaviorProfile, type BehaviorProfile } from "./policy/behavior-baseline.ts";
 import { containsAny, flattenText as flattenValueText, hostFromUrl, isLabeledValue, readFirstString, unique } from "./policy/value-utils.ts";
 import { clampText, safeStringify as redactSafeStringify } from "./redact.ts";
+import { targetAllowed } from "./security/url.ts";
+import { matchAllowedWritePath } from "./path-security.ts";
+import { isAbsolute, resolve } from "node:path";
 import {
   activateSemanticIntent,
   beginSemanticAction,
@@ -62,6 +65,7 @@ export type AgentSentryAction = {
 };
 
 export type { TaskSpec } from "./task-spec/index.ts";
+export { targetMatches } from "./security/url.ts";
 
 export type Label = {
   source: string;
@@ -126,12 +130,24 @@ export type PolicyDecision = {
   task_spec: TaskSpec;
   findings: DetectionFinding[];
   action_graph_node_id: string;
+  deterministic_disposition: "allow" | "deny" | "ambiguous";
+  effects?: PolicyEffects;
 };
+
+export type PolicyEffects = {
+  semanticActionGraph: SemanticActionGraphState;
+  apiCallCounts: Map<string, number>;
+  dataProvenance: DataProvenance[];
+  taintFlows: PolicyState["taintFlows"];
+};
+
+export type PolicyEvaluation = { decision: PolicyDecision; effects: PolicyEffects };
 
 export type PolicyDecisionContext = {
   toolCallId?: string;
   semanticGraph?: SemanticGraph;
   provenanceLinks?: SemanticProvenanceLink[];
+  provenanceAdditions?: DataProvenance[];
 };
 
 const TOOL_ALIASES: Array<[RegExp, string]> = [
@@ -219,14 +235,16 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
   action: AgentSentryAction;
   findings: DetectionFinding[];
   links: SemanticProvenanceLink[];
+  additions: DataProvenance[];
 } {
   if (!config.detection.enabled || !config.policy.deterministic || !state.exposures.length) {
-    return { action, findings: [], links: [] };
+    return { action, findings: [], links: [], additions: [] };
   }
 
   const args = { ...action.args };
   const findings: DetectionFinding[] = [];
   const links: SemanticProvenanceLink[] = [];
+  const additions: DataProvenance[] = [];
   const blocksTaintedInput = HIGH_RISK_SINKS.has(action.tool);
   let matchedAny = false;
   for (const [key, value] of Object.entries(args)) {
@@ -257,10 +275,8 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
         content: value,
       })
       : null;
-    if (lineage && !state.dataProvenance.some((item) => item.id === lineage.id)) {
-      rememberDataProvenance(state, [publicProvenance(lineage)]);
-    }
     if (lineage) {
+      additions.push(publicProvenance(lineage));
       links.push({ provenanceId: lineage.id, argPath: provenanceArgPath(key), match: mode, ...matchEvidence });
     } else if (exposure.provenanceId) {
       links.push({ provenanceId: exposure.provenanceId, argPath: provenanceArgPath(key), match: mode, ...matchEvidence });
@@ -290,8 +306,8 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
     }
   }
 
-  if (!matchedAny) return { action, findings, links };
-  return { action: { ...action, args }, findings, links };
+  if (!matchedAny) return { action, findings, links, additions };
+  return { action: { ...action, args }, findings, links, additions };
 }
 
 export function decideAction(
@@ -301,6 +317,44 @@ export function decideAction(
   incomingFindings: DetectionFinding[],
   context: PolicyDecisionContext = {},
 ): PolicyDecision {
+  const evaluation = evaluate(state, action, config, incomingFindings, context);
+  return evaluation.decision;
+}
+
+export function evaluate(
+  snapshot: PolicyState,
+  action: AgentSentryAction,
+  config: PluginConfig,
+  incomingFindings: DetectionFinding[] = [],
+  context: PolicyDecisionContext = {},
+): PolicyEvaluation {
+  const evaluationState = structuredClone(snapshot);
+  const decision = evaluateMutable(action, evaluationState, config, incomingFindings, context);
+  const effects = {
+    semanticActionGraph: evaluationState.semanticActionGraph,
+    apiCallCounts: evaluationState.apiCallCounts,
+    dataProvenance: evaluationState.dataProvenance,
+    taintFlows: evaluationState.taintFlows,
+  };
+  decision.effects = effects;
+  return { decision, effects };
+}
+
+export function applyEffects(state: PolicyState, effects: PolicyEffects): void {
+  state.semanticActionGraph = structuredClone(effects.semanticActionGraph);
+  state.apiCallCounts = new Map(effects.apiCallCounts);
+  state.dataProvenance = structuredClone(effects.dataProvenance);
+  state.taintFlows = structuredClone(effects.taintFlows);
+}
+
+function evaluateMutable(
+  action: AgentSentryAction,
+  state: PolicyState,
+  config: PluginConfig,
+  incomingFindings: DetectionFinding[],
+  context: PolicyDecisionContext,
+): PolicyDecision {
+  if (context.provenanceAdditions?.length) rememberDataProvenance(state, context.provenanceAdditions);
   const normalizedAction = normalizePolicyAction(action);
   action = normalizedAction.action;
   const normalizedFindings = normalizeFindingInput(incomingFindings);
@@ -492,6 +546,11 @@ export function decideAction(
     task_spec: taskSpec,
     findings: dedupeFindings(findings),
     action_graph_node_id: actionGraphNodeId,
+    deterministic_disposition: deterministicBlock
+      ? "deny"
+      : findings.some((item) => item.verdict !== "pass") || decision !== "allow"
+        ? "ambiguous"
+        : "allow",
   };
 }
 
@@ -516,6 +575,10 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
     state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, createRiskVector({ tool_hijack: 100, privilege: 100 }));
     return;
   }
+  const effects = decision.effects;
+  if (effects) {
+    applyEffects(state, effects);
+  }
   state.history.push({
     tool: decision.action.tool,
     decision: decision.decision,
@@ -536,10 +599,12 @@ export function updateActionGraphEnforcement(
   status: "awaiting_approval" | "blocked" | "executing",
 ): void {
   if (!decision.action_graph_node_id) return;
-  markSemanticActionEnforcement(state.semanticActionGraph, decision.action_graph_node_id, {
+  const graph = decision.effects?.semanticActionGraph || state.semanticActionGraph;
+  markSemanticActionEnforcement(graph, decision.action_graph_node_id, {
     decision: decision.decision,
     status,
   });
+  state.semanticActionGraph = structuredClone(graph);
 }
 
 type ToolResultLifecycle = {
@@ -988,15 +1053,16 @@ function deterministicViolations(action: AgentSentryAction, taskSpec: TaskSpec, 
   }
 
   if (action.tool === "write_file") {
-    const path = readFirstString(action.args, ["path", "file", "filename", "target"]).replace(/\\/g, "/").toLowerCase();
+    const requestedPath = readFirstString(action.args, ["path", "file", "filename", "target"]);
+    const path = requestedPath.replace(/\\/g, "/").toLowerCase();
     const content = readFirstString(action.args, ["content", "body", "text", "patch"]);
     if (!path) violations.push("missing write path");
-    if (path.includes("..")) violations.push("write path contains traversal");
     if (assessment.systemMutation) violations.push("write path targets protected system path");
     if (config.policy.sensitiveAssets.some((asset) => asset && path.includes(asset.toLowerCase()))) violations.push("write path references sensitive asset");
-    if (config.policy.restrictWritesToAllowedRoots && config.policy.allowedWriteRoots.length) {
-      const root = path.split("/", 1)[0];
-      if (!config.policy.allowedWriteRoots.includes(root)) violations.push(`write root ${root || "<empty>"} is not allowlisted`);
+    if (config.policy.restrictWritesToAllowedRoots) {
+      const allowedRoots = config.policy.allowedWriteRoots.map((root) => isAbsolute(root) ? root : resolve(process.cwd(), root));
+      const boundary = matchAllowedWritePath(requestedPath, allowedRoots, process.cwd());
+      if (!boundary.allowed) violations.push(boundary.reason || "write path is outside allowed roots");
     }
     if (config.policy.sensitiveAssets.some((asset) => asset && content.toLowerCase().includes(asset.toLowerCase()))) {
       violations.push("content contains secret-tainted data");
@@ -1503,46 +1569,6 @@ function baseToolRisk(tool: string): number {
     read_webpage: 10,
     shell_exec: 25,
   }[tool] ?? 20;
-}
-
-function targetAllowed(target: string, allowedTargets: string[]): boolean {
-  if (!allowedTargets.length) return true;
-  const normalizedTarget = normalizeTarget(target);
-  if (!normalizedTarget) return false;
-  return allowedTargets.some((allowed) => targetMatches(normalizedTarget, allowed));
-}
-
-function targetMatches(target: string, allowed: string): boolean {
-  const normalizedAllowed = normalizeTarget(allowed);
-  if (!normalizedAllowed) return false;
-  if (target === normalizedAllowed) return true;
-  try {
-    const targetUrl = new URL(target);
-    const allowedUrl = new URL(normalizedAllowed);
-    if (targetUrl.protocol !== allowedUrl.protocol) return false;
-    if (targetUrl.protocol === "mock:") return target === normalizedAllowed;
-    if (targetUrl.hostname !== allowedUrl.hostname) return false;
-    const allowedPath = allowedUrl.pathname.replace(/\/$/, "") || "/";
-    const targetPath = targetUrl.pathname.replace(/\/$/, "") || "/";
-    return allowedPath === "/" || targetPath === allowedPath || targetPath.startsWith(`${allowedPath}/`);
-  } catch {
-    return target === normalizedAllowed;
-  }
-}
-
-function normalizeTarget(value: string): string {
-  const text = value.trim();
-  if (!text) return "";
-  try {
-    const parsed = new URL(text);
-    if (parsed.protocol === "mock:") return text.replace(/\/$/, "");
-    parsed.protocol = parsed.protocol.toLowerCase();
-    parsed.hostname = parsed.hostname.toLowerCase();
-    parsed.pathname = parsed.pathname.replace(/\/$/, "") || "/";
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return text.replace(/\/$/, "");
-  }
 }
 
 function hasInjectionSignal(text: string): boolean {

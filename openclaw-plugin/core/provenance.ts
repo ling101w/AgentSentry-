@@ -1,9 +1,10 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { watch, type FSWatcher } from "node:fs";
+import { opendir, readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { basename, extname, join, relative } from "node:path";
 import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { clampText } from "./redact.ts";
-import { semanticJudgeProvenanceFile } from "./semantic.ts";
 import { analyzeTrustContent } from "./trust.ts";
 
 export type ProvenanceScanResult = {
@@ -13,14 +14,25 @@ export type ProvenanceScanResult = {
   findings: DetectionFinding[];
   blocked: boolean;
   cached: boolean;
+  changedFiles: number;
 };
 
-type CachedScan = {
+type CachedFile = {
+  size: string;
+  mtimeNs: string;
+  hash: string;
+  findings: DetectionFinding[];
+};
+
+type CachedWorkspace = {
   scannedAt: number;
-  result: ProvenanceScanResult;
+  configSignature: string;
+  files: Map<string, CachedFile>;
+  dirty: Set<string>;
+  watcher: FSWatcher | null;
 };
 
-const scanCache = new Map<string, CachedScan>();
+const scanCache = new Map<string, CachedWorkspace>();
 
 const SKIP_DIRS = new Set([
   ".git",
@@ -133,11 +145,6 @@ const SOURCE_SECRET_VALUE_PATTERNS = [
 
 export async function scanProvenance(workspaceDir: string, config: PluginConfig): Promise<ProvenanceScanResult> {
   const now = Date.now();
-  const cached = scanCache.get(workspaceDir);
-  if (cached && now - cached.scannedAt < config.provenanceScan.rescanIntervalMs) {
-    return { ...cached.result, cached: true };
-  }
-
   const result: ProvenanceScanResult = {
     workspaceDir,
     scannedFiles: 0,
@@ -145,89 +152,166 @@ export async function scanProvenance(workspaceDir: string, config: PluginConfig)
     findings: [],
     blocked: false,
     cached: false,
+    changedFiles: 0,
   };
 
-  if (!config.provenanceScan.enabled || !workspaceDir || !existsSync(workspaceDir)) {
-    scanCache.set(workspaceDir, { scannedAt: now, result });
+  if (!config.provenanceScan.enabled || !workspaceDir || !await isDirectory(workspaceDir)) {
     return result;
   }
-
-  for (const filePath of listCandidateFiles(workspaceDir, config)) {
-    const relPath = relative(workspaceDir, filePath).replace(/\\/g, "/");
-    if (isGeneratedNoisePath(relPath)) {
-      result.skippedFiles += 1;
-      continue;
-    }
-    let content = "";
-    try {
-      const stat = statSync(filePath);
-      if (stat.size > config.provenanceScan.maxFileBytes) {
-        result.skippedFiles += 1;
-        continue;
-      }
-      content = readCandidateContent(filePath);
-      result.scannedFiles += 1;
-    } catch {
-      result.skippedFiles += 1;
-      continue;
-    }
-
-    if (config.provenanceScan.scanSkills && isSkillFile(relPath)) {
-      result.findings.push(...scanSkillContent(relPath, content, config));
-    }
-    if (config.provenanceScan.scanConfig && isConfigFile(relPath)) {
-      result.findings.push(...scanConfigContent(relPath, content));
-    }
-    if (config.provenanceScan.scanSensitiveFiles) {
-      result.findings.push(...scanSensitiveFile(relPath, content, config));
-    }
-    result.findings.push(...scanTrustSurface(relPath, content, config));
-    if (shouldSemanticScan(relPath, config)) {
-      result.findings.push(...await semanticJudgeProvenanceFile({
-        relPath,
-        content,
-        roleHint: isSkillFile(relPath) ? "skill" : isConfigFile(relPath) ? "configuration" : "workspace file",
-      }, config));
-    }
-
-    if (result.scannedFiles >= config.provenanceScan.maxFiles) break;
+  const signature = provenanceConfigSignature(config);
+  let cached = scanCache.get(workspaceDir);
+  if (!cached) {
+    cached = { scannedAt: 0, configSignature: signature, files: new Map(), dirty: new Set(), watcher: createWorkspaceWatcher(workspaceDir) };
+    scanCache.set(workspaceDir, cached);
   }
-
+  const configChanged = cached.configSignature !== signature;
+  const candidates = await listCandidateFiles(workspaceDir, config);
+  const currentPaths = new Set(candidates);
+  for (const cachedPath of cached.files.keys()) {
+    if (!currentPaths.has(cachedPath)) cached.files.delete(cachedPath);
+  }
+  const scans = await mapConcurrent(candidates, 4, async (filePath) => scanChangedFile(filePath, workspaceDir, cached!, config, configChanged));
+  for (const scan of scans) {
+    if (scan.skipped) result.skippedFiles += 1;
+    if (scan.changed) result.changedFiles += 1;
+    if (scan.counted) result.scannedFiles += 1;
+  }
+  result.findings = Array.from(cached.files.values()).flatMap((entry) => entry.findings);
   result.blocked = result.findings.some((finding) => finding.verdict === "block");
-  scanCache.set(workspaceDir, { scannedAt: now, result });
+  result.cached = !configChanged && result.changedFiles === 0;
+  cached.scannedAt = now;
+  cached.configSignature = signature;
+  cached.dirty.clear();
   return result;
 }
 
 export function clearProvenanceScanCache(): void {
+  for (const cached of scanCache.values()) cached.watcher?.close();
   scanCache.clear();
 }
 
-function listCandidateFiles(workspaceDir: string, config: PluginConfig): string[] {
+async function listCandidateFiles(workspaceDir: string, config: PluginConfig): Promise<string[]> {
   const files: string[] = [];
   const stack = [workspaceDir];
 
   while (stack.length && files.length < config.provenanceScan.maxFiles) {
     const dir = stack.pop()!;
-    let entries;
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      const entries = await opendir(dir);
+      for await (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) {
+          if (!SKIP_DIRS.has(entry.name)) stack.push(fullPath);
+          continue;
+        }
+        if (!entry.isFile() || !isTextCandidate(fullPath)) continue;
+        files.push(fullPath);
+        if (files.length >= config.provenanceScan.maxFiles) break;
+      }
     } catch {
       continue;
     }
-    for (const entry of entries) {
-      const fullPath = join(dir, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) {
-        if (!SKIP_DIRS.has(entry.name)) stack.push(fullPath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      if (!isTextCandidate(fullPath)) continue;
-      files.push(fullPath);
-      if (files.length >= config.provenanceScan.maxFiles) break;
-    }
   }
   return files;
+}
+
+async function scanChangedFile(
+  filePath: string,
+  workspaceDir: string,
+  cached: CachedWorkspace,
+  config: PluginConfig,
+  configChanged: boolean,
+): Promise<{ changed: boolean; skipped: boolean; counted: boolean }> {
+  const relPath = relative(workspaceDir, filePath).replace(/\\/g, "/");
+  if (isGeneratedNoisePath(relPath)) {
+    cached.files.delete(filePath);
+    return { changed: false, skipped: true, counted: false };
+  }
+  try {
+    const fileStat = await stat(filePath, { bigint: true });
+    if (fileStat.size > BigInt(config.provenanceScan.maxFileBytes)) {
+      cached.files.delete(filePath);
+      return { changed: false, skipped: true, counted: false };
+    }
+    const size = fileStat.size.toString();
+    const mtimeNs = fileStat.mtimeNs.toString();
+    const previous = cached.files.get(filePath);
+    const dirty = cached.dirty.has(relPath) || cached.dirty.has(filePath);
+    if (!configChanged && !dirty && previous?.size === size && previous.mtimeNs === mtimeNs) {
+      return { changed: false, skipped: false, counted: true };
+    }
+    const raw = await readFile(filePath);
+    const hash = createHash("sha256").update(raw).digest("hex");
+    if (!configChanged && previous?.hash === hash) {
+      cached.files.set(filePath, { ...previous, size, mtimeNs });
+      return { changed: false, skipped: false, counted: true };
+    }
+    const content = candidateContent(filePath, raw);
+    const deterministic = scanDeterministicFile(relPath, content, config);
+    cached.files.set(filePath, { size, mtimeNs, hash, findings: deterministic });
+    return { changed: true, skipped: false, counted: true };
+  } catch {
+    cached.files.delete(filePath);
+    return { changed: false, skipped: true, counted: false };
+  }
+}
+
+function scanDeterministicFile(relPath: string, content: string, config: PluginConfig): DetectionFinding[] {
+  const findings: DetectionFinding[] = [];
+  if (config.provenanceScan.scanSkills && isSkillFile(relPath)) findings.push(...scanSkillContent(relPath, content, config));
+  if (config.provenanceScan.scanConfig && isConfigFile(relPath)) findings.push(...scanConfigContent(relPath, content, config));
+  if (config.provenanceScan.scanSensitiveFiles) findings.push(...scanSensitiveFile(relPath, content, config));
+  findings.push(...scanTrustSurface(relPath, content, config));
+  return findings;
+}
+
+function createWorkspaceWatcher(workspaceDir: string): FSWatcher | null {
+  try {
+    const watcher = watch(workspaceDir, { recursive: true }, (_event, filename) => {
+      const current = scanCache.get(workspaceDir);
+      if (!current || !filename) return;
+      current.dirty.add(String(filename).replace(/\\/g, "/"));
+      current.dirty.add(join(workspaceDir, String(filename)));
+    });
+    watcher.unref();
+    return watcher;
+  } catch {
+    return null;
+  }
+}
+
+async function isDirectory(value: string): Promise<boolean> {
+  try {
+    return (await stat(value)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function provenanceConfigSignature(config: PluginConfig): string {
+  return JSON.stringify({
+    scanSkills: config.provenanceScan.scanSkills,
+    scanConfig: config.provenanceScan.scanConfig,
+    scanSensitiveFiles: config.provenanceScan.scanSensitiveFiles,
+    maxFileBytes: config.provenanceScan.maxFileBytes,
+    sensitiveAssets: config.policy.sensitiveAssets,
+    semantic: [config.semantic.enabled, config.semantic.judgeProvenance, config.semantic.model, config.semantic.baseUrl],
+  });
+}
+
+async function mapConcurrent<T, R>(items: T[], concurrency: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const output = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      output[index] = await work(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return output;
 }
 
 function scanSkillContent(relPath: string, content: string, config: PluginConfig): DetectionFinding[] {
@@ -243,7 +327,7 @@ function scanSkillContent(relPath: string, content: string, config: PluginConfig
   return findings;
 }
 
-function scanConfigContent(relPath: string, content: string): DetectionFinding[] {
+function scanConfigContent(relPath: string, content: string, _config: PluginConfig): DetectionFinding[] {
   const findings: DetectionFinding[] = [];
   const riskyMatches = matchPatterns(content, RISKY_CONFIG_PATTERNS);
   if (riskyMatches.length) {
@@ -353,20 +437,14 @@ function isMemoryFile(relPath: string): boolean {
   return /(^|\/)(memory\.md|agents\.md|soul\.md|user\.md)$/i.test(relPath);
 }
 
-function readCandidateContent(filePath: string): string {
+function candidateContent(filePath: string, raw: Buffer): string {
   const ext = extname(filePath).toLowerCase();
   if ([".pdf", ".png", ".jpg", ".jpeg", ".webp"].includes(ext)) {
-    return readFileSync(filePath)
-      .toString("latin1")
+    return raw.toString("latin1")
       .replace(/[^\x09\x0a\x0d\x20-\x7e]+/g, " ")
       .replace(/\s{3,}/g, " ");
   }
-  return readFileSync(filePath, "utf8");
-}
-
-function shouldSemanticScan(relPath: string, config: PluginConfig): boolean {
-  if (!config.semantic.enabled || !config.semantic.judgeProvenance) return false;
-  return isSkillFile(relPath) || isConfigFile(relPath);
+  return raw.toString("utf8");
 }
 
 function matchPatterns(content: string, patterns: RegExp[]): string[] {
@@ -380,7 +458,7 @@ function matchPatterns(content: string, patterns: RegExp[]): string[] {
 
 function finding(
   layer: string,
-  findingType: DetectionFinding["finding_type"],
+  findingType: "deterministic" | "heuristic" | "learned",
   verdict: "pass" | "require_approval" | "block",
   reason: string,
   score: number,

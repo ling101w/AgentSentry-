@@ -1,111 +1,135 @@
 import type { PluginConfig } from "../../config.ts";
 import type { DetectionFinding } from "../detect.ts";
+import type { TaskSpec } from "../task-spec/index.ts";
 import { safeStringify } from "../redact.ts";
 import { assessAction, type PolicyActionInput } from "./action-assessment.ts";
 import { hostFromUrl, readFirstString } from "./value-utils.ts";
 
+export const BEHAVIOR_WARMUP_SAMPLES = 10;
+export const BEHAVIOR_WINDOW_SIZE = 40;
+export const BEHAVIOR_SAMPLE_TTL_MS = 30 * 60 * 1000;
+
+type BehaviorSample = {
+  observedAt: number;
+  host: string;
+  recipient: string;
+  pathRoot: string;
+  paramBytes: number;
+  paramKeys: number;
+};
+
 export type BehaviorProfile = {
-  calls: number;
-  hosts: string[];
-  recipients: string[];
-  pathRoots: string[];
-  maxParamBytes: number;
-  maxParamKeys: number;
+  tool: string;
+  taskClass: string;
+  samples: BehaviorSample[];
 };
 
 type BehaviorState = {
   behaviorProfiles: Map<string, BehaviorProfile>;
+  taskSpec?: TaskSpec;
 };
 
 export function behaviorAnomalyFindingsFor(
   action: PolicyActionInput,
   state: BehaviorState,
   config: PluginConfig,
+  now = Date.now(),
 ): DetectionFinding[] {
-  const profile = state.behaviorProfiles.get(action.tool);
-  if (!profile || profile.calls < 2) return [];
-  const current = behaviorSnapshot(action);
+  const taskClass = taskClassFor(state.taskSpec);
+  const samples = activeSamples(state.behaviorProfiles.get(profileKey(action.tool, taskClass)), now);
+  if (samples.length < BEHAVIOR_WARMUP_SAMPLES) return [];
+
+  const current = behaviorSnapshot(action, now);
   const findings: DetectionFinding[] = [];
   const assessment = assessAction(action, config);
-  if (current.host && profile.hosts.length && !profile.hosts.includes(current.host) && (action.tool === "call_api" || assessment.externalSink)) {
-    findings.push(finding("Behavior Baseline", "behavioral", "require_approval", "tool target host deviates from the statistical session baseline", 35, {
-      tool: action.tool,
-      host: current.host,
-      learned_hosts: profile.hosts.slice(-6),
-    }));
+  const evidence = { tool: action.tool, task_class: taskClass, sample_count: samples.length, window_size: BEHAVIOR_WINDOW_SIZE };
+  if (current.host && (action.tool === "call_api" || assessment.externalSink) && establishedNovelty(samples.map((item) => item.host), current.host)) {
+    findings.push(finding("tool target host deviates from the warm sliding behavior window", 35, { ...evidence, host: current.host, learned_hosts: frequentValues(samples.map((item) => item.host)) }));
   }
-  if (current.recipient && profile.recipients.length && !profile.recipients.includes(current.recipient) && action.tool === "send_email") {
-    findings.push(finding("Behavior Baseline", "behavioral", "require_approval", "email recipient deviates from the statistical session baseline", 35, {
-      tool: action.tool,
-      recipient: current.recipient,
-      learned_recipients: profile.recipients.slice(-6),
-    }));
+  if (current.recipient && action.tool === "send_email" && establishedNovelty(samples.map((item) => item.recipient), current.recipient)) {
+    findings.push(finding("email recipient deviates from the warm sliding behavior window", 35, { ...evidence, recipient: current.recipient, learned_recipients: frequentValues(samples.map((item) => item.recipient)) }));
   }
-  if (current.pathRoot && profile.pathRoots.length && !profile.pathRoots.includes(current.pathRoot) && (action.tool === "read_file" || action.tool === "write_file")) {
-    findings.push(finding("Behavior Baseline", "behavioral", "require_approval", "file path root deviates from the statistical session baseline", 25, {
-      tool: action.tool,
-      root: current.pathRoot,
-      learned_roots: profile.pathRoots.slice(-6),
-    }));
+  if (current.pathRoot && (action.tool === "read_file" || action.tool === "write_file") && establishedNovelty(samples.map((item) => item.pathRoot), current.pathRoot)) {
+    findings.push(finding("file path root deviates from the warm sliding behavior window", 25, { ...evidence, root: current.pathRoot, learned_roots: frequentValues(samples.map((item) => item.pathRoot)) }));
   }
-  if (profile.maxParamBytes > 0 && current.paramBytes > Math.max(profile.maxParamBytes * 4, profile.maxParamBytes + 4096)) {
-    findings.push(finding("Behavior Baseline", "behavioral", "require_approval", "tool parameter size is anomalous for this session", 25, {
-      tool: action.tool,
-      param_bytes: current.paramBytes,
-      learned_max_param_bytes: profile.maxParamBytes,
-    }));
+
+  const bytesP90 = percentile(samples.map((item) => item.paramBytes), 0.9);
+  if (bytesP90 > 0 && current.paramBytes > Math.max(bytesP90 * 4, bytesP90 + 4096)) {
+    findings.push(finding("tool parameter size is anomalous for the sliding behavior window", 25, { ...evidence, param_bytes: current.paramBytes, window_p90_param_bytes: bytesP90 }));
   }
-  if (profile.maxParamKeys > 0 && current.paramKeys > Math.max(profile.maxParamKeys * 3, profile.maxParamKeys + 8)) {
-    findings.push(finding("Behavior Baseline", "behavioral", "require_approval", "tool parameter shape is anomalous for this session", 20, {
-      tool: action.tool,
-      param_keys: current.paramKeys,
-      learned_max_param_keys: profile.maxParamKeys,
-    }));
+  const keysP90 = percentile(samples.map((item) => item.paramKeys), 0.9);
+  if (keysP90 > 0 && current.paramKeys > Math.max(keysP90 * 3, keysP90 + 8)) {
+    findings.push(finding("tool parameter shape is anomalous for the sliding behavior window", 20, { ...evidence, param_keys: current.paramKeys, window_p90_param_keys: keysP90 }));
   }
   return findings;
 }
 
-export function updateBehaviorProfile(state: BehaviorState, action: PolicyActionInput): void {
-  const snapshot = behaviorSnapshot(action);
-  const existing = state.behaviorProfiles.get(action.tool) || {
-    calls: 0,
-    hosts: [],
-    recipients: [],
-    pathRoots: [],
-    maxParamBytes: 0,
-    maxParamKeys: 0,
-  };
-  existing.calls += 1;
-  if (snapshot.host) pushCapped(existing.hosts, snapshot.host, 12);
-  if (snapshot.recipient) pushCapped(existing.recipients, snapshot.recipient, 12);
-  if (snapshot.pathRoot) pushCapped(existing.pathRoots, snapshot.pathRoot, 12);
-  existing.maxParamBytes = Math.max(existing.maxParamBytes, snapshot.paramBytes);
-  existing.maxParamKeys = Math.max(existing.maxParamKeys, snapshot.paramKeys);
-  state.behaviorProfiles.delete(action.tool);
-  state.behaviorProfiles.set(action.tool, existing);
-  if (state.behaviorProfiles.size > 24) {
-    const first = state.behaviorProfiles.keys().next().value;
-    if (first !== undefined) state.behaviorProfiles.delete(first);
+export function updateBehaviorProfile(state: BehaviorState, action: PolicyActionInput, now = Date.now()): void {
+  const taskClass = taskClassFor(state.taskSpec);
+  const key = profileKey(action.tool, taskClass);
+  const samples = activeSamples(state.behaviorProfiles.get(key), now);
+  samples.push(behaviorSnapshot(action, now));
+  state.behaviorProfiles.delete(key);
+  state.behaviorProfiles.set(key, { tool: action.tool, taskClass, samples: samples.slice(-BEHAVIOR_WINDOW_SIZE) });
+  while (state.behaviorProfiles.size > 64) {
+    const oldest = state.behaviorProfiles.keys().next().value;
+    if (oldest === undefined) break;
+    state.behaviorProfiles.delete(oldest);
   }
 }
 
-function behaviorSnapshot(action: PolicyActionInput): {
-  host: string;
-  recipient: string;
-  pathRoot: string;
-  paramBytes: number;
-  paramKeys: number;
-} {
-  const url = readFirstString(action.args, ["url", "href", "endpoint", "target"]);
+export function behaviorProfileKey(tool: string, taskSpec?: TaskSpec): string {
+  return profileKey(tool, taskClassFor(taskSpec));
+}
+
+function taskClassFor(taskSpec?: TaskSpec): string {
+  if (!taskSpec?.capabilities.length) return "unscoped";
+  return Array.from(new Set(taskSpec.capabilities.map((item) => `${item.resourceType}:${item.action}:${item.effect}`))).sort().join("+");
+}
+
+function profileKey(tool: string, taskClass: string): string {
+  return `${tool}::${taskClass}`;
+}
+
+function activeSamples(profile: BehaviorProfile | undefined, now: number): BehaviorSample[] {
+  const cutoff = now - BEHAVIOR_SAMPLE_TTL_MS;
+  return (profile?.samples || []).filter((sample) => sample.observedAt >= cutoff).slice(-BEHAVIOR_WINDOW_SIZE);
+}
+
+function behaviorSnapshot(action: PolicyActionInput, observedAt: number): BehaviorSample {
   const path = readFirstString(action.args, ["path", "file", "filename", "target"]);
-  const serializedArgs = safeStringify(action.args) || "";
+  const serialized = safeStringify(action.args) || "";
   return {
-    host: hostFromUrl(url),
+    observedAt,
+    host: hostFromUrl(readFirstString(action.args, ["url", "href", "endpoint", "target"])),
     recipient: readFirstString(action.args, ["recipient", "to", "email", "target"]).toLowerCase(),
     pathRoot: rootFromPath(path),
-    paramBytes: Buffer.byteLength(serializedArgs, "utf8"),
+    paramBytes: Buffer.byteLength(serialized, "utf8"),
     paramKeys: countKeys(action.args),
   };
+}
+
+function establishedNovelty(values: string[], current: string): boolean {
+  const filtered = values.filter(Boolean);
+  if (!filtered.length || filtered.includes(current)) return false;
+  const dominant = Math.max(...valueCounts(filtered).values());
+  return dominant >= Math.max(7, Math.ceil(filtered.length * 0.7));
+}
+
+function frequentValues(values: string[]): string[] {
+  return Array.from(valueCounts(values.filter(Boolean)).entries()).sort((left, right) => right[1] - left[1]).slice(0, 8).map(([value]) => value);
+}
+
+function valueCounts(values: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
+  return counts;
+}
+
+function percentile(values: number[], ratio: number): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * ratio))];
 }
 
 function rootFromPath(path: string): string {
@@ -113,56 +137,23 @@ function rootFromPath(path: string): string {
   if (!normalized) return "";
   if (normalized.startsWith("//") && !normalized.startsWith("///")) {
     const [server = "", share = ""] = normalized.slice(2).split("/").filter(Boolean);
-    if (!server) return "//";
     return share ? `//${server.toLowerCase()}/${share.toLowerCase()}` : `//${server.toLowerCase()}`;
   }
   if (/^[a-z]:/i.test(normalized)) return normalized.slice(0, 2).toLowerCase();
-  if (normalized.startsWith("/")) {
-    const first = normalized.replace(/^\/+/, "").split("/", 1)[0];
-    return first ? `/${first}` : "/";
-  }
-  const relative = normalized.replace(/^(?:\.\/)+/, "");
-  return relative.split("/", 1)[0] || ".";
+  if (normalized.startsWith("/")) return `/${normalized.replace(/^\/+/, "").split("/")[0]}`;
+  return normalized.replace(/^(?:\.\/)+/, "").split("/")[0] || ".";
 }
 
-function countKeys(value: unknown): number {
-  if (!value || typeof value !== "object") return 0;
-  const pending: object[] = [value];
-  const visited = new WeakSet<object>();
-  let total = 0;
-  while (pending.length) {
-    const current = pending.pop()!;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    if (Array.isArray(current)) {
-      for (const item of current) {
-        if (item && typeof item === "object") pending.push(item);
-      }
-      continue;
-    }
-    for (const [, item] of Object.entries(current as Record<string, unknown>)) {
-      total += 1;
-      if (item && typeof item === "object") pending.push(item);
-    }
-  }
-  return total;
+function countKeys(value: unknown, visited = new WeakSet<object>()): number {
+  if (!value || typeof value !== "object" || visited.has(value)) return 0;
+  visited.add(value);
+  if (Array.isArray(value)) return value.reduce((sum, item) => sum + countKeys(item, visited), 0);
+  return Object.values(value as Record<string, unknown>).reduce<number>(
+    (sum, item) => sum + 1 + countKeys(item, visited),
+    0,
+  );
 }
 
-function pushCapped(items: string[], value: string, limit: number): void {
-  if (!value) return;
-  const existingIndex = items.indexOf(value);
-  if (existingIndex >= 0) items.splice(existingIndex, 1);
-  items.push(value);
-  if (items.length > limit) items.splice(0, items.length - limit);
-}
-
-function finding(
-  layer: string,
-  findingType: DetectionFinding["finding_type"],
-  verdict: "pass" | "require_approval" | "block",
-  reason: string,
-  score: number,
-  evidence: Record<string, unknown>,
-): DetectionFinding {
-  return { layer, finding_type: findingType, verdict, reason, score, evidence };
+function finding(reason: string, score: number, evidence: Record<string, unknown>): DetectionFinding {
+  return { layer: "Behavior Baseline", finding_type: "behavioral", verdict: "require_approval", reason, score, evidence };
 }

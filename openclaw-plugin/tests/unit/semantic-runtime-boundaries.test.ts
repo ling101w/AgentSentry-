@@ -156,7 +156,7 @@ describe("semantic Judge HTTP failure boundaries", () => {
     }));
 
     const pending = judgedTool();
-    await vi.advanceTimersByTimeAsync(21);
+    await vi.advanceTimersByTimeAsync(501);
 
     expect((observedSignal as AbortSignal | null)?.aborted).toBe(true);
     await expect(pending).resolves.toEqual([]);

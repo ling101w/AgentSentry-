@@ -63,8 +63,8 @@ describe("security profiles", () => {
       responseCover: { enabled: true, coverAssistantAfterContamination: false, message: "covered" },
     });
 
-    expect(config.dashboard).toEqual({ enabled: false, host: "0.0.0.0", port: 9999 });
-    expect(config.storage).toEqual({ stateDir: ".state", maxRecords: 123 });
+    expect(config.dashboard).toEqual({ enabled: false, host: "0.0.0.0", port: 9999, allowRemote: false, authToken: "" });
+    expect(config.storage).toEqual({ stateDir: ".state", maxRecords: 123, sessionIdleTtlMs: 30 * 60 * 1000, maxSessions: 256 });
     expect(config.detection.askThreshold).toBe(70);
     expect(config.semantic).toMatchObject({ enabled: true, mode: "full", baseUrl: "https://judge.example/v1", judgeMessages: true });
     expect(config.policy.allowlistedRecipients).toEqual(["a@example.com"]);

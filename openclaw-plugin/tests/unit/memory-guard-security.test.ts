@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PluginConfig } from "../../config.ts";
 import {
   memoryConsensusFindings,
@@ -9,8 +12,19 @@ import {
   type MemoryEnvelope,
 } from "../../core/memory-guard.ts";
 
+let testConfig: PluginConfig;
+let stateDir = "";
+
+beforeEach(() => {
+  stateDir = mkdtempSync(join(tmpdir(), "agentsentry-memory-guard-"));
+  testConfig = new PluginConfig();
+  testConfig.storage.stateDir = stateDir;
+});
+
+afterEach(() => rmSync(stateDir, { recursive: true, force: true }));
+
 function config(): PluginConfig {
-  return new PluginConfig();
+  return testConfig;
 }
 
 function envelopeFromWrite(result: ReturnType<typeof memoryGuardScanWrite>): MemoryEnvelope {

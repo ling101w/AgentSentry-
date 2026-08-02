@@ -210,7 +210,9 @@ describe("policy state transitions", () => {
     expect(state.history).toHaveLength(80);
     expect(state.aggregateRisk.prompt_injection).toBe(65);
     expect(state.contaminated).toBe(true);
-    expect(state.behaviorProfiles.get("read_file")?.calls).toBe(82);
+    const learnedSamples = Array.from(state.behaviorProfiles.values())
+      .find((profile) => profile.tool === "read_file")?.samples;
+    expect(learnedSamples).toHaveLength(40);
   });
 
   it("revokes stale capabilities for an empty or unreadable latest user message", () => {

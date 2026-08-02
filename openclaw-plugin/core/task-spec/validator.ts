@@ -5,6 +5,7 @@ import type {
   TaskSpec,
 } from "./types.ts";
 import { posix } from "node:path";
+import { hostFromUrl, targetMatches } from "../security/url.ts";
 
 const SIDE_EFFECT_TOOLS = new Set(["write_file", "send_email", "call_api", "shell_exec", "memory_write"]);
 
@@ -174,24 +175,7 @@ function pathMatches(actual: string, allowed: string): boolean {
 }
 
 function networkTargetMatches(actual: string, allowed: string): boolean {
-  const normalizedActual = normalizeNetworkTarget(actual);
-  const normalizedAllowed = normalizeNetworkTarget(allowed);
-  if (!normalizedActual || !normalizedAllowed) return false;
-  if (normalizedActual === normalizedAllowed) return true;
-  try {
-    const actualUrl = new URL(normalizedActual);
-    const allowedUrl = new URL(normalizedAllowed);
-    if (
-      actualUrl.protocol !== allowedUrl.protocol
-      || actualUrl.hostname !== allowedUrl.hostname
-      || effectivePort(actualUrl) !== effectivePort(allowedUrl)
-    ) return false;
-    const allowedPath = allowedUrl.pathname.replace(/\/$/, "") || "/";
-    const actualPath = actualUrl.pathname.replace(/\/$/, "") || "/";
-    return allowedPath === "/" || actualPath === allowedPath || actualPath.startsWith(`${allowedPath}/`);
-  } catch {
-    return false;
-  }
+  return targetMatches(normalizeNetworkTarget(actual), normalizeNetworkTarget(allowed));
 }
 
 function shellTargetMatches(command: string, targets: string[]): boolean {
@@ -227,21 +211,6 @@ function normalizeNetworkTarget(value: string): string {
   } catch {
     return text.replace(/\/$/, "");
   }
-}
-
-function hostFromUrl(value: string): string {
-  try {
-    return new URL(value).hostname.toLowerCase();
-  } catch {
-    return "";
-  }
-}
-
-function effectivePort(value: URL): string {
-  if (value.port) return value.port;
-  if (value.protocol === "http:") return "80";
-  if (value.protocol === "https:") return "443";
-  return "";
 }
 
 function readFirst(args: Record<string, unknown>, keys: string[]): string {

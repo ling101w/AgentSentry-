@@ -11,6 +11,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from _dashboard_auth import dashboard_request
+
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE_URL = os.environ.get("AGENTSENTRY_DASHBOARD", "http://127.0.0.1:8765").rstrip("/")
@@ -500,13 +502,13 @@ def wait_for_server(timeout: float = 45.0) -> dict[str, Any]:
 
 
 def get_json(path: str) -> dict[str, Any]:
-    with urlopen(f"{BASE_URL}{path}", timeout=20) as response:
+    with urlopen(dashboard_request(f"{BASE_URL}{path}"), timeout=20) as response:
         value = json.loads(response.read().decode("utf-8"))
     return value if isinstance(value, dict) else {}
 
 
 def post_json(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    request = Request(
+    request = dashboard_request(
         f"{BASE_URL}{path}",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         method="POST",

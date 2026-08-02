@@ -58,12 +58,23 @@ describe("TaskSpec V2 explicit capability extraction", () => {
     const readSpec = deriveTaskSpecV2("访问 https://api.example.com/reports 并总结页面。", []);
     expect(authorizeCapability(readSpec, {
       tool: "call_api",
-      args: { url: "https://api.example.com/reports/2026", method: "GET" },
+      args: { url: "https://api.example.com/reports", method: "GET" },
     }).action).toBe("allow");
+    expect(authorizeCapability(readSpec, {
+      tool: "call_api",
+      args: { url: "https://api.example.com/reports/2026", method: "GET" },
+    }).action).toBe("deny");
     expect(authorizeCapability(readSpec, {
       tool: "call_api",
       args: { url: "https://api.example.com/reports", method: "POST", body: "secret" },
     }).action).toBe("deny");
+
+    const prefixSpec = structuredClone(readSpec);
+    prefixSpec.capabilities[0].targets = ["prefix:https://api.example.com/reports"];
+    expect(authorizeCapability(prefixSpec, {
+      tool: "call_api",
+      args: { url: "https://api.example.com/reports/2026", method: "GET" },
+    }).action).toBe("allow");
 
     const portSpec = deriveTaskSpecV2("Visit https://api.example.com:8443/reports and summarize it.", []);
     expect(authorizeCapability(portSpec, {

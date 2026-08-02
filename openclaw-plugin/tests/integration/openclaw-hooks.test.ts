@@ -148,6 +148,10 @@ function rawRecords(harness: Harness): string {
   return readFileSync(join(harness.stateDir, "agentsentry", "records.jsonl"), "utf8");
 }
 
+async function flushRecords(): Promise<void> {
+  await plugin.store?.flush();
+}
+
 describe("OpenClaw plugin hooks", () => {
   it("registers every lifecycle hook and records a redacted LLM input", async () => {
     const harness = createHarness({ capture: { includeSystemPromptPreview: true, previewChars: 800 } });
@@ -165,6 +169,7 @@ describe("OpenClaw plugin hooks", () => {
     await invoke(harness, "llm_input", {
       systemPrompt: `System policy. api_key=${secret}`,
     }, context);
+    await flushRecords();
 
     const llmInput = readRecords(harness).find((record) => record.type === "llm_input");
     expect(llmInput?.payload.systemPromptPreview).toContain("[redacted]");
@@ -224,6 +229,7 @@ describe("OpenClaw plugin hooks", () => {
       toolCallId: "tool-deny-2",
     }, denyContext);
     expect(deniedAgain).toMatchObject({ requireApproval: { timeoutBehavior: "deny" } });
+    await flushRecords();
 
     const decisions = readRecords(harness).filter((record) => record.type === "tool_decision");
     expect(decisions.find((record) => record.payload.toolCallId === "tool-allow")?.payload).toMatchObject({ decision: "allow" });
@@ -281,6 +287,7 @@ describe("OpenClaw plugin hooks", () => {
       message: { role: "assistant", content: "Clean follow-up." },
     }, context);
     expect(nextAssistant).toBeUndefined();
+    await flushRecords();
 
     const records = readRecords(harness);
     const toolResult = records.find((record) => record.type === "tool_result");
@@ -387,7 +394,7 @@ describe("OpenClaw plugin hooks", () => {
         workspaceDir: harness.stateDir,
       });
     }
-    expect(plugin.sessions.size).toBe(500);
+    expect(plugin.sessions.size).toBe(256);
     const activeSessionKeys = () => new Set([...plugin.sessions.values()].map((state) => state.sourceSessionKey));
     expect(activeSessionKeys().has("hooks:lru:pending")).toBe(true);
     expect(activeSessionKeys().has("hooks:lru:0")).toBe(false);
@@ -403,7 +410,7 @@ describe("OpenClaw plugin hooks", () => {
     });
     expect(activeSessionKeys().has("hooks:lru:5")).toBe(true);
     expect(activeSessionKeys().has("hooks:lru:6")).toBe(false);
-    expect(plugin.sessions.size).toBe(500);
+    expect(plugin.sessions.size).toBe(256);
   });
 
   it("refuses a new untracked session when every capacity slot is in flight", async () => {
@@ -416,7 +423,7 @@ describe("OpenClaw plugin hooks", () => {
     const template = [...plugin.sessions.values()][0];
     template.policyState.semanticActionGraph.pendingCalls.set("id:pinned", ["pinned-action"]);
     plugin.sessions.clear();
-    for (let index = 0; index < 500; index += 1) {
+    for (let index = 0; index < 256; index += 1) {
       plugin.sessions.set(`pinned:${index}`, {
         ...template,
         sessionKey: `hooks:capacity:${index}`,
@@ -431,7 +438,7 @@ describe("OpenClaw plugin hooks", () => {
       sessionKey: "hooks:capacity:overflow",
       workspaceDir: harness.stateDir,
     })).rejects.toThrow("active session capacity reached");
-    expect(plugin.sessions.size).toBe(500);
+    expect(plugin.sessions.size).toBe(256);
     expect([...plugin.sessions.values()].some((state) => state.sourceSessionKey === "hooks:capacity:overflow")).toBe(false);
   });
 });

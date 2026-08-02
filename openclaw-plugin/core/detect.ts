@@ -209,6 +209,7 @@ export function detectToolCall(
     toolCallId: context.toolCallId,
     semanticGraph: semanticAction.graph,
     provenanceLinks: exposure.links,
+    provenanceAdditions: exposure.additions,
   });
   return {
     decision: policy.decision,

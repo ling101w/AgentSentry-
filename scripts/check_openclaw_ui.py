@@ -8,6 +8,8 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from _dashboard_auth import dashboard_access_url, dashboard_request
+
 from playwright.sync_api import sync_playwright
 
 from playwright_browser import launch_chromium
@@ -84,7 +86,7 @@ def main() -> int:
 
         page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
-        page.goto(f"{BASE_URL}/", wait_until="domcontentloaded", timeout=30000)
+        page.goto(dashboard_access_url(BASE_URL, "/"), wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(900)
         save_screenshot(page, report, "home-1440x900.png")
         add_check(
@@ -142,7 +144,7 @@ def main() -> int:
 
         page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
-        page.goto(f"{BASE_URL}/command-lab", wait_until="domcontentloaded", timeout=30000)
+        page.goto(dashboard_access_url(BASE_URL, "/command-lab"), wait_until="domcontentloaded", timeout=30000)
         page.wait_for_selector("#commandInput", timeout=15000)
         page.wait_for_selector("#modeSelect", timeout=15000)
         page.wait_for_timeout(900)
@@ -239,7 +241,7 @@ def main() -> int:
         ]:
             page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
             page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
-            page.goto(f"{BASE_URL}/security-screen", wait_until="domcontentloaded", timeout=30000)
+            page.goto(dashboard_access_url(BASE_URL, "/security-screen"), wait_until="domcontentloaded", timeout=30000)
             wait_for_kpis(page)
             api = page.evaluate("fetch('/api/security/overview').then((res) => res.json())")
             stats = page.evaluate("fetch('/api/stats?limit=5000').then((res) => res.json())")
@@ -360,7 +362,7 @@ def wait_for_server(timeout: float = 45.0) -> None:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            with urlopen(f"{BASE_URL}/api/health", timeout=2) as response:
+            with urlopen(dashboard_request(f"{BASE_URL}/api/health"), timeout=2) as response:
                 if response.status < 500:
                     return
         except (OSError, URLError) as exc:
@@ -370,13 +372,13 @@ def wait_for_server(timeout: float = 45.0) -> None:
 
 
 def get_json(path: str) -> dict:
-    with urlopen(f"{BASE_URL}{path}", timeout=15) as response:
+    with urlopen(dashboard_request(f"{BASE_URL}{path}"), timeout=15) as response:
         value = json.loads(response.read().decode("utf-8"))
     return value if isinstance(value, dict) else {}
 
 
 def post_json(path: str, payload: dict) -> dict:
-    req = Request(
+    req = dashboard_request(
         f"{BASE_URL}{path}",
         data=json.dumps(payload).encode("utf-8"),
         method="POST",

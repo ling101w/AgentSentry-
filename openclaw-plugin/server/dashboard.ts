@@ -1,12 +1,17 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { isIP } from "node:net";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGzip } from "node:zlib";
 import type { PluginConfig } from "../config.ts";
 import { detectMessageContent, detectToolCall } from "../core/detect.ts";
 import { runtimeConfigPath, saveRuntimeConfig } from "../core/runtime-config.ts";
+import { loadOrCreateStateSecret } from "../core/state-secret.ts";
+import { matchAllowedWritePath, pathWithinRoot } from "../core/path-security.ts";
+import { safeHttpGet } from "../core/ssrf-http.ts";
 import {
   memoryConsensusFindings,
   memoryGuardScanRead,
@@ -19,7 +24,6 @@ import {
 } from "../core/memory-guard.ts";
 import {
   createPolicyState,
-  normalizeAction,
   policyTrustSnapshot,
   resultFindings,
   updateActionGraphEnforcement,
@@ -29,11 +33,12 @@ import {
 } from "../core/policy.ts";
 import type { PolicyState } from "../core/policy.ts";
 import type { AgentSentryRecord, RecordSeverity, RecordStore } from "../core/records.ts";
-import { semanticJudgeMemoryWrite, semanticJudgeMessage, semanticJudgeToolCall } from "../core/semantic.ts";
+import { semanticJudgeAmbiguousAction } from "../core/semantic.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfRuntimeAudit } from "../core/system-monitor.ts";
 
 export type DashboardServer = {
   url: string;
+  accessUrl: string;
   close: () => Promise<void>;
 };
 
@@ -79,17 +84,32 @@ const ENFORCEMENT_MODES = [
 type DashboardEnforcementMode = (typeof ENFORCEMENT_MODES)[number]["value"];
 type SemanticJudgeOverride = "default" | "on" | "off";
 
+type DashboardSecurity = {
+  bindHost: string;
+  port: number;
+  token: string;
+};
+
 export function startDashboard(config: PluginConfig, store: RecordStore, logger: LoggerLike, runtime?: DashboardRuntime): Promise<DashboardServer> {
   const publicDir = join(fileURLToPath(new URL(".", import.meta.url)), "..", "public");
   const host = config.dashboard.host;
   const port = config.dashboard.port;
+  const loopback = isLoopbackHost(host);
+  if (!loopback && !config.dashboard.allowRemote) {
+    throw new Error(`dashboard host ${host} is not loopback; set dashboard.allowRemote=true and configure dashboard.authToken to enable remote access`);
+  }
+  if (!loopback && config.dashboard.authToken.length < 32) {
+    throw new Error("remote dashboard access requires dashboard.authToken with at least 32 characters");
+  }
+  const token = config.dashboard.authToken || loadOrCreateStateSecret(config, "dashboard-session").toString("base64url");
+  const security: DashboardSecurity = { bindHost: host, port, token };
   const dashboardRuntime: DashboardRuntime = runtime ?? {
     getConfig: () => config,
     setConfig: () => undefined,
   };
 
   const server = createServer((req, res) => {
-    void handleRequest(req, res, publicDir, store, dashboardRuntime);
+    void handleRequest(req, res, publicDir, store, dashboardRuntime, security);
   });
 
   return new Promise((resolve, reject) => {
@@ -98,10 +118,13 @@ export function startDashboard(config: PluginConfig, store: RecordStore, logger:
       server.off("error", reject);
       const address = server.address();
       const actualPort = typeof address === "object" && address ? address.port : port;
-      const url = `http://${host}:${actualPort}`;
+      security.port = actualPort;
+      const url = `http://${formatHostForUrl(host)}:${actualPort}`;
+      const accessUrl = `${url}/?access_token=${encodeURIComponent(token)}`;
       logger.info(`[AgentSentry] dashboard listening at ${url}`);
       resolve({
         url,
+        accessUrl,
         close: () => closeServer(server),
       });
     });
@@ -114,9 +137,12 @@ async function handleRequest(
   publicDir: string,
   store: RecordStore,
   runtime: DashboardRuntime,
+  security: DashboardSecurity,
 ): Promise<void> {
   const url = new URL(req.url || "/", "http://agentsentry.local");
   const config = runtime.getConfig();
+
+  if (!authorizeDashboardRequest(req, res, url, security)) return;
 
   if (req.method === "GET" && url.pathname === "/api/health") {
     sendJson(req, res, {
@@ -377,6 +403,121 @@ async function handleRequest(
   }
 
   serveStaticFile(req, res, filePath, requested);
+}
+
+function authorizeDashboardRequest(req: IncomingMessage, res: ServerResponse, url: URL, security: DashboardSecurity): boolean {
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+
+  const hostHeader = typeof req.headers.host === "string" ? req.headers.host.trim() : "";
+  if (!validDashboardHost(hostHeader, security)) {
+    sendText(res, 421, "Invalid dashboard Host header");
+    return false;
+  }
+
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin.trim() : "";
+  if (origin && !validDashboardOrigin(origin, hostHeader)) {
+    sendText(res, 403, "Invalid dashboard Origin header");
+    return false;
+  }
+
+  const bearer = bearerToken(req);
+  const bearerAuthenticated = Boolean(bearer && secureTokenEqual(bearer, security.token));
+  const sessionAuthenticated = secureTokenEqual(cookieValue(req, "agentsentry_session"), security.token);
+  const method = (req.method || "GET").toUpperCase();
+  const safeMethod = method === "GET" || method === "HEAD";
+
+  if (!safeMethod && !origin && !bearerAuthenticated) {
+    sendText(res, 403, "Dashboard state changes require a same-origin request or bearer token");
+    return false;
+  }
+  if (bearerAuthenticated || sessionAuthenticated) return true;
+
+  const bootstrapToken = url.searchParams.get("access_token") || "";
+  if (safeMethod && secureTokenEqual(bootstrapToken, security.token)) {
+    url.searchParams.delete("access_token");
+    const location = `${url.pathname}${url.search}` || "/";
+    res.writeHead(303, {
+      Location: location,
+      "Cache-Control": "no-store",
+      "Set-Cookie": `agentsentry_session=${encodeURIComponent(security.token)}; Path=/; HttpOnly; SameSite=Strict`,
+    });
+    res.end();
+    return false;
+  }
+
+  res.setHeader("WWW-Authenticate", 'Bearer realm="AgentSentry Dashboard"');
+  sendText(res, 401, "Dashboard authentication required");
+  return false;
+}
+
+function validDashboardHost(hostHeader: string, security: DashboardSecurity): boolean {
+  if (!hostHeader) return false;
+  try {
+    const parsed = new URL(`http://${hostHeader}`);
+    const requestPort = parsed.port ? Number(parsed.port) : 80;
+    if (requestPort !== security.port) return false;
+    const requestHost = parsed.hostname.toLowerCase();
+    const bindHost = stripIpv6Brackets(security.bindHost).toLowerCase();
+    if (isLoopbackHost(bindHost)) return isLoopbackHost(requestHost);
+    if (bindHost === "0.0.0.0" || bindHost === "::") return isIP(requestHost) !== 0;
+    return requestHost === bindHost;
+  } catch {
+    return false;
+  }
+}
+
+function validDashboardOrigin(origin: string, hostHeader: string): boolean {
+  try {
+    return new URL(origin).origin === new URL(`http://${hostHeader}`).origin;
+  } catch {
+    return false;
+  }
+}
+
+function bearerToken(req: IncomingMessage): string {
+  const authorization = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || "";
+}
+
+function cookieValue(req: IncomingMessage, name: string): string {
+  const cookie = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
+  for (const item of cookie.split(";")) {
+    const separator = item.indexOf("=");
+    if (separator < 0 || item.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(item.slice(separator + 1).trim());
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function secureTokenEqual(left: string, right: string): boolean {
+  if (!left || !right) return false;
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = stripIpv6Brackets(host).toLowerCase();
+  if (normalized === "localhost" || normalized === "::1") return true;
+  if (isIP(normalized) !== 4) return false;
+  const firstOctet = Number(normalized.split(".")[0]);
+  return firstOctet === 127;
+}
+
+function stripIpv6Brackets(host: string): string {
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+function formatHostForUrl(host: string): string {
+  const normalized = stripIpv6Brackets(host);
+  return isIP(normalized) === 6 ? `[${normalized}]` : normalized;
 }
 
 function compactRecord(record: AgentSentryRecord): AgentSentryRecord {
@@ -718,6 +859,7 @@ function compactPayload(record: AgentSentryRecord): Record<string, unknown> {
   if (payload.task_spec && typeof payload.task_spec === "object") {
     const taskSpec = payload.task_spec as Record<string, unknown>;
     compact.task_spec = {
+      capabilities: Array.isArray(taskSpec.capabilities) ? taskSpec.capabilities.slice(0, 12) : undefined,
       allowed_tools: Array.isArray(taskSpec.allowed_tools) ? taskSpec.allowed_tools.slice(0, 12) : undefined,
       allowed_targets: Array.isArray(taskSpec.allowed_targets) ? taskSpec.allowed_targets.slice(0, 3) : undefined,
     };
@@ -2531,10 +2673,6 @@ async function executeLabActions(input: {
   updateTaskSpec(policyState, [{ role: "user", content: input.command }], config);
   const messageFindings = [
     ...detectMessageContent(input.command, config),
-    ...await semanticJudgeMessage(input.command, config, {
-      policyState,
-      phase: "message",
-    }),
   ];
   updateAfterMessage(policyState, messageFindings);
   for (const finding of messageFindings) {
@@ -2549,25 +2687,23 @@ async function executeLabActions(input: {
   const decisions: Array<Record<string, unknown>> = [];
   for (const [index, action] of input.actions.entries()) {
     const toolCallId = `lab_${labSession.turn}_${input.commandId}_${index + 1}`;
-    const normalizedTool = normalizeAction(action.toolName, action.params).tool;
-    const semanticFindings = [
-      ...await semanticJudgeToolCall(action.toolName, action.params, policyState.currentTask, config, {
-        policyState,
-        phase: "tool_call",
-      }),
-      ...(normalizedTool === "memory_write"
-        ? await semanticJudgeMemoryWrite(action.params, policyState.currentTask, config, {
-          policyState,
-          phase: "memory_write",
-        })
-        : []),
-    ];
-    const result = detectToolCall(action.toolName, action.params, config, policyState, semanticFindings, { toolCallId });
+    const context = { toolCallId };
+    const preliminary = detectToolCall(action.toolName, action.params, config, policyState, [], context);
+    const semanticFindings = await semanticJudgeAmbiguousAction({
+      action: preliminary.policy.action,
+      taskSpec: preliminary.policy.task_spec,
+      policyState,
+      preliminary: preliminary.policy,
+    }, config);
+    const result = semanticFindings.length
+      ? detectToolCall(action.toolName, action.params, config, policyState, semanticFindings, context)
+      : preliminary;
     const severity = severityForDecision(result.decision);
     const normalizedAction: LabAction = {
       toolName: result.policy.action.tool,
       params: result.policy.action.args,
     };
+    updateAfterDecision(policyState, result.policy);
     updateActionGraphEnforcement(
       policyState,
       result.policy,
@@ -2583,6 +2719,7 @@ async function executeLabActions(input: {
       risk_score: result.risk_score,
       sentry_score: result.policy.sentry_score,
       deterministic_block: result.policy.deterministic_block,
+      deterministic_disposition: result.policy.deterministic_disposition,
       reasons: result.policy.reasons,
       violations: result.policy.violations,
       verdict: result.policy.findings.some((finding) => finding.verdict === "block")
@@ -2625,7 +2762,6 @@ async function executeLabActions(input: {
         semantic_judge: semanticProfile,
       });
     }
-    updateAfterDecision(policyState, result.policy);
     if (result.decision === "deny" || result.decision === "ask") {
       input.store.add({
         run_id: input.runId,
@@ -2833,7 +2969,7 @@ async function executeBusinessTool(action: LabAction, config: PluginConfig, cont
   try {
     if (action.toolName === "send_email") execution = executeEmail(action);
     else if (action.toolName === "read_file") execution = executeReadFile(action, config);
-    else if (action.toolName === "write_file") execution = executeWriteFile(action);
+    else if (action.toolName === "write_file") execution = executeWriteFile(action, config);
     else if (action.toolName === "call_api" || action.toolName === "read_webpage") execution = await executeHttpRequest(action, config);
     else if (action.toolName === "memory_write") execution = executeMemoryWrite(action, config, context);
     else if (action.toolName === "memory_read") execution = executeMemoryRead(action, config, context);
@@ -2906,12 +3042,13 @@ function executeReadFile(action: LabAction, config: PluginConfig): BusinessExecu
   };
 }
 
-function executeWriteFile(action: LabAction): BusinessExecution {
+function executeWriteFile(action: LabAction, config: PluginConfig): BusinessExecution {
   const requestedPath = firstParam(action.params, ["path", "file", "filename", "target"]);
   if (!requestedPath) return { ok: false, error: "missing file path" };
-  const filePath = resolveWritePath(requestedPath);
+  let filePath = resolveWritePath(requestedPath, config);
   const content = stringifyValue(action.params.content ?? action.params.body ?? action.params.text ?? "");
   ensureParent(filePath);
+  filePath = resolveWritePath(requestedPath, config);
   writeFileSync(filePath, content, "utf8");
   return {
     ok: true,
@@ -2930,34 +3067,30 @@ async function executeHttpRequest(action: LabAction, config: PluginConfig): Prom
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { ok: false, error: `unsupported URL protocol ${parsed.protocol}` };
   }
-  if (action.toolName === "call_api" && config.policy.allowlistedApiHosts.length && !config.policy.allowlistedApiHosts.includes(parsed.hostname)) {
-    return { ok: false, error: `api host ${parsed.hostname} is not allowlisted` };
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
-  try {
-    const response = await fetch(parsed.toString(), {
-      method: "GET",
-      headers: { Accept: "application/json, text/plain;q=0.9, */*;q=0.8", "User-Agent": "AgentSentry-BusinessTool/1.0" },
-      signal: controller.signal,
-    });
-    const contentType = response.headers.get("content-type") || "";
-    const text = await response.text();
-    return {
-      ok: response.ok,
+  const response = await safeHttpGet(parsed, {
+    allowedHosts: config.policy.allowlistedApiHosts,
+    maxBytes: 1024 * 1024,
+    maxRedirects: 5,
+    timeoutMs: 5000,
+  });
+  const contentType = Array.isArray(response.headers["content-type"])
+    ? response.headers["content-type"][0] || ""
+    : response.headers["content-type"] || "";
+  const ok = response.status >= 200 && response.status < 300 && !response.truncated;
+  return {
+    ok,
+    status: response.status,
+    output: {
+      url: response.finalUrl,
       status: response.status,
-      output: {
-        url: parsed.toString(),
-        status: response.status,
-        content_type: contentType,
-        bytes: Buffer.byteLength(text, "utf8"),
-        preview: clip(text, config.capture.previewChars),
-      },
-      error: response.ok ? undefined : `HTTP ${response.status}`,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+      content_type: contentType,
+      bytes: response.bytes,
+      truncated: response.truncated,
+      redirects: response.redirects,
+      preview: clip(response.body, config.capture.previewChars),
+    },
+    error: response.truncated ? "HTTP response exceeded 1048576 byte limit" : ok ? undefined : `HTTP ${response.status}`,
+  };
 }
 
 function executeMemoryWrite(action: LabAction, config: PluginConfig, context: string): BusinessExecution {
@@ -3172,11 +3305,18 @@ function resolveReadPath(requestedPath: string): string {
   return filePath;
 }
 
-function resolveWritePath(requestedPath: string): string {
+function resolveWritePath(requestedPath: string, config: PluginConfig): string {
   const root = writeRoot();
+  mkdirSync(root, { recursive: true });
   const filePath = requestedPath.startsWith("/") ? resolve(requestedPath) : resolve(root, requestedPath);
-  if (!insideRoot(filePath, root)) throw new Error(`write path is outside allowed workspace: ${requestedPath}`);
-  return filePath;
+  const workspaceBoundary = pathWithinRoot(filePath, root);
+  if (!workspaceBoundary.allowed) throw new Error(`write path is outside allowed workspace: ${requestedPath}`);
+  if (config.policy.restrictWritesToAllowedRoots) {
+    const allowlistBoundary = matchAllowedWritePath(workspaceBoundary.target, config.policy.allowedWriteRoots, root);
+    if (!allowlistBoundary.allowed) throw new Error(allowlistBoundary.reason || `write path is outside configured allowed roots: ${requestedPath}`);
+    return allowlistBoundary.target;
+  }
+  return workspaceBoundary.target;
 }
 
 function insideRoot(filePath: string, root: string): boolean {

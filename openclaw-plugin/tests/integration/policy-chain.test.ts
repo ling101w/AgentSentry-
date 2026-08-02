@@ -6,6 +6,7 @@ import {
   createPolicyState,
   resultFindings,
   updateActionGraphEnforcement,
+  updateAfterDecision,
   updateAfterMessage,
   updateTaskSpec,
 } from "../../core/policy.ts";
@@ -94,18 +95,21 @@ describe("policy integration chain", () => {
     expect(state.dataProvenance.map((item) => item.path)).toEqual(expect.arrayContaining(["$.title", "$.hidden_instruction", "$.account_token"]));
     const publicOnly = detectToolCall("send_email", { recipient: "teacher@example.edu", body: "公开标题" }, config, state);
     expect(publicOnly.decision).toBe("allow");
+    updateAfterDecision(state, publicOnly.policy);
 
     const secretFlow = detectToolCall("send_email", { recipient: "teacher@example.edu", body: token }, config, state);
     expect(secretFlow.decision).toBe("deny");
     expect(secretFlow.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ reason: "sink argument inherits malicious or secret taint" }),
     ]));
+    updateAfterDecision(state, secretFlow.policy);
 
     const encodedToken = Buffer.from(token, "utf8").toString("base64");
     const encodedFlow = detectToolCall("send_email", { recipient: "teacher@example.edu", body: `encoded:${encodedToken}` }, config, state);
     expect(encodedFlow.decision).toBe("deny");
     const encodedFinding = encodedFlow.findings.find((item) => item.reason === "sink argument inherits malicious or secret taint");
     expect(encodedFinding?.evidence).toMatchObject({ match: "encoded_exact" });
+    updateAfterDecision(state, encodedFlow.policy);
     const lineageId = String(encodedFinding?.evidence?.provenance_id || "");
     const lineage = state.dataProvenance.find((item) => item.id === lineageId);
     expect(lineage).toMatchObject({
@@ -135,6 +139,7 @@ describe("policy integration chain", () => {
       [],
       { toolCallId: "source-read-1" },
     );
+    updateAfterDecision(state, source.policy);
     updateActionGraphEnforcement(state, source.policy, "executing");
     resultFindings("source-read-1", { account_token: secret }, state, config, "read_webpage");
 
@@ -146,6 +151,7 @@ describe("policy integration chain", () => {
       [],
       { toolCallId: "transform-1" },
     );
+    updateAfterDecision(state, transform.policy);
     updateActionGraphEnforcement(state, transform.policy, "executing");
     resultFindings("transform-1", { summary: opaque }, state, config, "summarize_text");
 

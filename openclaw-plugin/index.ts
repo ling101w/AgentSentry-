@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { ConfigSchema, PluginConfig } from "./config.ts";
@@ -18,7 +18,6 @@ import {
 } from "./core/plugin-helpers.ts";
 import {
   createPolicyState,
-  normalizeAction,
   policyTrustSnapshot,
   resultFindings,
   updateActionGraphEnforcement,
@@ -30,7 +29,7 @@ import {
 import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
-import { semanticJudgeMemoryWrite, semanticJudgeToolCall } from "./core/semantic.ts";
+import { semanticJudgeAmbiguousAction } from "./core/semantic.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
 
@@ -42,11 +41,13 @@ type SessionState = {
   messageCount: number;
   toolCount: number;
   coverNextAssistantResponse: boolean;
+  lastAccessedAt: number;
   policyState: PolicyState;
   runtimeCheckpoints: Map<string, { checkpoint: EbpfLogCheckpoint | null; toolName: string; params: Record<string, unknown> }>;
 };
 
-const MAX_ACTIVE_SESSIONS = 500;
+const MAX_ACTIVE_SESSIONS = 256;
+const SESSION_IDLE_TTL_MS = 30 * 60 * 1000;
 
 const plugin = {
   id: "agent-sentry",
@@ -84,6 +85,7 @@ const plugin = {
           await plugin.dashboard.close();
           plugin.dashboard = null;
         }
+        await plugin.store?.close();
         plugin.sessions.clear();
       },
     });
@@ -287,22 +289,17 @@ const plugin = {
         enforcement: plugin.config!.enforcement.mode,
         taskSpec: state.policyState.taskSpec,
       });
-      const normalizedTool = normalizeAction(event.toolName, params).tool;
-      const semanticFindings = [
-        ...await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
-          policyState: state.policyState,
-          phase: "tool_call",
-        }),
-        ...(normalizedTool === "memory_write"
-          ? await semanticJudgeMemoryWrite(params, state.policyState.currentTask, plugin.config!, {
-            policyState: state.policyState,
-            phase: "memory_write",
-          })
-          : []),
-      ];
-      const result = detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings, {
-        toolCallId: event.toolCallId || "",
-      });
+      const detectionContext = { toolCallId: event.toolCallId || "" };
+      const preliminary = detectToolCall(event.toolName, params, plugin.config!, state.policyState, [], detectionContext);
+      const semanticFindings = await semanticJudgeAmbiguousAction({
+        action: preliminary.policy.action,
+        taskSpec: preliminary.policy.task_spec,
+        policyState: state.policyState,
+        preliminary: preliminary.policy,
+      }, plugin.config!);
+      const result = semanticFindings.length
+        ? detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings, detectionContext)
+        : preliminary;
       const cachedApproval = plugin.approvalCache!.has(operationKey) && result.decision === "ask" && !result.policy.deterministic_block;
       const effectiveDecision = cachedApproval ? "allow" : result.decision;
       const effectivePolicy = cachedApproval ? { ...result.policy, decision: "allow" as const } : result.policy;
@@ -313,6 +310,7 @@ const plugin = {
         : plugin.config!.enforcement.mode === "block" && effectiveDecision === "deny"
           ? "blocked"
           : "executing";
+      updateAfterDecision(state.policyState, effectivePolicy);
       updateActionGraphEnforcement(state.policyState, effectivePolicy, graphStatus);
       const payload = {
         toolName: event.toolName,
@@ -387,8 +385,6 @@ const plugin = {
       for (const finding of result.findings) {
         addFinding(state, finding, { toolName: event.toolName, toolCallId: event.toolCallId || "" });
       }
-
-      updateAfterDecision(state.policyState, effectivePolicy);
 
       if (effectiveDecision === "deny") {
         addAlert(state, `High-risk tool call: ${event.toolName}`, result.summary, payload);
@@ -567,6 +563,7 @@ const plugin = {
     });
 
     function getSession(ctx: Record<string, unknown>): SessionState {
+      evictIdleSessions();
       const sessionKey = typeof ctx.sessionKey === "string" ? ctx.sessionKey : "unknown";
       const sessionId = typeof ctx.sessionId === "string" && ctx.sessionId.trim() ? ctx.sessionId.trim() : "default";
       const sessionMaterial = JSON.stringify([sessionKey, sessionId]);
@@ -584,15 +581,26 @@ const plugin = {
           messageCount: 0,
           toolCount: 0,
           coverNextAssistantResponse: false,
+          lastAccessedAt: Date.now(),
           policyState: createPolicyState(),
           runtimeCheckpoints: new Map(),
         };
         plugin.sessions.set(sessionIdentity, state);
       } else {
+        state.lastAccessedAt = Date.now();
         plugin.sessions.delete(sessionIdentity);
         plugin.sessions.set(sessionIdentity, state);
       }
       return state;
+    }
+
+    function evictIdleSessions(now = Date.now()): void {
+      const cutoff = now - SESSION_IDLE_TTL_MS;
+      for (const [key, state] of plugin.sessions) {
+        if (state.lastAccessedAt > cutoff) continue;
+        if (state.policyState.semanticActionGraph.pendingCalls.size || state.runtimeCheckpoints.size) continue;
+        plugin.sessions.delete(key);
+      }
     }
 
     function ensureSessionCapacity(): void {
@@ -687,9 +695,10 @@ const plugin = {
         plugin.config!.notifications.maxMessageChars,
       );
       try {
-        spawnSync("openclaw", ["message", "send", "--channel", route.channel, "--target", route.target, "--message", message], {
-          stdio: "ignore",
-        });
+        execFile("openclaw", ["message", "send", "--channel", route.channel, "--target", route.target, "--message", message], {
+          timeout: 5000,
+          windowsHide: true,
+        }, () => undefined);
       } catch {
         // Notification is best-effort; records remain the source of truth.
       }

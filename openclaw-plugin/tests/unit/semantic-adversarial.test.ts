@@ -149,7 +149,7 @@ describe("semantic judge adversarial boundaries", () => {
       init.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     })));
     const pending = semanticJudgeToolCall("shell_exec", { command: "rm -rf target" }, "list files", judgeConfig());
-    await vi.advanceTimersByTimeAsync(30);
+    await vi.advanceTimersByTimeAsync(501);
     expect(await pending).toEqual([]);
   });
 

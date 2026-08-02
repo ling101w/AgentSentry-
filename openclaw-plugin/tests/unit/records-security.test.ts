@@ -67,7 +67,7 @@ describe("RecordStore persistence boundary", () => {
     });
   });
 
-  it("deeply redacts both the persisted and API-facing record", () => {
+  it("deeply redacts both the persisted and API-facing record", async () => {
     const store = createStore();
     const apiKey = "sk-abcdefghijklmnopqrstuvwxyz";
     const bearer = "Bearer abcdefghijklmnopqrstuvwxyz";
@@ -94,6 +94,7 @@ describe("RecordStore persistence boundary", () => {
       apiKey: "[redacted]",
       nested: { authorization: "[redacted]" },
     });
+    await store.flush();
 
     const disk = readFileSync(store.recordsPath, "utf8");
     for (const secret of [apiKey, bearer, password, "super-sensitive-private-key-material"]) {
@@ -112,11 +113,11 @@ describe("RecordStore persistence boundary", () => {
     });
   });
 
-  it("compacts to maxRecords and keeps the newest records in chronological file order", () => {
+  it("compacts to maxRecords and keeps the newest records in chronological file order", async () => {
     const store = createStore(3);
     for (let index = 1; index <= 8; index += 1) store.add(recordInput(index));
 
-    store.compact();
+    await store.compact();
 
     expect(store.count()).toBe(3);
     expect(store.list(10).map((record) => record.id)).toEqual(["rec-8", "rec-7", "rec-6"]);
@@ -147,25 +148,28 @@ describe("RecordStore persistence boundary", () => {
     expect(store.get("rec-1")?.id).toBe("rec-1");
   });
 
-  it("separates a new append from a crash-truncated tail", () => {
+  it("separates a new append from a crash-truncated tail", async () => {
     const store = createStore();
     store.add(recordInput(1));
+    await store.flush();
     appendFileSync(store.recordsPath, "{\"partial\":", "utf8");
 
     store.add(recordInput(2));
+    await store.flush();
 
     expect(store.list(2).map((record) => record.id)).toEqual(["rec-2", "rec-1"]);
     expect(store.count()).toBe(2);
     expect(readFileSync(store.recordsPath, "utf8")).toContain("{\"partial\":\n{");
   });
 
-  it("reset clears persisted data and invalidates count and stats caches", () => {
+  it("reset clears persisted data and invalidates count and stats caches", async () => {
     const store = createStore();
     store.add(recordInput(1));
     expect(store.count()).toBe(1);
     expect(store.stats()).toMatchObject({ totalRecords: 1 });
 
     store.reset();
+    await store.flush();
 
     expect(readFileSync(store.recordsPath, "utf8")).toBe("");
     expect(store.list()).toEqual([]);
@@ -176,7 +180,7 @@ describe("RecordStore persistence boundary", () => {
     expect(store.count()).toBe(1);
   });
 
-  it("keeps counts coherent across interleaved store instances", () => {
+  it("keeps counts coherent across interleaved store instances", async () => {
     const first = createStore();
     const config = new PluginConfig();
     config.storage.stateDir = first.stateDir;
@@ -188,6 +192,8 @@ describe("RecordStore persistence boundary", () => {
     for (let index = 1; index <= 20; index += 1) {
       first.add(recordInput(index * 2 - 1));
       second.add(recordInput(index * 2));
+      await first.flush();
+      await second.flush();
       expect(first.count()).toBe(index * 2);
       expect(second.count()).toBe(index * 2);
     }
@@ -195,7 +201,7 @@ describe("RecordStore persistence boundary", () => {
     expect(new Set(first.list(100).map((record) => record.id)).size).toBe(40);
   });
 
-  it("contains serialization failures and does not update caches after an I/O failure", () => {
+  it("contains serialization failures and surfaces an asynchronous I/O failure", async () => {
     const store = createStore();
     const circular: Record<string, unknown> = {};
     circular.self = circular;
@@ -205,10 +211,12 @@ describe("RecordStore persistence boundary", () => {
     expect(store.count()).toBe(1);
 
     rmSync(store.dataDir, { recursive: true, force: true });
-    expect(() => store.add(recordInput(2))).toThrow();
+    store.add(recordInput(2));
+    await expect(store.flush()).rejects.toThrow();
     mkdirSync(store.dataDir, { recursive: true });
     writeFileSync(store.recordsPath, "", "utf8");
     store.add(recordInput(3));
+    await store.flush();
     expect(store.count()).toBe(1);
     expect(store.list()).toMatchObject([{ id: "rec-3" }]);
   });

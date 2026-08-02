@@ -1,9 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PluginConfig } from "../config.ts";
 import { clampText, redactObject } from "./redact.ts";
+import { EventWriter } from "./persistence/event-writer.ts";
 
 export type RecordSeverity = "info" | "success" | "warning" | "danger";
 
@@ -26,7 +27,10 @@ export class RecordStore {
   readonly recordsPath: string;
   private maxRecords: number;
   private previewChars: number;
-  private writeCount = 0;
+  private writer: EventWriter<AgentSentryRecord>;
+  private recentRecords: AgentSentryRecord[] = [];
+  private knownCount: number;
+  private resetPending = false;
   private countCache: { size: number; mtimeMs: number; count: number } | null = null;
   private statsCache = new Map<number, { size: number; mtimeMs: number; value: Record<string, unknown> }>();
 
@@ -39,6 +43,8 @@ export class RecordStore {
     mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     if (!existsSync(this.recordsPath)) writeFileSync(this.recordsPath, "", { encoding: "utf8", mode: 0o600 });
     restrictAuditPermissions(this.dataDir, this.recordsPath);
+    this.knownCount = countValidRecords(this.recordsPath);
+    this.writer = new EventWriter(this.recordsPath, { maxRecords: this.maxRecords });
   }
 
   add(input: Omit<AgentSentryRecord, "id" | "created_at"> & { id?: string; created_at?: string }): AgentSentryRecord {
@@ -54,37 +60,48 @@ export class RecordStore {
       summary: input.summary,
       payload: input.payload,
     };
-    const beforeAppend = fileFingerprint(this.recordsPath);
     const persistedRecord = recordForStorage(record, this.previewChars);
-    const separator = needsLeadingNewline(this.recordsPath) ? "\n" : "";
-    appendFileSync(this.recordsPath, `${separator}${JSON.stringify(persistedRecord)}\n`, "utf8");
-    this.writeCount += 1;
-    this.invalidateCachesAfterAppend(beforeAppend);
-    if (this.writeCount % 200 === 0) this.compact();
+    if (this.writer.enqueue(persistedRecord)) {
+      this.recentRecords.push(persistedRecord);
+      if (this.recentRecords.length > this.maxRecords) this.recentRecords = this.recentRecords.slice(-this.maxRecords);
+      this.knownCount = Math.min(this.maxRecords, this.knownCount + 1);
+      this.countCache = null;
+      this.statsCache.clear();
+    }
     return persistedRecord;
   }
 
   list(limit = 500): AgentSentryRecord[] {
-    return readTailRecords(this.recordsPath, normalizeLimit(limit, 500));
+    const safeLimit = normalizeLimit(limit, 500);
+    const persisted = this.resetPending ? [] : readTailRecords(this.recordsPath, safeLimit);
+    const seen = new Set<string>();
+    return [...this.recentRecords].reverse().concat(persisted)
+      .filter((record) => {
+        if (seen.has(record.id)) return false;
+        seen.add(record.id);
+        return true;
+      })
+      .sort((left, right) => right.created_at.localeCompare(left.created_at))
+      .slice(0, safeLimit);
   }
 
   get(id: string): AgentSentryRecord | null {
     const safeId = String(id || "").trim();
     if (!safeId) return null;
+    const inMemory = this.recentRecords.find((record) => record.id === safeId);
+    if (inMemory) return inMemory;
+    if (this.resetPending) return null;
     if (!existsSync(this.recordsPath)) return null;
     return findRecordById(this.recordsPath, safeId);
   }
 
   count(): number {
-    if (!existsSync(this.recordsPath)) return 0;
-    const stat = statSync(this.recordsPath);
-    if (!stat.size) return 0;
-    if (this.countCache && this.countCache.size === stat.size && this.countCache.mtimeMs === stat.mtimeMs) {
-      return this.countCache.count;
-    }
-    const total = countValidRecords(this.recordsPath);
-    this.countCache = { size: stat.size, mtimeMs: stat.mtimeMs, count: total };
-    return total;
+    if (this.resetPending) return this.recentRecords.length;
+    const persisted = existsSync(this.recordsPath) ? countValidRecords(this.recordsPath) : 0;
+    if (!this.recentRecords.length) return Math.min(this.maxRecords, persisted);
+    const persistedIds = new Set(readTailRecords(this.recordsPath, this.maxRecords).map((record) => record.id));
+    const queued = this.recentRecords.filter((record) => !persistedIds.has(record.id)).length;
+    return Math.min(this.maxRecords, persisted + queued);
   }
 
   stats(limit = 2000): Record<string, unknown> {
@@ -128,51 +145,30 @@ export class RecordStore {
   }
 
   reset(): void {
-    writeFileSync(this.recordsPath, "", "utf8");
-    this.writeCount = 0;
-    this.countCache = { size: 0, mtimeMs: statSync(this.recordsPath).mtimeMs, count: 0 };
+    this.recentRecords = [];
+    this.knownCount = 0;
+    this.countCache = null;
     this.statsCache.clear();
+    this.resetPending = true;
+    void this.writer.reset().finally(() => {
+      this.resetPending = false;
+    });
   }
 
-  compact(): void {
-    const records = this.list(this.maxRecords);
-    const tmpPath = `${this.recordsPath}.tmp`;
-    writeFileSync(
-      tmpPath,
-      records.reverse().map((record) => JSON.stringify(record)).join("\n") + (records.length ? "\n" : ""),
-      { encoding: "utf8", mode: 0o600 },
-    );
-    try {
-      renameSync(tmpPath, this.recordsPath);
-      const stat = statSync(this.recordsPath);
-      this.countCache = { size: stat.size, mtimeMs: stat.mtimeMs, count: records.length };
-      this.statsCache.clear();
-    } catch {
-      rmSync(tmpPath, { force: true });
-    }
+  compact(): Promise<void> {
+    return this.writer.compact();
   }
 
-  private invalidateCachesAfterAppend(beforeAppend: FileFingerprint | null): void {
-    this.statsCache.clear();
-    if (!this.countCache) return;
-    if (
-      !beforeAppend
-      || this.countCache.size !== beforeAppend.size
-      || this.countCache.mtimeMs !== beforeAppend.mtimeMs
-    ) {
-      this.countCache = null;
-      return;
-    }
-    try {
-      const stat = statSync(this.recordsPath);
-      this.countCache = {
-        size: stat.size,
-        mtimeMs: stat.mtimeMs,
-        count: this.countCache.count + 1,
-      };
-    } catch {
-      this.countCache = null;
-    }
+  async flush(): Promise<void> {
+    await this.writer.flush();
+    this.recentRecords = [];
+    restrictAuditPermissions(this.dataDir, this.recordsPath);
+  }
+
+  async close(): Promise<void> {
+    await this.writer.close();
+    this.recentRecords = [];
+    restrictAuditPermissions(this.dataDir, this.recordsPath);
   }
 }
 
@@ -210,27 +206,6 @@ function recordForStorage(record: AgentSentryRecord, previewChars: number): Agen
     summary: clampText(record.summary, previewChars),
     payload,
   };
-}
-
-function needsLeadingNewline(path: string): boolean {
-  if (!existsSync(path)) return false;
-  const stat = statSync(path);
-  if (!stat.size) return false;
-  const fd = openSync(path, "r");
-  const byte = Buffer.allocUnsafe(1);
-  try {
-    return readSync(fd, byte, 0, 1, stat.size - 1) === 1 && byte[0] !== 10;
-  } finally {
-    closeSync(fd);
-  }
-}
-
-type FileFingerprint = { size: number; mtimeMs: number };
-
-function fileFingerprint(path: string): FileFingerprint | null {
-  if (!existsSync(path)) return null;
-  const stat = statSync(path);
-  return { size: stat.size, mtimeMs: stat.mtimeMs };
 }
 
 function readTailRecords(path: string, limit: number): AgentSentryRecord[] {

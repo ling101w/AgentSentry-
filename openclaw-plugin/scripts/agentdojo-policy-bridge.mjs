@@ -16,11 +16,7 @@ import {
   updateAfterMessage,
   updateTaskSpec,
 } from "../dist/core/policy.js";
-import {
-  semanticGateForToolCall,
-  semanticJudgeMemoryWrite,
-  semanticJudgeToolCall,
-} from "../dist/core/semantic.js";
+import { semanticJudgeAmbiguousAction } from "../dist/core/semantic.js";
 import { registerToolManifest } from "../dist/core/tool-manifest.js";
 
 const BRIDGE_VERSION = "1.0.0";
@@ -107,25 +103,17 @@ async function beforeTool(session, callId, payload) {
   if (payload.tool_result !== null) throw new Error("before_tool requires a null tool_result");
   if (session.pending.has(callId)) throw new Error("duplicate call_id");
 
-  const normalizedTool = normalizeAction(payload.tool_name, payload.tool_args).tool;
-  const gate = semanticGateForToolCall(payload.tool_name, payload.tool_args, session.config);
-  const apiKey = process.env[session.config.semantic.apiKeyEnv];
-  const semanticJudgeCalled = Boolean(gate.shouldJudge && apiKey);
-  const semanticFindings = semanticJudgeCalled
-    ? [
-      ...await semanticJudgeToolCall(payload.tool_name, payload.tool_args, session.state.currentTask, session.config, {
-        policyState: session.state,
-        phase: "tool_call",
-      }),
-      ...(normalizedTool === "memory_write"
-        ? await semanticJudgeMemoryWrite(payload.tool_args, session.state.currentTask, session.config, {
-          policyState: session.state,
-          phase: "memory_write",
-        })
-        : []),
-    ]
-    : [];
-  const detection = detectToolCall(payload.tool_name, payload.tool_args, session.config, session.state, semanticFindings);
+  const preliminary = detectToolCall(payload.tool_name, payload.tool_args, session.config, session.state);
+  const semanticFindings = await semanticJudgeAmbiguousAction({
+    action: preliminary.policy.action,
+    taskSpec: preliminary.policy.task_spec,
+    policyState: session.state,
+    preliminary: preliminary.policy,
+  }, session.config);
+  const detection = semanticFindings.length
+    ? detectToolCall(payload.tool_name, payload.tool_args, session.config, session.state, semanticFindings)
+    : preliminary;
+  const semanticJudgeCalled = preliminary.policy.deterministic_disposition === "ambiguous" && semanticFindings.length > 0;
   updateAfterDecision(session.state, detection.policy);
   if (detection.decision === "allow") session.pending.set(callId, payload.tool_name);
 
@@ -136,9 +124,9 @@ async function beforeTool(session, callId, payload) {
     normalized_tool: detection.policy.action.tool,
     summary: detection.summary,
     findings: detection.findings,
-    semantic_judge_requested: gate.shouldJudge,
+    semantic_judge_requested: preliminary.policy.deterministic_disposition === "ambiguous",
     semantic_judge_called: semanticJudgeCalled,
-    semantic_gate: gate,
+    semantic_gate: { disposition: preliminary.policy.deterministic_disposition },
     contaminated: session.state.contaminated,
     trust: policyTrustSnapshot(session.state),
   };
