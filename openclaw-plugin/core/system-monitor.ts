@@ -105,6 +105,9 @@ const HOST_ESCAPE_COMMAND_PATTERNS = [
 const EBPF_OBSERVER_SERVICE = "agentsentry-ebpf-observer.service";
 const EBPF_OBSERVER_SCRIPT = "/home/ubuntu/AgentSentry-/tools/agentsentry-ebpf-observer.bt";
 const EBPF_OBSERVER_LOG = "/var/log/agentsentry-ebpf.jsonl";
+export const SYSTEM_MONITOR_STATUS_TTL_MS = 1500;
+
+let statusCache: { value: SystemMonitorStatus; cachedAt: number; expiresAt: number } | null = null;
 
 export function systemPreflight(
   toolName: string,
@@ -284,7 +287,18 @@ function kernelRuntimeGateFindings(input: {
   )];
 }
 
-export function systemMonitorStatus(): SystemMonitorStatus {
+export function clearSystemMonitorStatusCache(): void {
+  statusCache = null;
+}
+
+export function systemMonitorStatus(now = Date.now()): SystemMonitorStatus {
+  if (statusCache && now >= statusCache.cachedAt && now < statusCache.expiresAt) return statusCache.value;
+  const value = probeSystemMonitorStatus();
+  statusCache = { value, cachedAt: now, expiresAt: now + SYSTEM_MONITOR_STATUS_TTL_MS };
+  return value;
+}
+
+function probeSystemMonitorStatus(): SystemMonitorStatus {
   const observer = ebpfObserverStatus();
   if (observer.active) {
     return withIsolation({

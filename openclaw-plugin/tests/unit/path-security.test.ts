@@ -40,6 +40,52 @@ describe("canonical filesystem boundaries", () => {
     expect(matchWorkspaceReadPath(join("linked-outside", "secret.txt"), workspace)).toMatchObject({ allowed: false });
   });
 
+  it("denies read and write aliases whose canonical target is a sensitive file", () => {
+    const { workspace } = fixture();
+    const output = join(workspace, "output");
+    mkdirSync(output);
+    let readAlias = "public.txt";
+    let writeAlias = "output/public.txt";
+    if (process.platform === "win32") {
+      const readTarget = join(workspace, ".env.local");
+      const writeTarget = join(output, ".env.local");
+      mkdirSync(readTarget);
+      mkdirSync(writeTarget);
+      writeFileSync(join(readTarget, "secret.txt"), "SECRET=read-target");
+      writeFileSync(join(writeTarget, "secret.txt"), "SECRET=write-target");
+      symlinkSync(readTarget, join(workspace, "public"), "junction");
+      symlinkSync(writeTarget, join(output, "public"), "junction");
+      readAlias = "public/secret.txt";
+      writeAlias = "output/public/secret.txt";
+    } else {
+      writeFileSync(join(workspace, ".env"), "SECRET=read-target");
+      writeFileSync(join(output, ".env"), "SECRET=write-target");
+      symlinkSync(join(workspace, ".env"), join(workspace, readAlias), "file");
+      symlinkSync(join(output, ".env"), join(workspace, writeAlias), "file");
+    }
+
+    const readConfig = new PluginConfig();
+    const readState = createPolicyState();
+    updateTaskSpec(readState, [{ role: "user", content: `Read ${readAlias}` }], readConfig);
+    const read = detectToolCall("read_file", { path: readAlias }, readConfig, readState, [], { workspaceDir: workspace });
+    expect(read.decision).toBe("deny");
+    expect(read.policy.violations).toContain("read path references sensitive asset");
+
+    const writeConfig = new PluginConfig();
+    writeConfig.policy.restrictWritesToAllowedRoots = true;
+    writeConfig.policy.allowedWriteRoots = ["output"];
+    const writeState = createPolicyState();
+    updateTaskSpec(writeState, [{ role: "user", content: `Write hello to ${writeAlias}` }], writeConfig);
+    const write = detectToolCall("write_file", { path: writeAlias, content: "hello" }, writeConfig, writeState, [], { workspaceDir: workspace });
+    expect(write.decision).toBe("deny");
+    expect(write.policy.violations).toContain("write path references sensitive asset");
+
+    writeConfig.policy.restrictWritesToAllowedRoots = false;
+    const unrestrictedWrite = detectToolCall("write_file", { path: writeAlias, content: "hello" }, writeConfig, writeState, [], { workspaceDir: workspace });
+    expect(unrestrictedWrite.decision).toBe("deny");
+    expect(unrestrictedWrite.policy.violations).toContain("write path references sensitive asset");
+  });
+
   it("handles Windows drive and UNC containment without prefix confusion", () => {
     expect(pathInsideCanonicalRoot(String.raw`C:\safe\root\file.txt`, String.raw`C:\safe\root`, "win32")).toBe(true);
     expect(pathInsideCanonicalRoot(String.raw`D:\safe\root\file.txt`, String.raw`C:\safe\root`, "win32")).toBe(false);

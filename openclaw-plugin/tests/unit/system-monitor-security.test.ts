@@ -1,11 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   auditRuntimeEventBatch,
   auditRuntimeEventsSince,
+  clearSystemMonitorStatusCache,
+  SYSTEM_MONITOR_STATUS_TTL_MS,
   systemMonitorStatus,
   systemPreflight,
   type SystemMonitorStatus,
 } from "../../core/system-monitor.ts";
+
+afterEach(() => clearSystemMonitorStatusCache());
 
 function attachedMonitor(): SystemMonitorStatus {
   return {
@@ -44,6 +48,14 @@ describe("system monitor pre-execution policy", () => {
     expect(status.isolation.limitations.some((item) => item.includes("connect") && item.includes("destination"))).toBe(true);
     expect(status.reason).not.toContain("kernel exec/open/connect events");
     expect(status.observer.log_path).toBe("/var/log/agentsentry-ebpf.jsonl");
+  });
+
+  it("reuses monitor probe results within the hot-path TTL and refreshes after expiry", () => {
+    const first = systemMonitorStatus(10_000);
+    const cached = systemMonitorStatus(10_000 + SYSTEM_MONITOR_STATUS_TTL_MS - 1);
+    const refreshed = systemMonitorStatus(10_000 + SYSTEM_MONITOR_STATUS_TTL_MS);
+    expect(cached).toBe(first);
+    expect(refreshed).not.toBe(first);
   });
 
   it("allows low-risk shell reads and does not confuse .environment with a .env secret", () => {

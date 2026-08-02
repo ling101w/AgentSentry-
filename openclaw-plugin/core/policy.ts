@@ -17,7 +17,7 @@ import { behaviorAnomalyFindingsFor, updateBehaviorProfile, type BehaviorProfile
 import { containsAny, flattenText as flattenValueText, hostFromUrl, isLabeledValue, readFirstString, unique } from "./policy/value-utils.ts";
 import { clampText, safeStringify as redactSafeStringify } from "./redact.ts";
 import { targetAllowed } from "./security/url.ts";
-import { matchAllowedWritePath, matchWorkspaceReadPath } from "./path-security.ts";
+import { canonicalizePath, matchAllowedWritePath, matchWorkspaceReadPath } from "./path-security.ts";
 import { isAbsolute, resolve } from "node:path";
 import {
   activateSemanticIntent,
@@ -1063,11 +1063,9 @@ function deterministicViolations(
 
   if (action.tool === "write_file") {
     const requestedPath = readFirstString(action.args, ["path", "file", "filename", "target"]);
-    const path = requestedPath.replace(/\\/g, "/").toLowerCase();
     const content = readFirstString(action.args, ["content", "body", "text", "patch"]);
-    if (!path) violations.push("missing write path");
-    if (assessment.systemMutation) violations.push("write path targets protected system path");
-    if (config.policy.sensitiveAssets.some((asset) => asset && path.includes(asset.toLowerCase()))) violations.push("write path references sensitive asset");
+    let effectivePath = requestedPath;
+    if (!requestedPath.trim()) violations.push("missing write path");
     if (config.policy.restrictWritesToAllowedRoots) {
       const needsWorkspace = !isAbsolute(requestedPath) || config.policy.allowedWriteRoots.some((root) => !isAbsolute(root));
       if (needsWorkspace && !workspaceDir.trim()) {
@@ -1077,8 +1075,25 @@ function deterministicViolations(
         const allowedRoots = config.policy.allowedWriteRoots.map((root) => isAbsolute(root) ? root : resolve(writeBaseDir, root));
         const boundary = matchAllowedWritePath(requestedPath, allowedRoots, writeBaseDir);
         if (!boundary.allowed) violations.push(boundary.reason || "write path is outside allowed roots");
+        else effectivePath = boundary.target;
+      }
+    } else if (requestedPath.trim()) {
+      if (!isAbsolute(requestedPath) && !workspaceDir.trim()) {
+        violations.push("write path cannot be canonicalized without a workspace root");
+      } else {
+        try {
+          effectivePath = canonicalizePath(isAbsolute(requestedPath) ? requestedPath : resolve(workspaceDir, requestedPath));
+        } catch (error) {
+          violations.push(`cannot canonicalize write path: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
+    const path = effectivePath.replace(/\\/g, "/").toLowerCase();
+    const effectiveAssessment = effectivePath === requestedPath
+      ? assessment
+      : assessAction({ ...action, args: { ...action.args, path: effectivePath } }, config);
+    if (effectiveAssessment.systemMutation) violations.push("write path targets protected system path");
+    if (isSensitivePath(path, config)) violations.push("write path references sensitive asset");
     if (config.policy.sensitiveAssets.some((asset) => asset && content.toLowerCase().includes(asset.toLowerCase()))) {
       violations.push("content contains secret-tainted data");
     }
@@ -1089,16 +1104,17 @@ function deterministicViolations(
     if (writeContentAnalysis.findings.some((finding) => finding.verdict === "block")) {
       violations.push("write content contains persistence or skill hijack instructions");
     }
-    if (!taskSpec.allowed_tools.includes("write_file") && assessment.highRisk) {
+    if (!taskSpec.allowed_tools.includes("write_file") && effectiveAssessment.highRisk) {
       violations.push("task intent does not allow file write");
     }
   }
 
   if (action.tool === "read_file") {
     const requestedPath = readFirstString(action.args, ["path", "file", "filename", "target"]);
-    const path = requestedPath.replace(/\\/g, "/").toLowerCase();
     const boundary = matchWorkspaceReadPath(requestedPath, workspaceDir);
     if (!boundary.allowed) violations.push(boundary.reason || "read path is outside workspace root");
+    const effectivePath = boundary.allowed ? boundary.target : requestedPath;
+    const path = effectivePath.replace(/\\/g, "/").toLowerCase();
     if (isSensitivePath(path, config)) {
       violations.push("read path references sensitive asset");
     }

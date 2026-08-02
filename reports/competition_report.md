@@ -137,7 +137,7 @@
 
 ## 当前限制
 
-- eBPF 内核级观测脚本存在，但当前 OpenClaw 用户服务无法访问 `/sys/fs/bpf`，因此健康检查如实显示 `ebpf: unavailable`。应用层系统预执行策略仍为 `active`。
+- eBPF 脚本重点观测 `execve`、`openat` 等系统事件，并把 `connect` 系统调用记录为不含目的地址的运行证据；当前网络目的地址控制由应用层 URL/命令执行前策略负责。当前 OpenClaw 用户服务无法访问 `/sys/fs/bpf`，因此健康检查如实显示 `ebpf: unavailable`，应用层系统预执行策略仍为 `active`。
 - 危险 shell payload 不直接落地执行，实验评估的是执行前真实裁决，避免破坏主机。
 - 邮件发送工具使用本机 outbox 受控实现，不连接真实 SMTP。
 - LLM-Judge 依赖 DeepSeek-compatible API；API 不可用时，确定性策略、TaskSpec、污点传播、ABAC、Memory Guard 和 System Preflight 仍工作。
