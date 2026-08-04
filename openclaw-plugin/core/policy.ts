@@ -81,6 +81,15 @@ export type Label = {
   provenance_ids?: string[];
 };
 
+export type RuntimeFeedbackProfile = {
+  tool: string;
+  runtime_alerts: number;
+  risk_score: number;
+  last_seen: string;
+  reasons: string[];
+  events: string[];
+};
+
 export type PolicyState = {
   currentTask: string;
   taskSpec: TaskSpec;
@@ -101,6 +110,7 @@ export type PolicyState = {
   }>;
   apiCallCounts: Map<string, number>;
   behaviorProfiles: Map<string, BehaviorProfile>;
+  runtimeProfiles: Map<string, RuntimeFeedbackProfile>;
   trustLabels: TrustLabel[];
   aggregateRisk: RiskVector;
   taintedSources: string[];
@@ -187,6 +197,7 @@ export function createPolicyState(): PolicyState {
     exposures: [],
     apiCallCounts: new Map(),
     behaviorProfiles: new Map(),
+    runtimeProfiles: new Map(),
     trustLabels: [],
     aggregateRisk: createRiskVector(),
     taintedSources: [],
@@ -499,6 +510,9 @@ function evaluateMutable(
     const behaviorFindings = behaviorAnomalyFindingsFor(action, state, config);
     findings.push(...behaviorFindings);
 
+    const runtimeFeedbackFindings = runtimeFeedbackFindingsFor(action, state, config);
+    findings.push(...runtimeFeedbackFindings);
+
     const trustFindings = trustFindingsFor(action, state);
     findings.push(...trustFindings);
   }
@@ -594,6 +608,36 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
   if (decision.decision === "allow") updateBehaviorProfile(state, decision.action);
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, decision.risk_vector);
   mergeFindingTrust(state, decision.findings);
+}
+
+export function updateAfterRuntimeFindings(state: PolicyState, toolName: string, findings: DetectionFinding[]): void {
+  const runtimeFindings = normalizeFindingInput(findings).findings.filter(isRuntimeAuditFinding);
+  if (!runtimeFindings.length) return;
+
+  const tool = normalizeToolName(toolName || "unknown_tool");
+  const existing = state.runtimeProfiles.get(tool);
+  const reasons = unique([
+    ...(existing?.reasons || []),
+    ...runtimeFindings.map((item) => item.reason).filter(Boolean),
+  ]).slice(-8);
+  const events = unique([
+    ...(existing?.events || []),
+    ...runtimeFindings.map((item) => {
+      const audit = (item.evidence || {}).runtime_audit as Record<string, unknown> | undefined;
+      return String(audit?.event || "runtime");
+    }),
+  ]).slice(-8);
+
+  state.runtimeProfiles.set(tool, {
+    tool,
+    runtime_alerts: (existing?.runtime_alerts || 0) + runtimeFindings.length,
+    risk_score: Math.max(existing?.risk_score || 0, ...runtimeFindings.map((item) => item.score)),
+    last_seen: new Date().toISOString(),
+    reasons,
+    events,
+  });
+  state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, riskVectorFromFindings(runtimeFindings));
+  mergeFindingTrust(state, runtimeFindings);
 }
 
 export function updateActionGraphEnforcement(
@@ -964,6 +1008,7 @@ export function policyTrustSnapshot(state: PolicyState): Record<string, unknown>
     taint_flows: state.taintFlows.slice(-12),
     provenance: state.dataProvenance.slice(-20),
     semantic_action_graph: semanticActionGraphSnapshot(state.semanticActionGraph),
+    runtime_feedback: Array.from(state.runtimeProfiles.values()).slice(-10),
     lowest_trust: lowest
       ? {
         source: lowest.source,
@@ -1202,6 +1247,34 @@ function trajectoryFindingsFor(action: AgentSentryAction, state: PolicyState, co
   return findings;
 }
 
+function runtimeFeedbackFindingsFor(action: AgentSentryAction, state: PolicyState, config: PluginConfig): DetectionFinding[] {
+  if (!config.runtimeIsolation.auditAfterExecution) return [];
+  const profile = state.runtimeProfiles.get(action.tool) || state.runtimeProfiles.get(normalizeToolName(action.originalTool || action.tool));
+  if (!profile || profile.runtime_alerts <= 0) return [];
+
+  const assessment = assessAction(action, config);
+  const sensitiveSink = assessment.highRisk || isTrustSensitiveSink(action, assessment);
+  if (!sensitiveSink) return [];
+
+  const score = Math.min(45, Math.max(25, Math.trunc(profile.risk_score / 2)));
+  return [finding(
+    "Evidence Feedback",
+    "learned",
+    "require_approval",
+    "runtime feedback downgraded repeated high-risk tool use after a previous eBPF anomaly",
+    score,
+    {
+      tool: action.tool,
+      runtime_feedback: {
+        alerts: profile.runtime_alerts,
+        last_seen: profile.last_seen,
+        reasons: profile.reasons.slice(-4),
+        events: profile.events.slice(-4),
+      },
+    },
+  )];
+}
+
 function trustFindingsFor(action: AgentSentryAction, state: PolicyState): DetectionFinding[] {
   const findings: DetectionFinding[] = [];
   const assessment = assessActionWithSensitiveAssets(action, []);
@@ -1216,6 +1289,14 @@ function trustFindingsFor(action: AgentSentryAction, state: PolicyState): Detect
     }));
   }
   return findings;
+}
+
+function isRuntimeAuditFinding(item: DetectionFinding): boolean {
+  const audit = (item.evidence || {}).runtime_audit as Record<string, unknown> | undefined;
+  return item.layer === "Tool Boundary"
+    && audit?.source === "ebpf"
+    && (item.verdict === "require_approval" || item.verdict === "block")
+    && item.score >= 50;
 }
 
 function taintRisk(action: AgentSentryAction, state: PolicyState, config: PluginConfig): number {

@@ -39,6 +39,8 @@ export type EbpfLogCheckpoint = {
   log_path: string;
   size: number;
   created_at: string;
+  root_pid: number;
+  root_uid?: number;
   monitor: SystemMonitorStatus;
 };
 
@@ -48,6 +50,8 @@ export type EbpfRuntimeAudit = {
   checkpoint: EbpfLogCheckpoint | null;
   scanned_bytes: number;
   event_count: number;
+  raw_event_count?: number;
+  attributed_event_count?: number;
   interesting_events: Array<Record<string, unknown>>;
   findings: DetectionFinding[];
 };
@@ -341,6 +345,8 @@ export function ebpfLogCheckpoint(): EbpfLogCheckpoint | null {
       log_path: EBPF_OBSERVER_LOG,
       size: stats.size,
       created_at: new Date().toISOString(),
+      root_pid: process.pid,
+      root_uid: typeof process.getuid === "function" ? process.getuid() : undefined,
       monitor,
     };
   } catch {
@@ -371,13 +377,16 @@ export function auditRuntimeEventsSince(
   }
 
   const { events, scannedBytes } = readEbpfEventsSince(checkpoint, maxBytes, maxEvents);
-  const audit = auditEbpfEvents(events, toolName, params, monitor, previewChars);
+  const attributedEvents = attributeEventsToRuntime(events, checkpoint);
+  const audit = auditEbpfEvents(attributedEvents, toolName, params, monitor, previewChars);
   return {
     enabled: true,
     monitor,
     checkpoint,
     scanned_bytes: scannedBytes,
-    event_count: events.length,
+    event_count: attributedEvents.length,
+    raw_event_count: events.length,
+    attributed_event_count: attributedEvents.length,
     interesting_events: audit.interestingEvents,
     findings: audit.findings,
   };
@@ -438,7 +447,9 @@ function auditEbpfEvents(
   const normalized = toolName.toLowerCase();
   const command = readFirstString(params, ["command", "cmd", "script", "shell", "input"]);
   const expectedPaths = collectPathLike(params);
+  const expectedUrls = collectUrls(params);
   const shellTool = /shell|command|exec|terminal|powershell|cmd/.test(normalized);
+  const networkTool = /api|http|web|browser|fetch|request|curl|wget|url/.test(normalized);
   const lowRiskShell = shellTool && command ? isLowRiskShellRead(command) : false;
   const interestingEvents: Array<Record<string, unknown>> = [];
   const findings: DetectionFinding[] = [];
@@ -470,6 +481,7 @@ function auditEbpfEvents(
     .filter((event) => String(event.event || "") === "execve")
     .filter((event) => isRelevantComm(String(event.comm || "")))
     .map((event) => ({ event, text: execEventText(event) }))
+    .filter(({ text }) => !isAgentSentryMonitorInternalExec(text))
     .filter(({ text }) => isDangerousRuntimeExec(text))
     .slice(0, 12);
 
@@ -489,10 +501,54 @@ function auditEbpfEvents(
     }));
   }
 
+  const unexpectedConnectEvents = events
+    .filter((event) => String(event.event || "") === "connect")
+    .filter((event) => isRelevantComm(String(event.comm || "")))
+    .filter(() => !networkTool && !expectedUrls.length)
+    .slice(0, 12);
+
+  if (unexpectedConnectEvents.length) {
+    interestingEvents.push(...unexpectedConnectEvents.map((event) => redactEvent(event, previewChars)));
+    findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected socket connection after non-network tool was allowed", 70, {
+      toolName: clampText(toolName, previewChars),
+      command: command ? clampText(command, previewChars) : "",
+      observed_connect: unexpectedConnectEvents.map((event) => redactEvent(event, previewChars)).slice(0, 8),
+      monitor,
+      runtime_audit: {
+        source: "ebpf",
+        event: "connect",
+        policy: "non-network tools should not open sockets unless explicitly authorized",
+      },
+    }));
+  }
+
   return {
     findings: dedupeFindings(findings),
     interestingEvents: interestingEvents.slice(0, 20),
   };
+}
+
+function attributeEventsToRuntime(events: Array<Record<string, unknown>>, checkpoint: EbpfLogCheckpoint): Array<Record<string, unknown>> {
+  const rootPid = checkpoint.root_pid;
+  const rootUid = checkpoint.root_uid;
+  if (!rootPid && rootUid === undefined) return events;
+
+  const acceptedPids = new Set<number>([rootPid].filter((pid) => Number.isFinite(pid) && pid > 0));
+  const attributed: Array<Record<string, unknown>> = [];
+  for (const event of events) {
+    const pid = numericField(event.pid);
+    const ppid = numericField(event.ppid);
+    const uid = numericField(event.uid);
+    const parentMatched = Boolean(ppid && acceptedPids.has(ppid));
+    const pidMatched = Boolean(pid && acceptedPids.has(pid));
+    const sameRuntimeUser = rootUid === undefined || uid === undefined || uid === rootUid;
+    if (!sameRuntimeUser) continue;
+    if (pidMatched || parentMatched) {
+      attributed.push(event);
+      if (pid) acceptedPids.add(pid);
+    }
+  }
+  return attributed;
 }
 
 function ebpfObserverStatus(): EbpfObserverStatus {
@@ -734,7 +790,7 @@ function isLowRiskShellRead(command: string): boolean {
 }
 
 function isRelevantComm(comm: string): boolean {
-  return /^(node|bash|sh|zsh|python|python3|curl|wget|nc|ncat|socat)$/i.test(comm.trim());
+  return /^(node|bash|sh|zsh|python|python3|curl|wget|nc|ncat|socat|cat|head|tail)$/i.test(comm.trim());
 }
 
 function isBenignRuntimePath(path: string): boolean {
@@ -782,6 +838,21 @@ function isDangerousRuntimeExec(text: string): boolean {
     || /\b(?:bash|sh|zsh|python|python3|node)\s+-c\b/i.test(text)
     || /\b(?:sudo|chmod|chown|systemctl|service|crontab|iptables|ufw|docker)\b/i.test(text)
     || /\brm\s+-rf\b/i.test(text);
+}
+
+function isAgentSentryMonitorInternalExec(text: string): boolean {
+  return /systemctl\s+is-active\s+--quiet(?:\s+agentsentry-ebpf-observer\.service)?/i.test(text)
+    || /pgrep\s+-f\s+bpftrace[\s\S]{0,80}agentsentry-ebpf-observer/i.test(text)
+    || /bpftool\s+version/i.test(text);
+}
+
+function numericField(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function canAccess(path: string): boolean {

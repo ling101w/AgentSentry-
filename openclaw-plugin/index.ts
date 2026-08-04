@@ -23,6 +23,7 @@ import {
   updateActionGraphEnforcement,
   updateAfterDecision,
   updateAfterMessage,
+  updateAfterRuntimeFindings,
   updateTaskSpec,
   type PolicyState,
 } from "./core/policy.ts";
@@ -550,6 +551,7 @@ const plugin = {
         },
       });
 
+      updateAfterRuntimeFindings(state.policyState, event?.toolName || "", runtimeFindings);
       updateAfterMessage(state.policyState, allFindings);
       for (const finding of allFindings) {
         addFinding(state, finding, { toolCallId: event?.toolCallId || "" });
