@@ -49,6 +49,20 @@ function stripBasePath(url = '/') {
   return url || '/';
 }
 
+function redirectBasePathWithSlash(req, res) {
+  if (!basePath) return false;
+  const host = req.headers.host || `127.0.0.1:${listenPort}`;
+  const current = new URL(req.url || '/', `http://${host}`);
+  if (current.pathname !== basePath) return false;
+  current.pathname = `${basePath}/`;
+  res.writeHead(308, {
+    Location: `${current.pathname}${current.search}${current.hash}`,
+    'Cache-Control': 'no-store',
+  });
+  res.end();
+  return true;
+}
+
 function gatewayToken() {
   const direct = process.env.PUBLIC_PROXY_GATEWAY_TOKEN?.trim();
   if (direct) {
@@ -213,6 +227,10 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && redirectBasePathWithSlash(req, res)) {
+    return;
+  }
+
   const token = gatewayToken();
   const wantsHtml = String(req.headers.accept || '').includes('text/html');
   if (req.method === 'GET' && wantsHtml && token && !hasBootstrapCookie(req.headers.cookie)) {
@@ -269,6 +287,7 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
+  const token = gatewayToken();
   const upstreamPath = stripBasePath(req.url || '/');
   const upstream = net.connect(targetPort, targetHost, () => {
     const headers = {
@@ -283,6 +302,9 @@ server.on('upgrade', (req, socket, head) => {
     };
     delete headers.authorization;
     delete headers['proxy-authorization'];
+    if (token) {
+      headers.authorization = `Bearer ${token}`;
+    }
 
     upstream.write(
       [
