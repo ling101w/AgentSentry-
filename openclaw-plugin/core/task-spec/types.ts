@@ -34,6 +34,9 @@ export interface TaskCapability {
 export interface TaskSpec {
   version: 2;
   task: string;
+  task_mode?: "new_task" | "task_continuation" | "preference" | "confirmation" | "data_only" | "chatter";
+  task_family?: "analysis" | "read_only" | "write_task" | "delivery" | "memory" | "shell" | "mixed" | "unknown";
+  task_confidence?: number;
   capabilities: TaskCapability[];
   denied_tools: string[];
   allowed_tools: string[];

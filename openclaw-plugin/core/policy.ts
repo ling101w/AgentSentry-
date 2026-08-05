@@ -13,6 +13,7 @@ import {
   sourceForToolResult,
   type ActionAssessment,
 } from "./policy/action-assessment.ts";
+import { evaluateAbacDataFlow, type DataFlowTaintFlow } from "./policy/abac.ts";
 import { behaviorAnomalyFindingsFor, updateBehaviorProfile, type BehaviorProfile } from "./policy/behavior-baseline.ts";
 import { containsAny, flattenText as flattenValueText, hostFromUrl, isLabeledValue, readFirstString, unique } from "./policy/value-utils.ts";
 import { clampText, safeStringify as redactSafeStringify } from "./redact.ts";
@@ -39,7 +40,16 @@ import {
   type DataProvenance,
   type FieldProvenance,
 } from "./taint/provenance-graph.ts";
-import { authorizeCapability, deriveTaskSpecV2, isSideEffectToolCall, type TaskSpec } from "./task-spec/index.ts";
+import {
+  authorizeCapability,
+  createAuthorizationState,
+  deriveTaskSpecV2,
+  updateAuthorizationState,
+  isSideEffectToolCall,
+  type AuthorizationState,
+  type CapabilityAuthorization,
+  type TaskSpec,
+} from "./task-spec/index.ts";
 import { resolveToolManifest } from "./tool-manifest.ts";
 import {
   addRisk,
@@ -49,11 +59,9 @@ import {
   minimumTrustLabel,
   riskMax,
   sourceFromTool,
-  taintBlockedForSink,
   taintProfileFromLabel,
   type RiskVector,
   type TaintProfile,
-  type TaintSink,
   type TrustLabel,
 } from "./trust.ts";
 
@@ -90,14 +98,32 @@ export type RuntimeFeedbackProfile = {
   events: string[];
 };
 
+export type IFCBranch = {
+  id: string;
+  source: string;
+  status: "isolated" | "merged";
+  integrity: "system-trusted" | "user-trusted" | "untrusted-external";
+  confidentiality: "public" | "internal" | "user-private" | "tenant-secret";
+  purpose: string;
+  summary: string;
+  lifetime: "turn" | "session" | "memory" | "expired";
+  createdAt: string;
+  provenanceIds: string[];
+  risk: number;
+  confidence: number;
+};
+
 export type PolicyState = {
   currentTask: string;
   taskSpec: TaskSpec;
+  authorizationState: AuthorizationState;
   contaminated: boolean;
   provenanceBlocked: boolean;
   provenanceFindings: DetectionFinding[];
   history: Array<{
     tool: string;
+    originalTool?: string;
+    frequencyKey?: string;
     decision: "allow" | "ask" | "deny";
     risk_score: number;
   }>;
@@ -114,16 +140,9 @@ export type PolicyState = {
   trustLabels: TrustLabel[];
   aggregateRisk: RiskVector;
   taintedSources: string[];
-  taintFlows: Array<{
-    label_id: string;
-    source: string;
-    sink: TaintSink;
-    blocked: boolean;
-    confidence: number;
-    reason: string;
-    tags: string[];
-  }>;
+  taintFlows: DataFlowTaintFlow[];
   dataProvenance: DataProvenance[];
+  ifcBranches: IFCBranch[];
   semanticActionGraph: SemanticActionGraphState;
 };
 
@@ -183,12 +202,14 @@ const EXPLICIT_NO_EMAIL = ["do not email", "don't email", "no email", "不要发
 
 export function createPolicyState(): PolicyState {
   const taskSpec = deriveTaskSpec("", []);
+  const authorizationState = createAuthorizationState([]);
   const semanticActionGraph = createSemanticActionGraph();
   activateSemanticIntent(semanticActionGraph, taskSpec);
 
   return {
     currentTask: "",
     taskSpec,
+    authorizationState: { ...authorizationState, taskSpec },
     contaminated: false,
     provenanceBlocked: false,
     provenanceFindings: [],
@@ -203,6 +224,7 @@ export function createPolicyState(): PolicyState {
     taintedSources: [],
     taintFlows: [],
     dataProvenance: [],
+    ifcBranches: [],
     semanticActionGraph,
   };
 }
@@ -210,9 +232,13 @@ export function createPolicyState(): PolicyState {
 export function updateTaskSpec(state: PolicyState, messages: unknown, config: PluginConfig): void {
   const task = extractLatestUserText(messages);
   if (task === null || task === state.currentTask) return;
-  state.currentTask = task;
-  state.taskSpec = deriveTaskSpec(task, config.policy.sensitiveAssets);
-  activateSemanticIntent(state.semanticActionGraph, state.taskSpec);
+  const update = updateAuthorizationState(state.authorizationState, task, config.policy.sensitiveAssets);
+  state.authorizationState = update.state;
+  state.currentTask = update.state.lastMessage;
+  state.taskSpec = update.state.taskSpec;
+  if (update.changed && !["chatter", "confirmation", "data_only"].includes(update.kind)) {
+    activateSemanticIntent(state.semanticActionGraph, state.taskSpec);
+  }
 }
 
 export function normalizeAction(toolName: string, params: Record<string, unknown>): AgentSentryAction {
@@ -389,7 +415,7 @@ function evaluateMutable(
 
   const taskSpec = state.taskSpec;
   const assessment = assessAction(action, config);
-  const capabilityAuthorization = authorizeCapability(taskSpec, action);
+  const capabilityAuthorization = authorizeCapability(taskSpec, action, { taskMode: taskSpec.task_mode });
   let actionGraphNodeId = "";
   try {
     const graphAttempt = beginSemanticAction(state.semanticActionGraph, {
@@ -444,7 +470,7 @@ function evaluateMutable(
     }));
     violations.push("semantic action graph evaluation failed");
   }
-  if (!capabilityAuthorization.authorized && !manifestAllowsUnscopedRead(action)) {
+  if (!capabilityAuthorization.authorized && !manifestAllowsUnscopedRead(action) && !allowsImplicitLowRiskRead(action, assessment, capabilityAuthorization.reason)) {
     const verdict = capabilityAuthorization.action === "deny" ? "block" : "require_approval";
     const reason = capabilityAuthorizationReason(capabilityAuthorization.reason, action.tool);
     findings.push(finding("Intent Authorization", "deterministic", verdict, reason, verdict === "block" ? 100 : 45, {
@@ -463,24 +489,44 @@ function evaluateMutable(
     ? provenanceRiskForAction(action, state)
     : null;
   if (directProvenanceRisk) {
+    const isolatedRead = action.tool === "read_file" && !assessment.sensitive && !assessment.systemMutation;
     findings.push(finding(
       "Context Provenance",
       "deterministic",
-      "block",
-      "tool call directly references a workspace item marked risky by provenance scan",
-      100,
+      isolatedRead ? "pass" : "block",
+      isolatedRead
+        ? "tool reads a risky workspace item for isolated analysis; downstream high-risk sinks remain restricted"
+        : "tool call directly references a workspace item marked risky by provenance scan",
+      isolatedRead ? 10 : 100,
       directProvenanceRisk,
     ));
-    violations.push("tool call directly references risky workspace item");
+    if (!isolatedRead) violations.push("tool call directly references risky workspace item");
+  }
+
+  const ifcExecutionFindings = config.policy.deterministic
+    ? ifcExecutionBoundaryFindings(action, assessment, state, capabilityAuthorization, context.provenanceLinks || [])
+    : [];
+  for (const ifcFinding of ifcExecutionFindings) {
+    findings.push(ifcFinding);
+    if (ifcFinding.verdict === "block") violations.push(ifcFinding.reason);
   }
 
   const outsideTaskSpec = taskSpec.forbidden_tools.includes(action.tool) || !taskSpec.allowed_tools.includes(action.tool);
   if (config.policy.deterministic && outsideTaskSpec && shouldHardBlockTaskMismatch(action, assessment, state)) {
-    violations.push(`tool ${action.tool} is outside TaskSpec`);
-    findings.push(finding("Tool Boundary", "deterministic", "block", `tool ${action.tool} is outside TaskSpec`, 100, { tool: action.tool, assessment }));
+    const reason = authorizationBoundaryReason(action, assessment, "deny");
+    violations.push(reason);
+    findings.push(finding("Tool Boundary", "deterministic", "block", reason, 100, { tool: action.tool, assessment, authorization_gap: "unauthorized_high_risk" }));
   } else if (riskScoringEnabled && outsideTaskSpec) {
     risk += assessment.highRisk ? 40 : 12;
-    findings.push(finding("Tool Boundary", "heuristic", assessment.highRisk ? "require_approval" : "pass", `tool ${action.tool} is outside TaskSpec`, assessment.highRisk ? 35 : 8, { tool: action.tool, assessment }));
+    const implicit = allowsImplicitLowRiskRead(action, assessment, "missing_explicit_authorization");
+    findings.push(finding(
+      "Tool Boundary",
+      "heuristic",
+      implicit ? "pass" : assessment.highRisk ? "require_approval" : "pass",
+      authorizationBoundaryReason(action, assessment, implicit ? "allow" : "ask"),
+      implicit ? 0 : assessment.highRisk ? 35 : 8,
+      { tool: action.tool, assessment, authorization_gap: implicit ? "implicit_low_risk_read" : "needs_clarification" },
+    ));
   } else {
     reasons.push("tool is allowed by TaskSpec");
   }
@@ -513,8 +559,11 @@ function evaluateMutable(
     const runtimeFeedbackFindings = runtimeFeedbackFindingsFor(action, state, config);
     findings.push(...runtimeFeedbackFindings);
 
-    const trustFindings = trustFindingsFor(action, state);
-    findings.push(...trustFindings);
+    const abacFindings = abacFindingsFor(action, state);
+    findings.push(...abacFindings);
+
+    const taskSpecFindings = taskSpecBoundaryFindings(action, state, config);
+    findings.push(...taskSpecFindings);
   }
 
   const actionRisk = riskVectorFromFindings(findings);
@@ -578,7 +627,7 @@ export function updateAfterMessage(state: PolicyState, findings: DetectionFindin
       invalid_findings: normalized.invalidCount,
     }));
   }
-  if (normalized.findings.some((item) => item.layer === "Context Provenance" || item.layer === "State Integrity")) {
+  if (shouldMarkMainContextContaminated(normalized.findings)) {
     state.contaminated = true;
   }
   mergeFindingTrust(state, normalized.findings);
@@ -598,12 +647,14 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
   }
   state.history.push({
     tool: decision.action.tool,
+    originalTool: decision.action.originalTool,
+    frequencyKey: toolFrequencyKey(decision.action),
     decision: decision.decision,
     risk_score: decision.risk_score,
   });
   if (state.history.length > 80) state.history = state.history.slice(-80);
   if (decision.findings.some((finding) => finding.layer === "Context Provenance" || finding.layer === "State Integrity")) {
-    state.contaminated = true;
+    if (shouldMarkMainContextContaminated(decision.findings)) state.contaminated = true;
   }
   if (decision.decision === "allow") updateBehaviorProfile(state, decision.action);
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, decision.risk_vector);
@@ -638,6 +689,18 @@ export function updateAfterRuntimeFindings(state: PolicyState, toolName: string,
   });
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, riskVectorFromFindings(runtimeFindings));
   mergeFindingTrust(state, runtimeFindings);
+}
+
+function shouldMarkMainContextContaminated(findings: DetectionFinding[]): boolean {
+  return findings.some((finding) => {
+    const reason = `${finding.reason} ${safeStringify(finding.evidence || {})}`.toLowerCase();
+    const highSignal = /prompt injection|exfiltrat|hidden content|memory poison|persistence poison|tool hijack|secret-taint|tainted data|bypass security|override policy/i.test(reason);
+    const provenanceSignal = /untrusted|provenance|prompt injection|hidden content|memory poison|persistence poison|tool hijack|secret-taint|tainted data|bypass security|override policy|invalid|malformed|failed validation|security/i.test(reason);
+    const boundary = finding.layer === "Context Provenance" || finding.layer === "State Integrity";
+    if (finding.layer === "State Integrity" && finding.verdict === "block") return true;
+    if (finding.layer === "Context Provenance" && provenanceSignal) return true;
+    return boundary && highSignal && finding.verdict === "block";
+  });
 }
 
 export function updateActionGraphEnforcement(
@@ -775,7 +838,29 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
     taint_profile: taintProfileFromLabel(analysis.label) || undefined,
     provenance_ids: fieldProvenance.map((field) => field.id),
   };
-  if (maliciousTaint) {
+  if (provenanceUntrusted || maliciousTaint || analysis.label.confidentiality !== "public") {
+    const branchStatus: IFCBranch["status"] = provenanceUntrusted || maliciousTaint || analysis.label.confidentiality !== "public"
+      ? "isolated"
+      : "merged";
+    rememberIFCBranch(state, {
+      id: `ifc:${toolCallId || toolName || "tool"}:${Date.now()}:${state.ifcBranches.length}`,
+      source,
+      status: branchStatus,
+      integrity: provenanceUntrusted || maliciousTaint ? "untrusted-external" : "system-trusted",
+      confidentiality: ifcConfidentiality(analysis.label.confidentiality),
+      purpose: state.taskSpec.capabilities.map((item) => `${item.resourceType}:${item.action}`).join("+") || "unscoped",
+      summary: `${source}; ${branchStatus}; ${analysis.label.integrity}/${analysis.label.confidentiality}; ${analysis.tags.slice(0, 4).join(",")}`,
+      lifetime: source === "memory" ? "memory" : "turn",
+      createdAt: new Date().toISOString(),
+      provenanceIds: fieldProvenance.map((field) => field.id),
+      risk: riskMax(analysis.risk_vector),
+      confidence: Math.max(0, Math.min(1, (riskMax(analysis.risk_vector) || 0) / 100)),
+    });
+  }
+  if (!provenanceUntrusted && !maliciousTaint && analysis.label.confidentiality === "public") {
+    promoteIFCBranches(state, source, fieldProvenance.flatMap((field) => [field.id, ...field.parentIds]));
+  }
+  if (maliciousTaint || analysis.label.confidentiality === "secret") {
     label.integrity = "untrusted";
     label.tainted = true;
     state.contaminated = true;
@@ -1006,6 +1091,7 @@ export function policyTrustSnapshot(state: PolicyState): Record<string, unknown>
     aggregate_risk: state.aggregateRisk,
     tainted_sources: state.taintedSources.slice(-12),
     taint_flows: state.taintFlows.slice(-12),
+    ifc_branches: state.ifcBranches.slice(-12),
     provenance: state.dataProvenance.slice(-20),
     semantic_action_graph: semanticActionGraphSnapshot(state.semanticActionGraph),
     runtime_feedback: Array.from(state.runtimeProfiles.values()).slice(-10),
@@ -1042,20 +1128,45 @@ export function deriveTaskSpec(task: string, sensitiveAssets: string[]): TaskSpe
 
 function capabilityAuthorizationReason(reason: string, tool: string): string {
   const messages: Record<string, string> = {
-    explicit_user_denial: `user explicitly denied ${tool}`,
-    missing_explicit_authorization: `tool ${tool} lacks explicit capability authorization`,
-    non_authoritative_context_cannot_grant_side_effects: "memory or tool content cannot authorize a new side effect",
-    non_authoritative_context: "non-user context cannot establish this capability",
-    recipient_outside_authorization: "email recipient is outside the explicitly authorized recipients",
-    attachment_outside_authorization: "email attachment is outside the explicitly authorized files",
-    path_outside_authorization: "file path is outside the explicitly authorized paths",
-    target_outside_authorization: "network target is outside the explicitly authorized targets",
-    host_outside_authorization: "network host is outside the explicitly authorized hosts",
-    method_outside_authorization: "HTTP method is outside the explicitly authorized methods",
-    command_outside_authorization: "shell command is outside the explicitly authorized command",
-    unknown_tool_capability: `tool ${tool} has no registered capability model`,
+    explicit_user_denial: `用户明确禁止 ${tool} 动作`,
+    missing_explicit_authorization: `${tool} 缺少明确授权，属于授权不明确`,
+    authorization_parse_failed: `${tool} 的任务意图解析失败，建议先确认输入属于说明、数据还是实际授权`,
+    non_authoritative_context_cannot_grant_side_effects: "记忆或工具返回内容不能授予新的外部副作用权限",
+    non_authoritative_context: "非用户上下文不能建立该工具权限",
+    recipient_outside_authorization: "邮件收件人不在用户明确授权范围内",
+    attachment_outside_authorization: "邮件附件不在用户明确授权文件范围内",
+    path_outside_authorization: "文件路径不在用户明确授权路径范围内",
+    target_outside_authorization: "网络目标不在用户明确授权目标范围内",
+    host_outside_authorization: "网络主机不在用户明确授权主机范围内",
+    method_outside_authorization: "HTTP 方法不在用户明确授权方法范围内",
+    command_outside_authorization: "Shell 命令不在用户明确授权命令范围内",
+    unknown_tool_capability: `${tool} 没有已注册的能力模型，需要确认`,
   };
-  return messages[reason] || `tool ${tool} failed capability authorization: ${reason}`;
+  return messages[reason] || `${tool} 能力授权校验未通过：${reason}`;
+}
+
+function allowsImplicitLowRiskRead(action: AgentSentryAction, assessment: ActionAssessment, reason: string): boolean {
+  if (reason !== "missing_explicit_authorization" && reason !== "unknown_tool_capability") return false;
+  if (assessment.highRisk || assessment.sensitive || assessment.persistence || assessment.systemMutation || assessment.externalSink) return false;
+  if (action.tool === "read_file" || action.tool === "memory_read") return true;
+  if (action.tool !== "call_api") return false;
+  const method = readFirstString(action.args, ["method", "httpMethod", "verb"]).toUpperCase() || "GET";
+  return ["GET", "HEAD", "OPTIONS"].includes(method);
+}
+
+function authorizationBoundaryReason(
+  action: AgentSentryAction,
+  assessment: ActionAssessment,
+  disposition: "allow" | "ask" | "deny",
+): string {
+  if (disposition === "allow") {
+    return `低风险只读动作 ${action.tool} 未命中显式授权，按最小权限记录审计后放行`;
+  }
+  if (disposition === "ask") {
+    return `授权不明确：${action.tool} 未在当前任务授权范围内，执行前需要确认目标、数据范围和副作用`;
+  }
+  const detail = assessment.reasons.length ? `；风险原因：${assessment.reasons.join("；")}` : "";
+  return `未授权高风险动作：${action.tool} 超出当前任务授权范围${detail}`;
 }
 
 function deterministicViolations(
@@ -1101,8 +1212,8 @@ function deterministicViolations(
     if (config.policy.sensitiveAssets.some((asset) => asset && body.toLowerCase().includes(asset.toLowerCase()))) {
       violations.push("body contains secret-tainted data");
     }
-    if (!taskSpec.allowed_tools.includes("send_email")) {
-      violations.push("task intent does not allow email");
+    if (!taskSpec.allowed_tools.includes("send_email") && config.policy.sensitiveAssets.some((asset) => asset && body.toLowerCase().includes(asset.toLowerCase()))) {
+      violations.push("邮件正文包含敏感资产且当前任务没有邮件发送授权");
     }
   }
 
@@ -1142,12 +1253,16 @@ function deterministicViolations(
     if (config.policy.sensitiveAssets.some((asset) => asset && content.toLowerCase().includes(asset.toLowerCase()))) {
       violations.push("content contains secret-tainted data");
     }
-    if (/(^|\/)(memory\.md|agents\.md|soul\.md|user\.md|openclaw\.json|skill\.md)$/i.test(path) || /(^|\/)(?:cron\.d|systemd|startup|skills)(?:\/|$)/i.test(path)) {
+    const skillSurface = /(^|\/)(?:skills)(?:\/|$)/i.test(path) || /(^|\/)skill\.md$/i.test(path);
+    if (/(^|\/)(memory\.md|agents\.md|soul\.md|user\.md|openclaw\.json)$/i.test(path) || /(^|\/)(?:cron\.d|systemd|startup)(?:\/|$)/i.test(path)) {
       violations.push("write path targets memory, configuration, startup, or skill surface");
     }
     const writeContentAnalysis = analyzeTrustContent(content, { source: path.includes("skill") ? "skill" : "memory", path, previewChars: config.capture.previewChars });
     if (writeContentAnalysis.findings.some((finding) => finding.verdict === "block")) {
       violations.push("write content contains persistence or skill hijack instructions");
+    }
+    if (skillSurface && !taskSpec.allowed_tools.includes("write_file")) {
+      violations.push("Skill 写入缺少用户明确授权");
     }
     if (!taskSpec.allowed_tools.includes("write_file") && effectiveAssessment.highRisk) {
       violations.push("task intent does not allow file write");
@@ -1198,8 +1313,8 @@ function deterministicViolations(
     if (analysis.findings.some((finding) => finding.verdict === "block")) {
       violations.push("memory write contains privileged persistent instruction");
     }
-    if (!taskSpec.allowed_tools.includes("memory_write")) {
-      violations.push("task intent does not allow memory write");
+    if (!taskSpec.allowed_tools.includes("memory_write") && analysis.findings.some((finding) => finding.verdict === "block")) {
+      violations.push("高风险记忆写入缺少用户明确授权");
     }
   }
 
@@ -1221,9 +1336,25 @@ function decisionAlignment(action: AgentSentryAction, taskSpec: TaskSpec): Detec
 
 function trajectoryFindingsFor(action: AgentSentryAction, state: PolicyState, config: PluginConfig): DetectionFinding[] {
   const findings: DetectionFinding[] = [];
-  const count = state.history.filter((item) => item.tool === action.tool).length;
+  const frequencyKey = toolFrequencyKey(action);
+  const count = state.history.filter((item) => (item.frequencyKey || item.originalTool || item.tool) === frequencyKey).length;
   if (count >= 3) {
-    findings.push(finding("Evidence Feedback", "heuristic", "require_approval", "tool frequency is unusually high", 20, { tool: action.tool, count: count + 1 }));
+    const assessment = assessAction(action, config);
+    const budget = workflowFrequencyBudget(action, state, assessment, count + 1);
+    findings.push(finding(
+      "Evidence Feedback",
+      "heuristic",
+      budget.requiresApproval ? "require_approval" : "pass",
+      budget.reason,
+      budget.requiresApproval ? 20 : 0,
+      {
+        tool: action.tool,
+        original_tool: action.originalTool,
+        frequency_key: frequencyKey,
+        count: count + 1,
+        workflow_budget: budget,
+      },
+    ));
   }
   const assessment = assessAction(action, config);
   const blockedTaint = config.policy.taintFeedback ? taintFlowForAction(action, assessment, state) : null;
@@ -1247,6 +1378,116 @@ function trajectoryFindingsFor(action: AgentSentryAction, state: PolicyState, co
   return findings;
 }
 
+function toolFrequencyKey(action: AgentSentryAction): string {
+  return stableToolKey(action.originalTool || action.tool || "unknown_tool");
+}
+
+function stableToolKey(value: string): string {
+  return String(value || "unknown_tool")
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    || "unknown_tool";
+}
+
+function workflowFrequencyBudget(
+  action: AgentSentryAction,
+  state: PolicyState,
+  assessment: ActionAssessment,
+  count: number,
+): { requiresApproval: boolean; reason: string; basis: string; count: number } {
+  if (isLowImpactWorkflowRead(action, assessment)) {
+    return {
+      requiresApproval: false,
+      reason: "同一只读业务工具调用次数偏多，已记录审计，不打断正常多步任务",
+      basis: "read_only_workflow_budget",
+      count,
+    };
+  }
+  if (isExplicitWorkflowSideEffect(action, state, assessment)) {
+    return {
+      requiresApproval: false,
+      reason: "显式授权的工作流副作用工具调用次数偏多，参数仍在业务边界内，已记录审计",
+      basis: "explicit_side_effect_workflow_budget",
+      count,
+    };
+  }
+  return {
+    requiresApproval: true,
+    reason: "同一高影响工具调用次数偏多，需要确认是否仍属于当前任务",
+    basis: "high_impact_frequency_review",
+    count,
+  };
+}
+
+function isLowImpactWorkflowRead(action: AgentSentryAction, assessment: ActionAssessment): boolean {
+  if (assessment.highRisk || assessment.sensitive || assessment.persistence || assessment.systemMutation || assessment.dangerousCommand) return false;
+  if (["external_api_read", "read_webpage", "read_file", "memory_read"].includes(action.tool)) return true;
+  const manifest = resolveToolManifest(action.originalTool) || resolveToolManifest(action.tool);
+  if (!manifest) return false;
+  const sideEffects = manifest.manifest.sideEffects || [];
+  return !manifest.manifest.requiresExplicitAuthorization
+    && !manifest.manifest.canExfiltrate
+    && !manifest.manifest.acceptsSensitiveData
+    && sideEffects.every((effect) => effect === "none" || effect === "file_read" || effect === "network_read");
+}
+
+function isExplicitWorkflowSideEffect(action: AgentSentryAction, state: PolicyState, assessment: ActionAssessment): boolean {
+  if (assessment.sensitive || assessment.persistence || assessment.systemMutation || assessment.dangerousCommand) return false;
+  if (!isApiLikeWorkflowTool(action)) return false;
+  if (!hasTaskToolOverlap(state.currentTask || state.taskSpec.task, action)) return false;
+  if (!numericArgumentsInsideWorkflowBudget(action.args)) return false;
+  return true;
+}
+
+function isApiLikeWorkflowTool(action: AgentSentryAction): boolean {
+  if (["call_api", "registered_effect_api", "registered_sensitive_read_api", "registered_privileged_api", "registered_persistent_api", "external_api_read"].includes(action.tool)) return true;
+  const manifest = resolveToolManifest(action.originalTool) || resolveToolManifest(action.tool);
+  return Boolean(manifest?.manifest.sideEffects.some((effect) => effect === "network_read" || effect === "network_write"));
+}
+
+function hasTaskToolOverlap(task: string, action: AgentSentryAction): boolean {
+  const taskTokens = new Set(semanticWorkflowTokens(task));
+  if (!taskTokens.size) return false;
+  const toolTokens = semanticWorkflowTokens(action.originalTool || action.tool);
+  let overlap = 0;
+  for (const token of toolTokens) {
+    if (taskTokens.has(token)) overlap += 1;
+    if (overlap >= 1 && token.length >= 5) return true;
+    if (overlap >= 2) return true;
+  }
+  return false;
+}
+
+function semanticWorkflowTokens(value: string): string[] {
+  const normalized = String(value || "")
+    .normalize("NFKC")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .toLowerCase();
+  const stop = new Set(["get", "set", "list", "search", "find", "check", "verify", "current", "conditions", "api", "tool", "data", "info", "the", "and", "for", "with", "from", "that", "this", "please"]);
+  return normalized
+    .split(/[^a-z0-9\u4e00-\u9fa5]+/u)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !stop.has(token))
+    .slice(0, 48);
+}
+
+function numericArgumentsInsideWorkflowBudget(args: Record<string, unknown>): boolean {
+  for (const [key, value] of Object.entries(args)) {
+    const lowered = key.toLowerCase();
+    const amountLike = /(amount|price|cost|charge|payment|usd|total|quantity|count|emissions)/i.test(lowered);
+    if (!amountLike) continue;
+    const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value.replace(/,/g, "")) : Number.NaN;
+    if (!Number.isFinite(numeric)) continue;
+    if (/(amount|price|cost|charge|payment|usd|total)/i.test(lowered) && numeric > 1000) return false;
+    if (/(quantity|count)/i.test(lowered) && numeric > 100) return false;
+    if (numeric < 0) return false;
+  }
+  return true;
+}
+
 function runtimeFeedbackFindingsFor(action: AgentSentryAction, state: PolicyState, config: PluginConfig): DetectionFinding[] {
   if (!config.runtimeIsolation.auditAfterExecution) return [];
   const profile = state.runtimeProfiles.get(action.tool) || state.runtimeProfiles.get(normalizeToolName(action.originalTool || action.tool));
@@ -1256,12 +1497,18 @@ function runtimeFeedbackFindingsFor(action: AgentSentryAction, state: PolicyStat
   const sensitiveSink = assessment.highRisk || isTrustSensitiveSink(action, assessment);
   if (!sensitiveSink) return [];
 
-  const score = Math.min(45, Math.max(25, Math.trunc(profile.risk_score / 2)));
+  const critical = criticalRuntimeFeedback(profile);
+  const score = Math.min(70, Math.max(25, critical ? profile.risk_score : Math.trunc(profile.risk_score / 2)));
+  const verdict: "block" | "require_approval" = critical || profile.runtime_alerts >= 2 ? "block" : "require_approval";
   return [finding(
     "Evidence Feedback",
     "learned",
-    "require_approval",
-    "runtime feedback downgraded repeated high-risk tool use after a previous eBPF anomaly",
+    verdict,
+    critical
+      ? "runtime feedback observed a critical kernel anomaly and blocks recurring high-risk tool use"
+      : profile.runtime_alerts >= 2
+        ? "runtime feedback observed repeated kernel anomalies and blocks recurring high-risk tool use"
+        : "runtime feedback downgraded repeated high-risk tool use after a previous eBPF anomaly",
     score,
     {
       tool: action.tool,
@@ -1275,20 +1522,164 @@ function runtimeFeedbackFindingsFor(action: AgentSentryAction, state: PolicyStat
   )];
 }
 
-function trustFindingsFor(action: AgentSentryAction, state: PolicyState): DetectionFinding[] {
-  const findings: DetectionFinding[] = [];
+function criticalRuntimeFeedback(profile: RuntimeFeedbackProfile): boolean {
+  const text = `${profile.reasons.join("\n")}\n${profile.events.join("\n")}`.toLowerCase();
+  return /execution was observed after agentsentry blocked|unexpected process execution|unexpected sensitive file access/.test(text)
+    && profile.risk_score >= 70;
+}
+
+function abacFindingsFor(action: AgentSentryAction, state: PolicyState): DetectionFinding[] {
   const assessment = assessActionWithSensitiveAssets(action, []);
-  const blockedTaint = taintFlowForAction(action, assessment, state);
-  if (blockedTaint) {
-    findings.push(finding("Intent Authorization", "deterministic", "block", "high-risk tool call requires trusted context, but taint profile blocks this sink", 100, {
-      tool: action.tool,
-      sink: blockedTaint.sink,
-      taint: blockedTaint,
-      aggregate_risk: state.aggregateRisk,
-      tainted_sources: state.taintedSources.slice(-8),
-    }));
+  const decision = evaluateAbacDecision(action, assessment, state);
+  if (decision.blockedFlow) rememberTaintFlow(state, decision.blockedFlow);
+  return decision.findings;
+}
+
+function taskSpecBoundaryFindings(action: AgentSentryAction, state: PolicyState, config: PluginConfig): DetectionFinding[] {
+  const taskSpec = state.taskSpec;
+  const assessment = assessAction(action, config);
+  if (!isTrustSensitiveSink(action, assessment)) return [];
+
+  const family = taskSpec.task_family || "unknown";
+  const mode = taskSpec.task_mode || "unknown";
+  const confidence = Number.isFinite(taskSpec.task_confidence) ? (taskSpec.task_confidence || 0) : 0;
+  const reasons: string[] = [];
+
+  if (mode === "data_only" || mode === "chatter") {
+    reasons.push(`task mode ${mode} does not grant side-effect authority`);
   }
-  return findings;
+  if ((family === "analysis" || family === "read_only") && confidence < 0.7) {
+    reasons.push(`task family ${family} is not a stable side-effect boundary`);
+  }
+  if (family === "mixed" && confidence < 0.5) {
+    reasons.push("mixed task spec has low confidence for side-effect approval");
+  }
+  if (taskSpec.capabilities.length > 4 && confidence < 0.8) {
+    reasons.push("task spec contains several capability clauses and benefits from semantic review");
+  }
+  if (taskSpec.allowed_tools.some((tool) => ["send_email", "write_file", "call_api", "memory_write", "shell_exec"].includes(tool)) && confidence < 0.75) {
+    reasons.push("task spec includes side-effect tools with uncertain scope");
+  }
+  if (!reasons.length) return [];
+
+  const verdict: "block" | "require_approval" = mode === "data_only" || mode === "chatter" ? "require_approval" : "require_approval";
+  return [finding(
+    "Intent Authorization",
+    "heuristic",
+    verdict,
+    reasons.join("；"),
+    mode === "data_only" || mode === "chatter" ? 35 : 22,
+    {
+      tool: action.tool,
+      task_mode: mode,
+      task_family: family,
+      task_confidence: confidence,
+      task_spec: {
+        allowed_tools: taskSpec.allowed_tools.slice(0, 8),
+        denied_tools: taskSpec.denied_tools.slice(0, 8),
+        forbidden_tools: taskSpec.forbidden_tools.slice(0, 8),
+      },
+    },
+  )];
+}
+
+function ifcExecutionBoundaryFindings(
+  action: AgentSentryAction,
+  assessment: ActionAssessment,
+  state: PolicyState,
+  authorization: CapabilityAuthorization,
+  provenanceLinks: SemanticProvenanceLink[],
+): DetectionFinding[] {
+  const sink = sinkForAction(action, assessment);
+  if (!sink || !isTrustSensitiveSink(action, assessment) || !provenanceLinks.length) return [];
+
+  const consumedIds = provenanceLinks.map((link) => link.provenanceId).filter(Boolean);
+  const consumedLineage = provenanceClosure(consumedIds, state.dataProvenance);
+  if (!consumedLineage.size) return [];
+
+  const branches = state.ifcBranches
+    .filter((branch) => branch.status === "isolated")
+    .filter((branch) => branch.provenanceIds.some((id) => consumedLineage.has(id)));
+  if (!branches.length) return [];
+
+  const strongest = [...branches].sort((left, right) =>
+    confidentialityRank(right.confidentiality) - confidentialityRank(left.confidentiality)
+    || right.risk - left.risk
+    || right.confidence - left.confidence
+  )[0];
+  const severe = branches.some((branch) =>
+    branch.confidentiality === "tenant-secret"
+    || branch.risk >= 80
+    || branch.integrity === "untrusted-external" && branch.risk >= 65
+  );
+  const strongAuthorization = hasStrongUserAuthorization(authorization);
+  const verdict: "block" | "require_approval" = severe || !strongAuthorization ? "block" : "require_approval";
+  const reason = verdict === "block"
+    ? "IFC 执行边界阻断：高风险工具正在消费未清洗的低信任数据分支"
+    : "IFC 执行边界要求审批：高风险工具消费了隔离分支数据，需要确认清洗结果和用途";
+
+  return [finding(
+    "IFC Execution Boundary",
+    "deterministic",
+    verdict,
+    reason,
+    verdict === "block" ? 100 : 70,
+    {
+      tool: action.tool,
+      sink,
+      authorization_reason: authorization.reason,
+      authorized: authorization.authorized,
+      consumed_provenance_ids: consumedIds.slice(0, 12),
+      consumed_lineage_ids: Array.from(consumedLineage).slice(0, 16),
+      strongest_branch: {
+        id: strongest.id,
+        source: strongest.source,
+        integrity: strongest.integrity,
+        confidentiality: strongest.confidentiality,
+        purpose: strongest.purpose,
+        risk: strongest.risk,
+        confidence: strongest.confidence,
+      },
+      branches: branches.slice(0, 6).map((branch) => ({
+        id: branch.id,
+        source: branch.source,
+        integrity: branch.integrity,
+        confidentiality: branch.confidentiality,
+        risk: branch.risk,
+        confidence: branch.confidence,
+      })),
+    },
+  )];
+}
+
+function hasStrongUserAuthorization(authorization: CapabilityAuthorization): boolean {
+  const capability = authorization.capability;
+  return Boolean(authorization.authorized
+    && capability
+    && capability.evidence.source === "user"
+    && capability.evidence.explicitAuthorization
+    && !capability.evidence.insideQuotation
+    && !capability.evidence.negated
+    && capability.evidence.targetIsConcrete
+    && capability.evidence.confidence >= 0.82);
+}
+
+function provenanceClosure(ids: string[], provenance: DataProvenance[]): Set<string> {
+  const byId = new Map(provenance.map((item) => [item.id, item]));
+  const closure = new Set<string>();
+  const pending = ids.filter(Boolean);
+  while (pending.length && closure.size < 512) {
+    const id = pending.pop()!;
+    if (!id || closure.has(id)) continue;
+    closure.add(id);
+    const node = byId.get(id);
+    if (node) pending.push(...node.parentIds);
+  }
+  return closure;
+}
+
+function confidentialityRank(value: IFCBranch["confidentiality"]): number {
+  return { public: 0, internal: 1, "user-private": 2, "tenant-secret": 3 }[value] ?? 0;
 }
 
 function isRuntimeAuditFinding(item: DetectionFinding): boolean {
@@ -1333,24 +1724,27 @@ function taintFlowForAction(
   assessment: ActionAssessment,
   state: PolicyState,
 ): PolicyState["taintFlows"][number] | null {
-  const sink = sinkForAction(action, assessment);
-  if (!sink) return null;
-  const selected = trustLabelsForAction(action, state)
-    .filter((label) => taintBlockedForSink(label, sink))
-    .map((label) => ({ label, profile: taintProfileFromLabel(label)! }))
-    .sort((left, right) => right.profile.confidence - left.profile.confidence)[0];
-  if (!selected) return null;
-  const flow = {
-    label_id: selected.label.id,
-    source: `${selected.label.source}:${selected.label.evidence?.path || selected.label.evidence?.toolName || selected.label.id}`,
-    sink,
-    blocked: true,
-    confidence: selected.profile.confidence,
-    reason: selected.profile.reasons.join("; ") || "taint profile blocks this sink",
-    tags: selected.profile.tags,
-  };
+  const flow = evaluateAbacDecision(action, assessment, state).blockedFlow;
+  if (!flow) return null;
   rememberTaintFlow(state, flow);
   return flow;
+}
+
+function evaluateAbacDecision(
+  action: AgentSentryAction,
+  assessment: ActionAssessment,
+  state: PolicyState,
+) {
+  return evaluateAbacDataFlow({
+    action,
+    assessment,
+    sink: sinkForAction(action, assessment),
+    labels: trustLabelsForAction(action, state),
+    isolatedBranches: state.ifcBranches,
+    taskSpec: state.taskSpec,
+    aggregateRisk: state.aggregateRisk,
+    taintedSources: state.taintedSources,
+  });
 }
 
 function trustLabelsForAction(action: AgentSentryAction, state: PolicyState): TrustLabel[] {
@@ -1730,6 +2124,35 @@ function rememberTrustLabel(state: PolicyState, label: TrustLabel): void {
     if (state.taintedSources.length > 80) state.taintedSources = state.taintedSources.slice(-80);
     state.contaminated = true;
   }
+}
+
+function rememberIFCBranch(state: PolicyState, branch: IFCBranch): void {
+  const existing = state.ifcBranches.findIndex((item) => item.id === branch.id);
+  if (existing >= 0) {
+    state.ifcBranches[existing] = branch;
+  } else {
+    state.ifcBranches.push(branch);
+    if (state.ifcBranches.length > 80) state.ifcBranches = state.ifcBranches.slice(-80);
+  }
+}
+
+function promoteIFCBranches(state: PolicyState, source: string, provenanceIds: string[]): void {
+  const idSet = new Set(provenanceIds.filter(Boolean));
+  const target = [...state.ifcBranches].reverse().find((branch) =>
+    branch.status === "isolated"
+    && branch.source === source
+    && (!idSet.size || branch.provenanceIds.some((id) => idSet.has(id)))
+  );
+  if (!target) return;
+  target.status = "merged";
+  target.summary = `${target.summary}; merged_after_cleanup`;
+  target.confidence = Math.max(target.confidence, 0.85);
+}
+
+function ifcConfidentiality(value: string): IFCBranch["confidentiality"] {
+  if (value === "secret") return "tenant-secret";
+  if (value === "internal") return "internal";
+  return "public";
 }
 
 function isTrustLabel(value: unknown): value is TrustLabel {

@@ -208,7 +208,7 @@ export class PluginConfig {
     if (dashboard) {
       config.dashboard.enabled = readBoolean(dashboard.enabled, config.dashboard.enabled);
       config.dashboard.host = readString(dashboard.host, config.dashboard.host);
-      config.dashboard.port = readPositiveInt(dashboard.port, config.dashboard.port);
+      config.dashboard.port = readNonNegativeInt(dashboard.port, config.dashboard.port);
       config.dashboard.allowRemote = readBoolean(dashboard.allowRemote, config.dashboard.allowRemote);
       config.dashboard.authToken = readString(dashboard.authToken, config.dashboard.authToken);
     }
@@ -546,6 +546,10 @@ function readString(value: unknown, defaultValue: string): string {
 
 function readPositiveInt(value: unknown, defaultValue: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : defaultValue;
+}
+
+function readNonNegativeInt(value: unknown, defaultValue: number): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : defaultValue;
 }
 
 function readStringArray(value: unknown, defaultValue: string[]): string[] {

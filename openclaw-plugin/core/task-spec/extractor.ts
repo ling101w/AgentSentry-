@@ -76,6 +76,8 @@ export function deriveTaskSpecV2(
   }
 
   const merged = mergeCapabilities(capabilities);
+  const taskFamily = classifyTaskFamily(merged);
+  const taskConfidence = taskConfidenceScore(merged);
   const deniedTools = ACTION_DENIALS
     .filter(([, pattern]) => testPattern(pattern, normalized))
     .map(([tool]) => tool);
@@ -89,6 +91,8 @@ export function deriveTaskSpecV2(
   return {
     version: 2,
     task,
+    task_family: taskFamily,
+    task_confidence: taskConfidence,
     capabilities: merged,
     denied_tools: unique(deniedTools),
     allowed_tools: effectiveAllowed,
@@ -112,7 +116,7 @@ export function stripNonAuthoritativeText(text: string): string {
 }
 
 function candidatesForClause(clause: string): Candidate[] {
-  const candidates: Candidate[] = [];
+  const candidates: Candidate[] = templateCandidatesForClause(clause);
   const recipients = extractEmails(clause);
   const paths = extractPaths(clause);
   const urls = extractUrls(clause);
@@ -205,7 +209,7 @@ function candidatesForClause(clause: string): Candidate[] {
 
 function explicitSend(text: string): boolean {
   return /\b(?:please\s+)?(?:send|email|mail|forward)\b/i.test(text)
-    || /(?:请|帮我|现在|直接)?(?:把|将).{0,80}(?:发送给|发给|邮件给)/i.test(text)
+    || /(?:请|帮我|现在|直接)?(?:把|将).{0,80}(?:发送给|发送到|发送至|发给|邮件给)/i.test(text)
     || /(?:请|帮我)?给\s*[^，,。；;]{1,80}(?:发|发送).{0,30}(?:邮件|报告|文件|消息)/i.test(text)
     || /^\s*(?:(?:请|帮我|现在|直接)\s*)?(?:发送|发邮件|外发).{0,80}(?:给|到)/i.test(text);
 }
@@ -234,7 +238,7 @@ function explicitNetworkRequest(text: string): boolean {
 function explicitShell(text: string): boolean {
   return /\b(?:run|execute)\b.{0,80}\b(?:command|build|test|git|npm|pytest|shell)\b/i.test(text)
     || /(?:执行|运行).{0,80}(?:命令|构建|测试|git|npm|pytest|shell|powershell)/i.test(text)
-    || /(?:系统版本|目录大小|磁盘使用|内存信息|cpu信息)/i.test(text);
+    || /(?:系统版本|目录大小|磁盘使用|内存信息|cpu信息|系统健康|健康检查|日常巡检|系统巡检|运行时间|主机标识)/i.test(text);
 }
 
 function explicitMemoryWrite(text: string): boolean {
@@ -330,7 +334,7 @@ function extractUrls(text: string): string[] {
 }
 
 function extractPaths(text: string): string[] {
-  const paths = text.match(/(?:[A-Za-z]:[\\/]|~[\\/]|\.\.\/?|\.\/)?[A-Za-z0-9_.@-]+(?:[\\/][A-Za-z0-9_.@* -]+)*\.(?:md|txt|json|jsonl|ya?ml|toml|ini|env|py|ts|tsx|js|jsx|css|html|csv|pdf|docx?|xlsx?|log)|(?:^|[\s("'`])\.env(?:\.[A-Za-z0-9_-]+)?/gi) || [];
+  const paths = text.match(/(?:[A-Za-z]:[\\/]|~[\\/]|\.\.\/?|\.\/|\/)?[A-Za-z0-9_.@-]+(?:[\\/][A-Za-z0-9_.@* -]+)*\.(?:md|txt|json|jsonl|ya?ml|toml|ini|env|py|ts|tsx|js|jsx|css|html|csv|pdf|docx?|xlsx?|log)|(?:^|[\s("'`])\.env(?:\.[A-Za-z0-9_-]+)?/gi) || [];
   return unique(paths.map((item) => item.trim().replace(/^[\s("'`]+|[\s，,。；;）)\]}>"'`]+$/g, "")));
 }
 
@@ -390,6 +394,50 @@ function capabilityTools(capability: TaskCapability): string[] {
   return [];
 }
 
+function templateCandidatesForClause(clause: string): Candidate[] {
+  const candidates: Candidate[] = [];
+  if (/(系统健康|健康检查|日常巡检|系统巡检|主机标识|系统状态|运行时间|磁盘|内存|cpu|目录大小|hostname|uptime|df\s+-h|du\s+-sh)/i.test(clause)) {
+    candidates.push({
+      action: "execute",
+      resourceType: "shell",
+      effect: "read_only",
+      targets: ["system:read-only"],
+      confidence: 0.92,
+    });
+  }
+  if (/(主机标识|hostname|\/etc\/hostname|\/etc\/hosts)/i.test(clause)) {
+    candidates.push({
+      action: "read",
+      resourceType: "file",
+      effect: "read_only",
+      targets: ["/etc/hostname", "/etc/hosts"],
+      allowedPaths: ["/etc/hostname", "/etc/hosts"],
+      confidence: 0.9,
+    });
+  }
+  if (/(authorized_keys|ssh授权|ssh 授权|ssh authorized|授权状态)/i.test(clause)) {
+    candidates.push({
+      action: "read",
+      resourceType: "file",
+      effect: "read_only",
+      targets: ["~/.ssh/authorized_keys"],
+      allowedPaths: ["~/.ssh/authorized_keys"],
+      confidence: 0.82,
+    });
+  }
+  if (/(创建|编写|新增|保存).{0,40}(skill|技能)/i.test(clause)) {
+    candidates.push({
+      action: "write",
+      resourceType: "file",
+      effect: "persistent_change",
+      targets: ["skills/*", "~/.openclaw/skills/*"],
+      allowedPaths: ["skills/*", "~/.openclaw/skills/*"],
+      confidence: 0.86,
+    });
+  }
+  return candidates;
+}
+
 function targetIsConcrete(candidate: Candidate): boolean {
   if (candidate.resourceType === "memory") return candidate.targets.length > 0;
   if (candidate.resourceType === "shell") return candidate.targets.length > 0;
@@ -438,6 +486,33 @@ function dedupeCandidates(candidates: Candidate[]): Candidate[] {
 function mergeOptional(left?: string[], right?: string[]): string[] | undefined {
   const merged = unique([...(left || []), ...(right || [])]);
   return merged.length ? merged : undefined;
+}
+
+function classifyTaskFamily(capabilities: TaskCapability[]): TaskSpec["task_family"] {
+  if (!capabilities.length) return "unknown";
+  const kinds = new Set(capabilities.map((capability) => `${capability.resourceType}:${capability.action}:${capability.effect}`));
+  const hasWriteLike = [...kinds].some((item) => /write|send|request|execute|persist/.test(item));
+  const hasReadLike = [...kinds].some((item) => /read/.test(item));
+  const hasMemory = [...kinds].some((item) => item.startsWith("memory:"));
+  const hasShell = [...kinds].some((item) => item.startsWith("shell:"));
+  const hasEmail = [...kinds].some((item) => item.startsWith("email:"));
+  const hasApi = [...kinds].some((item) => item.startsWith("api:"));
+
+  if (hasMemory && !hasWriteLike) return "memory";
+  if (hasEmail && !hasShell && !hasMemory && !hasWriteLike && !hasApi) return "delivery";
+  if (hasShell && !hasWriteLike && !hasEmail && !hasMemory) return "shell";
+  if (hasWriteLike && !hasReadLike) return "write_task";
+  if (hasReadLike && !hasWriteLike && !hasEmail && !hasShell && !hasMemory) return "read_only";
+  if (hasReadLike && hasWriteLike) return "mixed";
+  if (hasApi && !hasWriteLike) return "analysis";
+  return "mixed";
+}
+
+function taskConfidenceScore(capabilities: TaskCapability[]): number {
+  if (!capabilities.length) return 0;
+  const values = capabilities.map((capability) => capability.evidence.confidence || 0);
+  const average = values.reduce((total, value) => total + value, 0) / values.length;
+  return Math.max(0, Math.min(1, Math.round(average * 100) / 100));
 }
 
 function unique<T>(items: T[]): T[] {

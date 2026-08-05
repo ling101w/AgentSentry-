@@ -64,6 +64,13 @@ describe("system monitor pre-execution policy", () => {
     expect(shell.risk_vector.exfiltration).toBe(0);
     expect(shell.risk_vector.privilege).toBe(0);
 
+    const health = systemPreflight("shell_exec", {
+      command: 'echo "系统基本信息" && uname -a && uptime && df -h && cat /etc/hosts',
+    });
+    expect(health.findings).toEqual([]);
+    expect(health.risk_vector.exfiltration).toBe(0);
+    expect(health.risk_vector.privilege).toBe(0);
+
     const ordinary = systemPreflight("read_file", { path: "/workspace/.environment" });
     expect(findingWithReason(ordinary, "sensitive local paths")).toBeUndefined();
 

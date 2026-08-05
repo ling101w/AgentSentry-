@@ -1,6 +1,7 @@
 import type { PluginConfig } from "../../config.ts";
 import { safeStringify } from "../redact.ts";
 import { sourceFromTool, type TaintSink, type TrustSource } from "../trust.ts";
+import { isLowRiskShellReadCommand, isSafeSystemReadPath } from "./safe-ops.ts";
 import { hostFromUrl, isLocalHost, readFirstString, unique } from "./value-utils.ts";
 
 export type PolicyActionInput = {
@@ -43,16 +44,6 @@ const SENSITIVE_PATH_PATTERNS = [
   /\/etc\/shadow$/i,
   /\/etc\/gshadow$/i,
 ];
-const SAFE_SYSTEM_READ_PATHS = [
-  "/etc/os-release",
-  "/etc/issue",
-  "/etc/hostname",
-  "/proc/cpuinfo",
-  "/proc/meminfo",
-  "/proc/loadavg",
-  "/proc/uptime",
-];
-
 export function assessAction(action: PolicyActionInput, config: PluginConfig): ActionAssessment {
   return assessActionWithSensitiveAssets(action, config.policy.sensitiveAssets);
 }
@@ -131,7 +122,7 @@ export function shouldHardBlockTaskMismatch(
   state: { contaminated: boolean },
 ): boolean {
   if (!assessment.highRisk && (action.tool === "read_file" || action.tool === "write_file" || action.tool === "call_api")) return false;
-  if (action.tool === "send_email") return assessment.externalSink || state.contaminated;
+  if (action.tool === "send_email") return assessment.sensitive;
   if (action.tool === "shell_exec") return assessment.highRisk;
   if (action.tool === "memory_write") return assessment.persistence;
   return assessment.highRisk;
@@ -211,11 +202,6 @@ function isSystemMutationPath(path: string): boolean {
   return SYSTEM_MUTATION_PATH_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-function isSafeSystemReadPath(path: string): boolean {
-  const normalized = path.replace(/\\/g, "/").toLowerCase();
-  return SAFE_SYSTEM_READ_PATHS.includes(normalized);
-}
-
 function isDocumentationPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").toLowerCase();
   if (!/\.(?:md|markdown|txt|rst|adoc)$/i.test(normalized)) return false;
@@ -229,7 +215,7 @@ function hasSensitiveValue(text: string): boolean {
 
 function assessShellCommand(command: string, sensitiveAssets: string[]): Pick<ActionAssessment, "externalSink" | "sensitive" | "persistence" | "systemMutation" | "dangerousCommand"> & { dangerous: boolean; reasons: string[] } {
   const reasons: string[] = [];
-  const safeRead = isLowRiskShellRead(command);
+  const safeRead = isLowRiskShellReadCommand(command);
   const networkTransfer = /\b(curl|wget|scp|rsync|nc|ncat|socat|invoke-webrequest|iwr)\b/i.test(command);
   const externalSink = networkTransfer && !safeRead && !usesOnlyLocalNetworkTargets(command);
   const sensitive = hasSensitiveValue(command) || shellPathCandidates(command).some((candidate) => isSensitivePathWithAssets(candidate, sensitiveAssets));
@@ -308,17 +294,4 @@ function usesOnlyLocalNetworkTargets(command: string): boolean {
     }
   }
   return candidates.length > 0 && candidates.every((candidate) => isLocalHost(hostFromUrl(candidate)));
-}
-
-function isLowRiskShellRead(command: string): boolean {
-  const trimmed = command.trim();
-  const safePatterns = [
-    /^(pwd|whoami|id|hostname|uname\s+-a|date)$/i,
-    /^(ls|find|du|df)(\s+[-\w./~*]+)*$/i,
-    /^(cat|head|tail)\s+\/etc\/(os-release|issue|hostname)$/i,
-    /^(cat|head|tail)\s+\/proc\/(cpuinfo|meminfo|loadavg|uptime)$/i,
-    /^stat\s+[-\w./~*]+$/i,
-    /^wc\s+[-\w\s./~*]+$/i,
-  ];
-  return safePatterns.some((pattern) => pattern.test(trimmed));
 }

@@ -31,10 +31,17 @@ import {
 import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
-import { semanticJudgeAmbiguousAction } from "./core/semantic.ts";
+import {
+  semanticJudgeAmbiguousAction,
+  semanticJudgeMemoryWrite,
+  semanticJudgeMessage,
+  semanticJudgeTaskSpec,
+  semanticJudgeToolCall,
+} from "./core/semantic.ts";
 import { SessionRegistry } from "./core/session-registry.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
+import { refineTaskSpecWithLLM } from "./core/task-spec/index.ts";
 
 type SessionState = {
   runId: string;
@@ -43,6 +50,7 @@ type SessionState = {
   sessionId: string;
   messageCount: number;
   toolCount: number;
+  workspaceDir: string;
   coverNextAssistantResponse: boolean;
   lastAccessedAt: number;
   policyState: PolicyState;
@@ -131,8 +139,80 @@ const plugin = {
       const state = getSession(ctx);
       const messageCount = Array.isArray(event?.messages) ? event.messages.length : 0;
       state.messageCount = messageCount;
-      updateTaskSpec(state.policyState, event?.messages, plugin.config!);
-      const workspaceDir = typeof ctx.workspaceDir === "string" ? ctx.workspaceDir : "";
+      const promptText = typeof event?.prompt === "string" ? event.prompt : "";
+      const workspaceDir = workspaceDirFor(ctx, state);
+      if (workspaceDir) state.workspaceDir = workspaceDir;
+      updateTaskSpec(
+        state.policyState,
+        [
+          ...(Array.isArray(event?.messages) ? event.messages : []),
+          ...(promptText.trim() ? [{ role: "user", content: promptText }] : []),
+        ],
+        plugin.config!,
+      );
+      const taskSpecRefinement = await refineTaskSpecWithLLM(state.policyState.taskSpec, plugin.config!);
+      if (taskSpecRefinement.findings.length) {
+        state.policyState.taskSpec = taskSpecRefinement.taskSpec;
+        state.policyState.authorizationState.taskSpec = taskSpecRefinement.taskSpec;
+        updateAfterMessage(state.policyState, taskSpecRefinement.findings);
+        for (const finding of taskSpecRefinement.findings) {
+          addFinding(state, finding, { role: "user", task_spec_refinement: true });
+        }
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "guard_finding",
+          layer: "Intent Authorization",
+          severity: taskSpecRefinement.findings.some((finding) => finding.verdict === "block") ? "danger" : "warning",
+          title: "LLM structured TaskSpec refinement",
+          summary: taskSpecRefinement.findings.map((finding) => finding.reason).join("; "),
+          payload: {
+            applied: taskSpecRefinement.applied,
+            task_spec: state.policyState.taskSpec,
+            findings: taskSpecRefinement.findings,
+          },
+        });
+      }
+      void semanticJudgeTaskSpec(state.policyState.taskSpec, plugin.config!, {
+        policyState: state.policyState,
+        relatedFindings: promptText.trim() ? detectMessageContent(promptText, plugin.config!) : [],
+      }).then((taskSpecFindings) => {
+        if (!taskSpecFindings.length) return;
+        updateAfterMessage(state.policyState, taskSpecFindings);
+        for (const finding of taskSpecFindings) {
+          addFinding(state, finding, { role: "user", task_spec: true });
+        }
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "guard_finding",
+          layer: "Intent Authorization",
+          severity: taskSpecFindings.some((finding) => finding.verdict === "block") ? "danger" : "warning",
+          title: "LLM-Judge task spec finding",
+          summary: taskSpecFindings.map((finding) => finding.reason).join("; "),
+          payload: {
+            task_spec: state.policyState.taskSpec,
+            findings: taskSpecFindings,
+          },
+        });
+      }).catch((error) => {
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "guard_finding",
+          layer: "Intent Authorization",
+          severity: "warning",
+          title: "LLM-Judge task spec check failed",
+          summary: String(error instanceof Error ? error.message : error),
+          payload: {
+            task_spec: state.policyState.taskSpec,
+          },
+        });
+      });
+      const promptFindings = promptText.trim() ? detectMessageContent(promptText, plugin.config!) : [];
+      const promptAnnotation = promptText.trim()
+        ? annotateUserInputForRisk(promptText, promptFindings, plugin.config!)
+        : null;
       const provenanceScans = [];
       for (const scanRoot of provenanceRootsFor(workspaceDir)) {
         const scan = await scanProvenance(scanRoot, plugin.config!);
@@ -200,6 +280,32 @@ const plugin = {
           system_monitor: systemMonitorStatus(),
         },
       });
+      if (promptAnnotation) {
+        updateAfterMessage(state.policyState, promptFindings);
+        for (const finding of promptFindings) {
+          addFinding(state, finding, { role: "user", prompt_annotation: true });
+        }
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "input_annotation",
+          layer: "Context Provenance",
+          severity: promptAnnotation.recommendedAction === "Deny" ? "danger" : "warning",
+          title: "User request risk annotation",
+          summary: `${promptAnnotation.overall}; ${promptAnnotation.recommendedAction}; ${promptAnnotation.entries.length} marked item(s)`,
+          payload: {
+            role: "user",
+            originalPreview: clampText(promptText, plugin.config!.capture.previewChars),
+            annotatedPreview: clampText(promptAnnotation.annotated, plugin.config!.capture.previewChars),
+            entries: promptAnnotation.entries,
+            overall: promptAnnotation.overall,
+            recommended_action: promptAnnotation.recommendedAction,
+          },
+        });
+        return {
+          appendContext: promptAnnotation.annotated,
+        };
+      }
     });
 
     api.on("llm_input", (event, ctx) => {
@@ -229,12 +335,45 @@ const plugin = {
         ? clampText(message.content ?? message, plugin.config!.capture.previewChars)
         : "[disabled]";
       const ruleFindings = detectMessageContent(message.content ?? message, plugin.config!);
-      const findings = [...ruleFindings];
-      const severity = findings.length ? "warning" : role === "assistant" ? "success" : "info";
-
       if (role === "user") {
         updateTaskSpec(state.policyState, [{ role: "user", content: message.content ?? message }], plugin.config!);
+        void semanticJudgeMessage(message.content ?? message, plugin.config!, {
+          policyState: state.policyState,
+          relatedFindings: ruleFindings,
+        }).then((semanticMessageFindings) => {
+          if (!semanticMessageFindings.length) return;
+          updateAfterMessage(state.policyState, semanticMessageFindings);
+          for (const finding of semanticMessageFindings) {
+            addFinding(state, finding, { role, semantic_message: true });
+          }
+          plugin.store!.add({
+            run_id: state.runId,
+            session_key: state.sessionKey,
+            type: "guard_finding",
+            layer: "Context Provenance",
+            severity: semanticMessageFindings.some((finding) => finding.verdict === "block") ? "danger" : "warning",
+            title: "LLM-Judge message finding",
+            summary: semanticMessageFindings.map((finding) => finding.reason).join("; "),
+            payload: {
+              role,
+              findings: semanticMessageFindings,
+            },
+          });
+        }).catch((error) => {
+          plugin.store!.add({
+            run_id: state.runId,
+            session_key: state.sessionKey,
+            type: "guard_finding",
+            layer: "Context Provenance",
+            severity: "warning",
+            title: "LLM-Judge message check failed",
+            summary: String(error instanceof Error ? error.message : error),
+            payload: { role },
+          });
+        });
       }
+      const findings = ruleFindings;
+      const severity = findings.length ? "warning" : role === "assistant" ? "success" : "info";
 
       if (shouldCoverAssistantResponse(plugin.config!.responseCover, state.coverNextAssistantResponse, role)) {
         state.coverNextAssistantResponse = false;
@@ -334,15 +473,30 @@ const plugin = {
       });
       const detectionContext = {
         toolCallId: event.toolCallId || "",
-        workspaceDir: typeof ctx.workspaceDir === "string" ? ctx.workspaceDir : "",
+        workspaceDir: workspaceDirFor(ctx, state),
       };
       const preliminary = detectToolCall(event.toolName, params, plugin.config!, state.policyState, [], detectionContext);
-      const semanticFindings = await semanticJudgeAmbiguousAction({
+      const action = preliminary.policy.action;
+      const semanticToolFindings = await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
+        policyState: state.policyState,
+        relatedFindings: preliminary.policy.findings,
+      });
+      const memoryContent = action.tool === "memory_write"
+        ? firstToolString(params, ["content", "body", "text", "value", "payload", "new_string", "replacement", "patch"]) || params
+        : "";
+      const semanticMemoryFindings = action.tool === "memory_write"
+        ? await semanticJudgeMemoryWrite(memoryContent, state.policyState.currentTask, plugin.config!, {
+          policyState: state.policyState,
+          relatedFindings: preliminary.policy.findings,
+        })
+        : [];
+      const semanticAmbiguousFindings = await semanticJudgeAmbiguousAction({
         action: preliminary.policy.action,
         taskSpec: preliminary.policy.task_spec,
         policyState: state.policyState,
         preliminary: preliminary.policy,
       }, plugin.config!);
+      const semanticFindings = [...semanticToolFindings, ...semanticMemoryFindings, ...semanticAmbiguousFindings];
       const result = semanticFindings.length
         ? detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings, detectionContext)
         : preliminary;
@@ -629,10 +783,19 @@ const plugin = {
           lastAccessedAt: Date.now(),
           policyState: createPolicyState(),
           runtimeCheckpoints: new Map(),
+          workspaceDir: "",
         };
         plugin.sessions.set(sessionIdentity, state);
       }
+      const workspaceDir = typeof ctx.workspaceDir === "string" && ctx.workspaceDir.trim() ? ctx.workspaceDir.trim() : "";
+      if (workspaceDir) state.workspaceDir = workspaceDir;
       return state;
+    }
+
+    function workspaceDirFor(ctx: Record<string, unknown>, state: SessionState): string {
+      const fromContext = typeof ctx.workspaceDir === "string" && ctx.workspaceDir.trim() ? ctx.workspaceDir.trim() : "";
+      if (fromContext) return fromContext;
+      return state.workspaceDir || "";
     }
 
     function trimSessions(): void {
@@ -641,6 +804,18 @@ const plugin = {
 
     function runtimeCheckpointKey(toolCallId: string, toolName: string): string {
       return toolCallId || `last:${toolName || "unknown"}`;
+    }
+
+    function firstToolString(params: Record<string, unknown>, keys: string[]): string {
+      for (const key of keys) {
+        const value = params[key];
+        if (typeof value === "string" && value.trim()) return value.trim();
+        if (Array.isArray(value) && value.length) {
+          const item = String(value[0] ?? "").trim();
+          if (item) return item;
+        }
+      }
+      return "";
     }
 
     function trimRuntimeCheckpoints(state: SessionState): void {

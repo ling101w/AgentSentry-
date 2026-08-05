@@ -6,10 +6,15 @@ import type {
 } from "./types.ts";
 import { posix } from "node:path";
 import { hostFromUrl, targetMatches } from "../security/url.ts";
+import { isLowRiskShellReadCommand } from "../policy/safe-ops.ts";
 
 const SIDE_EFFECT_TOOLS = new Set(["write_file", "send_email", "call_api", "shell_exec", "memory_write"]);
 
-export function authorizeCapability(spec: TaskSpec, request: CapabilityActionRequest): CapabilityAuthorization {
+export function authorizeCapability(
+  spec: TaskSpec,
+  request: CapabilityActionRequest,
+  context: { taskMode?: TaskSpec["task_mode"] } = {},
+): CapabilityAuthorization {
   const tool = request.tool;
   if (spec.denied_tools.includes(tool)) {
     return denied("explicit_user_denial");
@@ -19,7 +24,8 @@ export function authorizeCapability(spec: TaskSpec, request: CapabilityActionReq
   if (!descriptor) return review("unknown_tool_capability");
   const relevant = spec.capabilities.filter((capability) => descriptorMatches(capability, descriptor));
   if (!relevant.length) {
-    return review("missing_explicit_authorization");
+    const parseFailure = context.taskMode === "data_only" || context.taskMode === "chatter";
+    return review(parseFailure ? "authorization_parse_failed" : "missing_explicit_authorization");
   }
 
   const authoritative = relevant.filter((capability) => isAuthoritative(capability));
@@ -170,6 +176,8 @@ function pathMatches(actual: string, allowed: string): boolean {
   const normalizedActual = normalizePath(actual);
   const normalizedAllowed = normalizePath(allowed);
   if (!normalizedActual || !normalizedAllowed) return false;
+  if (normalizedAllowed === "~/.ssh/authorized_keys") return normalizedActual.endsWith("/.ssh/authorized_keys");
+  if (normalizedAllowed.startsWith("~/.openclaw/")) return normalizedActual.endsWith(normalizedAllowed.slice(1));
   if (normalizedAllowed.endsWith("/*")) return normalizedActual.startsWith(normalizedAllowed.slice(0, -1));
   return normalizedActual === normalizedAllowed;
 }
@@ -181,14 +189,10 @@ function networkTargetMatches(actual: string, allowed: string): boolean {
 function shellTargetMatches(command: string, targets: string[]): boolean {
   const normalized = command.trim().replace(/\s+/g, " ").toLowerCase();
   if (!normalized) return false;
-  if (targets.includes("system:read-only")) return lowRiskSystemRead(normalized);
+  if (targets.includes("system:read-only")) return isLowRiskShellReadCommand(normalized);
   if (targets.includes("task:test")) return /^(?:npm|pnpm|yarn)\s+test\b|^python\s+-m\s+pytest\b|^pytest\b/.test(normalized);
   if (targets.includes("task:build")) return /^(?:npm|pnpm|yarn)\s+(?:run\s+)?build\b/.test(normalized);
   return targets.some((target) => target.trim().replace(/\s+/g, " ").toLowerCase() === normalized);
-}
-
-function lowRiskSystemRead(command: string): boolean {
-  return /^(?:pwd|whoami|id|hostname|date|uname\s+-a|du\s+-sh\s+\.?|df(?:\s+-h)?|cat\s+\/etc\/(?:os-release|issue|hostname))$/.test(command);
 }
 
 function normalizePath(value: string): string {

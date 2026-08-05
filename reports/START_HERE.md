@@ -1,6 +1,6 @@
 # 玄鉴文档从这里开始
 
-更新时间：2026-07-03
+更新时间：2026-08-05
 
 参赛作品名称：
 
@@ -23,6 +23,10 @@
 7. `reports/demo_and_reproduction.md`：答辩演示顺序和复现实验命令。
 
 如果准备答辩，重点看 `competition_report.md`、`feature_algorithm_talk_track.md`、`project_name_and_benchmark_summary.md`。
+
+## 当前代码更新重点
+
+2026-08-05 版本重点降低误拦。TaskSpec 已改为会话授权状态：普通追问、确认和引用数据不会清空原任务；补充说明会与原任务合并；普通记忆偏好不再默认视为记忆投毒。策略展示也不再把所有问题都叫 `outside TaskSpec`，而是区分低风险只读放行、授权不明确审批和未授权高风险阻断。外部内容进入轻量 IFC 分支，避免单个可疑网页或工具返回污染整场会话。LLM-Judge 现在覆盖用户消息、复杂工具调用、记忆写入和溯源扫描，`risk-tiered` 模式会跳过低风险健康检查和普通读操作。
 
 ## Benchmark 文件在哪
 

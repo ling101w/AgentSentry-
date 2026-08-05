@@ -5,6 +5,7 @@ import { clampText, redactObject, safeStringify } from "./redact.ts";
 import { systemPreflight } from "./system-monitor.ts";
 import { analyzeTrustContent, riskMax, sourceFromTool } from "./trust.ts";
 import { memoryGuardScanWrite, type MemorySourceClass } from "./memory-guard.ts";
+import { isLowRiskShellReadCommand, isSafeSystemReadPath } from "./policy/safe-ops.ts";
 import {
   applyExposureTaint,
   decideAction,
@@ -124,7 +125,7 @@ export function detectToolCall(
   const text = `${toolName}\n${safeStringify(params)}`;
   let risk = baseToolRisk(toolName);
   const command = readCommand(params);
-  if (command && isLowRiskShellRead(command)) {
+  if (command && isLowRiskShellReadCommand(command)) {
     risk = 5;
   }
   const trustAnalysis = analyzeTrustContent(params, {
@@ -224,37 +225,11 @@ export function detectToolCall(
   };
 }
 
-function isSafeSystemReadPath(path: string): boolean {
-  const normalized = path.replace(/\\/g, "/").toLowerCase();
-  return [
-    "/etc/os-release",
-    "/etc/issue",
-    "/etc/hostname",
-    "/proc/cpuinfo",
-    "/proc/meminfo",
-    "/proc/loadavg",
-    "/proc/uptime",
-  ].includes(normalized);
-}
-
 function isDocumentationPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").toLowerCase();
   if (!/\.(?:md|markdown|txt|rst|adoc)$/i.test(normalized)) return false;
   return /(^|\/)(docs?|examples?|samples?)(\/|$)/i.test(normalized)
     || /(^|\/)(readme|security|changelog|license)(?:\.[a-z0-9]+)?$/i.test(normalized);
-}
-
-function isLowRiskShellRead(command: string): boolean {
-  const trimmed = command.trim();
-  const safePatterns = [
-    /^(pwd|whoami|id|hostname|uname\s+-a|date)$/i,
-    /^(ls|find|du|df)(\s+[-\w./~*]+)*$/i,
-    /^(cat|head|tail)\s+\/etc\/(os-release|issue|hostname)$/i,
-    /^(cat|head|tail)\s+\/proc\/(cpuinfo|meminfo|loadavg|uptime)$/i,
-    /^stat\s+[-\w./~*]+$/i,
-    /^wc\s+[-\w\s./~*]+$/i,
-  ];
-  return safePatterns.some((pattern) => pattern.test(trimmed));
 }
 
 export { mostSevereVerdict };

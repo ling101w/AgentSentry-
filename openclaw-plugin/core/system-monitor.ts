@@ -2,6 +2,7 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { RuntimeIsolationUnavailableAction } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
+import { isLowRiskShellReadCommand, isSafeSystemReadPath } from "./policy/safe-ops.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
 import { createRiskVector, finding, type RiskVector } from "./trust.ts";
 
@@ -133,7 +134,7 @@ export function systemPreflight(
   const monitor = systemMonitorStatus();
 
   if (/shell|command|exec|terminal|powershell|cmd/.test(normalized) || command) {
-    const safeRead = command ? isLowRiskShellRead(command) : false;
+    const safeRead = command ? isLowRiskShellReadCommand(command) : false;
     const exfilMatches = safeRead ? [] : matchPatterns(command || text, EXFIL_COMMAND_PATTERNS);
     const privilegeMatches = safeRead ? [] : matchPatterns(command || text, PRIVILEGE_COMMAND_PATTERNS);
     const escapeMatches = safeRead ? [] : matchPatterns(command || text, HOST_ESCAPE_COMMAND_PATTERNS);
@@ -249,7 +250,7 @@ function kernelRuntimeGateFindings(input: {
 }): DetectionFinding[] {
   if (!input.requireKernelObserver) return [];
   const externalUrls = input.urls.filter((url) => isExternalUrl(url));
-  const highRiskShell = Boolean(input.command && /shell|command|exec|terminal|powershell|cmd/.test(input.normalized) && !isLowRiskShellRead(input.command));
+  const highRiskShell = Boolean(input.command && /shell|command|exec|terminal|powershell|cmd/.test(input.normalized) && !isLowRiskShellReadCommand(input.command));
   const riskyFileMutation = /write|delete|remove|move|chmod|chown/.test(input.normalized)
     && input.paths.some((path) => path.startsWith("/") || path.includes("..") || SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(path)) || PERSISTENCE_PATH_PATTERNS.some((pattern) => pattern.test(path)));
   const guardedSurfaces = [
@@ -450,7 +451,7 @@ function auditEbpfEvents(
   const expectedUrls = collectUrls(params);
   const shellTool = /shell|command|exec|terminal|powershell|cmd/.test(normalized);
   const networkTool = /api|http|web|browser|fetch|request|curl|wget|url/.test(normalized);
-  const lowRiskShell = shellTool && command ? isLowRiskShellRead(command) : false;
+  const lowRiskShell = shellTool && command ? isLowRiskShellReadCommand(command) : false;
   const interestingEvents: Array<Record<string, unknown>> = [];
   const findings: DetectionFinding[] = [];
 
@@ -761,32 +762,6 @@ function redactEvent(event: Record<string, unknown>, previewChars: number): Reco
   return redacted && typeof redacted === "object" && !Array.isArray(redacted)
     ? redacted as Record<string, unknown>
     : {};
-}
-
-function isSafeSystemReadPath(path: string): boolean {
-  const normalized = path.replace(/\\/g, "/").toLowerCase();
-  return [
-    "/etc/os-release",
-    "/etc/issue",
-    "/etc/hostname",
-    "/proc/cpuinfo",
-    "/proc/meminfo",
-    "/proc/loadavg",
-    "/proc/uptime",
-  ].includes(normalized);
-}
-
-function isLowRiskShellRead(command: string): boolean {
-  const trimmed = command.trim();
-  const safePatterns = [
-    /^(pwd|whoami|id|hostname|uname\s+-a|date)$/i,
-    /^(ls|find|du|df)(\s+[-\w./~*]+)*$/i,
-    /^(cat|head|tail)\s+\/etc\/(os-release|issue|hostname)$/i,
-    /^(cat|head|tail)\s+\/proc\/(cpuinfo|meminfo|loadavg|uptime)$/i,
-    /^stat\s+[-\w./~*]+$/i,
-    /^wc\s+[-\w\s./~*]+$/i,
-  ];
-  return safePatterns.some((pattern) => pattern.test(trimmed));
 }
 
 function isRelevantComm(comm: string): boolean {

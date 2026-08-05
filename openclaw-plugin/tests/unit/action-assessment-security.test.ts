@@ -170,6 +170,7 @@ describe("shell command assessment", () => {
     "cat /etc/os-release",
     "cat README.md",
     "rg token docs/security.md",
+    'echo "系统基本信息" && uname -a && uptime && df -h && cat /etc/hosts',
   ])("allows low-risk read command: %s", (command) => {
     expect(assess("shell_exec", { command })).toMatchObject({
       highRisk: false,
@@ -269,7 +270,8 @@ describe("sink and task-mismatch classification", () => {
       reasons: [],
     };
     expect(shouldHardBlockTaskMismatch(action("send_email"), benignEmail, { contaminated: false })).toBe(false);
-    expect(shouldHardBlockTaskMismatch(action("send_email"), benignEmail, { contaminated: true })).toBe(true);
+    expect(shouldHardBlockTaskMismatch(action("send_email"), benignEmail, { contaminated: true })).toBe(false);
+    expect(shouldHardBlockTaskMismatch(action("send_email"), { ...benignEmail, sensitive: true, highRisk: true }, { contaminated: false })).toBe(true);
   });
 });
 

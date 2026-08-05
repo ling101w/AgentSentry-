@@ -11,11 +11,11 @@ describe("security profiles", () => {
     expect(defaults).toMatchObject({
       profile: "competition",
       enforcement: { mode: "approval" },
-      semantic: { enabled: true, mode: "risk-tiered", judgeToolCalls: true, judgeMemoryWrites: true, judgeProvenance: true },
+      semantic: { enabled: true, mode: "risk-tiered", judgeToolCalls: true, judgeMessages: true, judgeMemoryWrites: true, judgeProvenance: true },
       policy: { deterministic: true, taintFeedback: true, restrictWritesToAllowedRoots: true },
       responseCover: { enabled: true },
     });
-    expect(defaults.policy.allowedWriteRoots).toEqual(["notes", "reports", "output", "src", "tests"]);
+    expect(defaults.policy.allowedWriteRoots).toEqual(["notes", "reports", "output", "src", "tests", "skills"]);
   });
 
   it("applies an explicit profile before nested overrides", () => {

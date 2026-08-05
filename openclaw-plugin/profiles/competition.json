@@ -5,7 +5,7 @@
     "enabled": true,
     "mode": "risk-tiered",
     "judgeToolCalls": true,
-    "judgeMessages": false,
+    "judgeMessages": true,
     "judgeMemoryWrites": true,
     "judgeProvenance": true
   },
@@ -13,7 +13,7 @@
     "deterministic": true,
     "taintFeedback": true,
     "restrictWritesToAllowedRoots": true,
-    "allowedWriteRoots": ["notes", "reports", "output", "src", "tests"]
+    "allowedWriteRoots": ["notes", "reports", "output", "src", "tests", "skills"]
   },
   "runtimeIsolation": { "requireKernelObserverForHighRisk": false, "unavailableAction": "require_approval", "auditAfterExecution": true },
   "responseCover": { "enabled": true, "coverAssistantAfterContamination": true },

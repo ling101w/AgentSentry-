@@ -74,7 +74,7 @@ Runtime config changes are persisted to:
 
 The OpenClaw plugin now ports the core AgentSentry guard model into TypeScript:
 
-- TaskSpec V2 explicit capability extraction from the latest user message; quoted, negated, vague, memory-derived, and non-concrete side-effect requests do not grant authority
+- session-level TaskSpec V2 capability extraction; quoted, negated, vague, memory-derived, stale, and non-concrete side-effect requests do not grant authority
 - workspace provenance scan for malicious `SKILL.md` files, risky configs, embedded secrets, and sensitive workspace files
 - deterministic sink checks for email/message, file, API, shell, and sensitive asset access
 - prompt-injection detection on messages and tool results
@@ -83,7 +83,8 @@ The OpenClaw plugin now ports the core AgentSentry guard model into TypeScript:
 - SHA-256 digest-pinned Tool Security Manifests; unknown tools require approval and integrity changes block
 - trajectory checks for repeated tool use
 - normalized tool names so OpenClaw tools map onto AgentSentry actions
-- isolated OpenAI-compatible semantic judge that emits `semantic` findings and can only tighten deterministic decisions
+- isolated OpenAI-compatible semantic judge for risky messages, complex tool calls, memory writes, and provenance scans; it emits `semantic` findings and can only tighten deterministic decisions
+- shared low-risk read classifier for system health checks so TaskSpec, detection, System Preflight, and Judge scheduling use the same allow/ask boundary
 - optional semantic workspace provenance scan for `SKILL.md` and configuration files
 - policy-versioned exact-operation approval cache: `allow-always` matches the same tool, normalized parameters, and security configuration only
 - persistent approval cache stored at `~/.openclaw/agentsentry/approval-cache.json`

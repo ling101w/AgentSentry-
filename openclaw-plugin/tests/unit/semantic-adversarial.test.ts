@@ -82,6 +82,13 @@ describe("semantic judge adversarial boundaries", () => {
     expect(semanticGateForProvenanceFile({ relPath: "skills/vendor/SKILL.md", roleHint: "skill", content: "benign-looking text" }, config)).toMatchObject({ shouldJudge: true, tier: "high" });
   });
 
+  it("does not route ordinary chained health checks to the semantic judge in risk-tiered mode", () => {
+    const config = judgeConfig();
+    expect(semanticGateForToolCall("shell_exec", {
+      command: 'echo "系统基本信息" && uname -a && uptime && df -h && cat /etc/hosts',
+    }, config)).toMatchObject({ shouldJudge: false, tier: "low" });
+  });
+
   it("uses an isolated data envelope and converts a high-risk Judge result into a block", async () => {
     process.env[API_ENV] = "unit-test-key";
     const fetchMock = vi.fn(async () => responseContent(JSON.stringify({

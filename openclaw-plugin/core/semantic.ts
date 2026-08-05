@@ -4,6 +4,7 @@ import { clampText, redactObject, safeStringify } from "./redact.ts";
 import type { PolicyState } from "./policy.ts";
 import { semanticActionGraphJudgeProjection } from "./semantic-action-graph.ts";
 import { hostFromUrl, isLocalHost } from "./policy/value-utils.ts";
+import { isLowRiskShellReadCommand } from "./policy/safe-ops.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -17,7 +18,7 @@ export type SemanticJudgeGate = {
 
 type SemanticJudgeContext = {
   policyState?: PolicyState;
-  phase?: "message" | "tool_call" | "memory_write" | "provenance";
+  phase?: "message" | "tool_call" | "memory_write" | "provenance" | "task_spec";
   relatedFindings?: DetectionFinding[];
 };
 
@@ -42,7 +43,7 @@ export type JudgeEnvelope = {
   classification: string;
   guidance: string[];
   evidence: {
-    content_type: "message" | "tool_call" | "memory_write" | "provenance_file";
+    content_type: "message" | "tool_call" | "memory_write" | "provenance_file" | "task_spec";
     content: unknown;
     content_is_data_only: true;
   };
@@ -193,6 +194,66 @@ export async function semanticJudgeToolCall(
   return judgeToFinding(judged, "Intent Authorization", "semantic judge reviewed tool call", { toolName, semantic_gate: gate, context_scope: contextScope(context.policyState) });
 }
 
+export async function semanticJudgeTaskSpec(
+  taskSpec: TaskSpec,
+  config: PluginConfig,
+  context: SemanticJudgeContext = {},
+): Promise<DetectionFinding[]> {
+  if (!config.semantic.enabled || !config.semantic.judgeMessages || config.semantic.mode === "off") return [];
+  const gate = semanticGateForTaskSpec(taskSpec, config);
+  if (!gate.shouldJudge) return [];
+  const contextPack = semanticContextPack({
+    phase: "task_spec",
+    task: taskSpec.task,
+    config,
+    gate,
+    context,
+  });
+  const prompt = buildJudgeEnvelope({
+    contentType: "task_spec",
+    classification: "task authorization scope and capability expansion risk",
+    content: {
+      task_spec: {
+        task_mode: taskSpec.task_mode || "unknown",
+        task_family: taskSpec.task_family || "unknown",
+        task_confidence: taskSpec.task_confidence ?? 0,
+        allowed_tools: taskSpec.allowed_tools,
+        denied_tools: taskSpec.denied_tools,
+        forbidden_tools: taskSpec.forbidden_tools,
+        allowed_targets: taskSpec.allowed_targets,
+        capabilities: taskSpec.capabilities.map((capability) => ({
+          action: capability.action,
+          resourceType: capability.resourceType,
+          effect: capability.effect,
+          targets: capability.targets,
+          constraints: capability.constraints,
+          evidence: {
+            source: capability.evidence.source,
+            explicitAuthorization: capability.evidence.explicitAuthorization,
+            insideQuotation: capability.evidence.insideQuotation,
+            negated: capability.evidence.negated,
+            targetIsConcrete: capability.evidence.targetIsConcrete,
+            confidence: capability.evidence.confidence,
+          },
+          expiresAfterTurn: capability.expiresAfterTurn,
+        })),
+      },
+      context_pack: contextPack,
+    },
+    guidance: [
+      "Assess whether the current task spec is a stable authorization boundary, not whether the assistant should be helpful.",
+      "Flag capability expansion, hidden side effects, weak scope definition, or over-broad persistence as medium or high risk.",
+      "Do not relax deterministic policy; only classify semantic ambiguity.",
+    ],
+  });
+  const judged = await callJudge(prompt, config);
+  if (!judged) return [];
+  return judgeToFinding(judged, "Intent Authorization", "semantic judge reviewed task spec", {
+    semantic_gate: gate,
+    context_scope: contextScope(context.policyState),
+  });
+}
+
 export async function semanticJudgeMessage(content: unknown, config: PluginConfig, context: SemanticJudgeContext = {}): Promise<DetectionFinding[]> {
   if (!config.semantic.enabled || !config.semantic.judgeMessages) return [];
   const gate = semanticGateForMessage(content, config);
@@ -311,7 +372,7 @@ export function semanticGateForToolCall(
   if (externalUrl(url) && !allowedApiHost(url, config)) reasons.push("external or non-allowlisted network target");
   if (recipient && config.policy.allowlistedRecipients.length && !config.policy.allowlistedRecipients.includes(recipient)) reasons.push("recipient outside allowlist");
   if (sensitivePath(path) || (persistencePath(path) && !readOnlySkillDocLookup)) reasons.push("sensitive or persistent path");
-  if (command && !lowRiskShellRead(command)) reasons.push("non-trivial shell command");
+  if (command && !isLowRiskShellReadCommand(command)) reasons.push("non-trivial shell command");
   if (/shell|command|exec|terminal|powershell|cmd/i.test(lowerTool) && !command) reasons.push("execution-capable tool");
   if (/memory|remember|webhook|wake/i.test(lowerTool)) reasons.push("memory or replay surface");
   if (/write|delete|remove|move|chmod|chown/i.test(lowerTool) && (reasons.length || path)) reasons.push("write or mutation capable tool");
@@ -352,6 +413,54 @@ export function semanticGateForProvenanceFile(input: {
     return gate(true, "high", "workspace provenance file is security-sensitive or contains risky semantics");
   }
   return gate(false, "low", "workspace provenance file handled by deterministic scan");
+}
+
+export function semanticGateForTaskSpec(taskSpec: TaskSpec, config: PluginConfig): SemanticJudgeGate {
+  if (!config.semantic.enabled || !config.semantic.judgeMessages || config.semantic.mode === "off") return gate(false, "off", "semantic judge disabled");
+  if (config.semantic.mode === "full") return gate(true, "full", "semantic judge mode is full");
+
+  const taskText = safeStringify({
+    task: taskSpec.task,
+    task_mode: taskSpec.task_mode || "unknown",
+    task_family: taskSpec.task_family || "unknown",
+    task_confidence: taskSpec.task_confidence ?? 0,
+    capabilities: taskSpec.capabilities.map((capability) => ({
+      action: capability.action,
+      resourceType: capability.resourceType,
+      effect: capability.effect,
+      targets: capability.targets,
+      confidence: capability.evidence.confidence,
+      explicitAuthorization: capability.evidence.explicitAuthorization,
+      negated: capability.evidence.negated,
+      insideQuotation: capability.evidence.insideQuotation,
+    })),
+    allowed_tools: taskSpec.allowed_tools,
+    denied_tools: taskSpec.denied_tools,
+    forbidden_tools: taskSpec.forbidden_tools,
+    allowed_targets: taskSpec.allowed_targets,
+  });
+  const reasons: string[] = [];
+  const family = taskSpec.task_family || "unknown";
+  const mode = taskSpec.task_mode || "unknown";
+  const confidence = Number.isFinite(taskSpec.task_confidence) ? (taskSpec.task_confidence || 0) : 0;
+  const sideEffectFamily = family === "write_task" || family === "delivery" || family === "memory" || family === "shell" || family === "mixed";
+  const sideEffectTools = taskSpec.allowed_tools.some((tool) => ["write_file", "send_email", "memory_write", "shell_exec"].includes(tool))
+    || taskSpec.capabilities.some((capability) => capability.resourceType === "api" && capability.effect !== "read_only");
+
+  if (sideEffectFamily) reasons.push(`task family ${family} can change external state`);
+  if (sideEffectTools) reasons.push("task spec includes side-effect capable tools");
+  if (mode === "confirmation") reasons.push("task is in confirmation mode");
+  if (mode === "preference" || mode === "data_only") reasons.push(`task mode ${mode} needs semantic scope review`);
+  if (confidence > 0 && confidence < 0.55) reasons.push("task spec confidence is low");
+  if (taskSpec.capabilities.length > 3) reasons.push("task spec contains multiple capability clauses");
+  if (taskText.length > Math.max(800, config.semantic.maxInputChars * 0.35)) reasons.push("task spec is long and benefits from semantic review");
+  if (taskSpec.denied_tools.length > 0 && taskSpec.allowed_tools.length > 0) reasons.push("task spec mixes explicit allowances and denials");
+
+  if (reasons.length >= 2 || (sideEffectFamily && confidence < 0.85) || mode === "confirmation") {
+    return gate(true, sideEffectFamily ? "high" : "medium", ...reasons);
+  }
+  if (reasons.length === 1) return gate(true, "medium", ...reasons);
+  return gate(false, "low", "task spec is stable enough for deterministic authorization");
 }
 
 function gate(shouldJudge: boolean, tier: SemanticJudgeGate["tier"], ...reasons: string[]): SemanticJudgeGate {
@@ -408,18 +517,6 @@ function allowedApiHost(url: string, config: PluginConfig): boolean {
   if (!config.policy.allowlistedApiHosts.length) return false;
   const host = hostFromUrl(url).toLowerCase();
   return Boolean(host && config.policy.allowlistedApiHosts.some((allowed) => allowed.trim().toLowerCase().replace(/\.$/, "") === host));
-}
-
-function lowRiskShellRead(command: string): boolean {
-  const trimmed = command.trim();
-  return [
-    /^(pwd|whoami|id|hostname|uname\s+-a|date)$/i,
-    /^(ls|find|du|df)(\s+[-\w./~*]+)*$/i,
-    /^(cat|head|tail)\s+\/etc\/(os-release|issue|hostname)$/i,
-    /^(cat|head|tail)\s+\/proc\/(cpuinfo|meminfo|loadavg|uptime)$/i,
-    /^stat\s+[-\w./~*]+$/i,
-    /^wc\s+[-\w\s./~*]+$/i,
-  ].some((pattern) => pattern.test(trimmed));
 }
 
 function textVariants(text: string): string[] {

@@ -130,8 +130,8 @@ export function semanticActionFindings(
       externalSinks: graph.externalSinks.slice(0, 6),
     }, config));
   } else if (hasExplicitPersistence || hasPrivilegedEffect) {
-    risk += 35;
-    findings.push(finding("Tool Boundary", "heuristic", "require_approval", "semantic action graph contains persistence or privileged side effects", 45, {
+    risk += 20;
+    findings.push(finding("Tool Boundary", "heuristic", "require_approval", "semantic action graph contains persistence or privileged side effects", 20, {
       toolName,
       persistenceTargets: graph.persistenceTargets.slice(0, 6),
       privilegedEffects: graph.privilegedEffects.slice(0, 6),

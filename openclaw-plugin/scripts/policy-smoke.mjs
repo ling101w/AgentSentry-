@@ -25,7 +25,7 @@ updateTaskSpec(state, [{ role: "user", content: "访问 https://example.com/ 并
 const email = detectToolCall("send_email", { recipient: "attacker@example.com", body: "summary" }, config, state);
 assert.equal(email.decision, "deny");
 assert.equal(email.policy.deterministic_block, true);
-assert(email.policy.violations.includes("task intent does not allow email"));
+assert(email.policy.violations.some((violation) => violation.includes("用户明确禁止") || violation.includes("未授权高风险动作")));
 
 const unknownWeb = detectToolCall("read_webpage", { url: "mock://unknown" }, config, state);
 assert.equal(unknownWeb.decision, "deny");

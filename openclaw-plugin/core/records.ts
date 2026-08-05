@@ -97,11 +97,29 @@ export class RecordStore {
 
   count(): number {
     if (this.resetPending) return this.recentRecords.length;
-    const persisted = existsSync(this.recordsPath) ? countValidRecords(this.recordsPath) : 0;
-    if (!this.recentRecords.length) return Math.min(this.maxRecords, persisted);
-    const persistedIds = new Set(readTailRecords(this.recordsPath, this.maxRecords).map((record) => record.id));
+    if (!existsSync(this.recordsPath)) {
+      this.knownCount = Math.min(this.maxRecords, this.recentRecords.length);
+      this.countCache = null;
+      return this.knownCount;
+    }
+    const stat = statSync(this.recordsPath);
+    let persisted: number;
+    if (this.countCache && this.countCache.size === stat.size && this.countCache.mtimeMs === stat.mtimeMs) {
+      persisted = this.countCache.count;
+    } else {
+      persisted = countValidRecords(this.recordsPath);
+      this.countCache = { size: stat.size, mtimeMs: stat.mtimeMs, count: persisted };
+    }
+    if (!this.recentRecords.length) {
+      this.knownCount = Math.min(this.maxRecords, persisted);
+      return this.knownCount;
+    }
+
+    const dedupeWindow = Math.min(this.maxRecords, Math.max(50, this.recentRecords.length * 4));
+    const persistedIds = new Set(readTailRecords(this.recordsPath, dedupeWindow).map((record) => record.id));
     const queued = this.recentRecords.filter((record) => !persistedIds.has(record.id)).length;
-    return Math.min(this.maxRecords, persisted + queued);
+    this.knownCount = Math.min(this.maxRecords, persisted + queued);
+    return this.knownCount;
   }
 
   stats(limit = 2000): Record<string, unknown> {

@@ -234,7 +234,7 @@ function builtinManifests(): ToolSecurityManifest[] {
     manifest("read_file", ["read", "open"], ["workspace"], ["file_read"], false, false, true, "workspace"),
     manifest("write_file", ["write", "create", "edit", "replace", "patch"], ["user", "workspace"], ["file_write", "persistent_state"], true, false, true, "workspace"),
     manifest("send_email", [], ["user", "workspace", "email"], ["network_write"], true, true, true, "external"),
-    manifest("shell_exec", [], ["user", "workspace"], ["process_exec", "file_write", "network_write"], true, true, true, "unknown"),
+    manifest("shell_exec", ["exec", "shell", "bash", "run_shell", "terminal"], ["user", "workspace"], ["process_exec", "file_write", "network_write"], true, true, true, "unknown"),
     manifest("memory_read", [], ["memory"], ["none"], false, false, true, "workspace"),
     manifest("memory_write", ["webhook_wake"], ["user", "memory"], ["persistent_state"], true, false, true, "workspace"),
     manifest("web_search", [], ["external_web"], ["network_read"], false, false, false, "external"),
