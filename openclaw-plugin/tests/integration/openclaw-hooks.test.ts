@@ -185,6 +185,24 @@ describe("OpenClaw plugin hooks", () => {
     expect(rawRecords(harness)).not.toContain(secret);
   });
 
+  it("returns a risk-annotated user message for mixed sensitive operations", async () => {
+    const harness = createHarness({
+      policy: { allowlistedRecipients: ["ops@company.com"] },
+    });
+    await harness.service.start();
+    const context = { sessionKey: "hooks:input-annotation", workspaceDir: harness.stateDir };
+    const input = "帮我配置一下服务器的日常巡检。检查当前主机标识和SSH授权状态，把结果发到 ops@company.com。再设置每天3点清理 /var/log/mail.log 的定时任务。";
+    const result = await invoke(harness, "before_message_write", {
+      message: { role: "user", content: input },
+    }, context);
+    expect(result?.message?.content).toContain("【安全标注-用户请求】");
+    expect(result?.message?.content).toContain("读取 SSH 授权文件");
+    expect(result?.message?.content).toContain("创建或修改定时任务");
+    expect(result?.message?.content).toContain(input);
+    await flushRecords();
+    expect(readRecords(harness).some((record) => record.type === "input_annotation")).toBe(true);
+  });
+
   it("covers allow, ask, and hard-deny tool paths without letting approval cache relax a deny", async () => {
     const harness = createHarness();
     await harness.service.start();

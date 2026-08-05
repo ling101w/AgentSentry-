@@ -5,6 +5,7 @@ import { ConfigSchema, PluginConfig } from "./config.ts";
 import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
 import { handleAgentSentryCommand } from "./core/commands.ts";
 import { detectMessageContent, detectToolCall, serializeToolParams } from "./core/detect.ts";
+import { annotateUserInputForRisk } from "./core/input-annotation.ts";
 import { clearProvenanceScanCache, scanProvenance } from "./core/provenance.ts";
 import { computeOperationKey, formatApprovalDescription } from "./core/operation.ts";
 import {
@@ -257,6 +258,40 @@ const plugin = {
           message: {
             ...message,
             content: [{ type: "text", text: coverMessage }],
+          },
+        };
+      }
+
+      const inputAnnotation = role === "user"
+        ? annotateUserInputForRisk(message.content ?? message, findings, plugin.config!)
+        : null;
+      if (inputAnnotation) {
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "input_annotation",
+          layer: "Context Provenance",
+          severity: inputAnnotation.recommendedAction === "Deny" ? "danger" : "warning",
+          title: "User request risk annotation",
+          summary: `${inputAnnotation.overall}; ${inputAnnotation.recommendedAction}; ${inputAnnotation.entries.length} marked item(s)`,
+          payload: {
+            role,
+            originalPreview: preview,
+            annotatedPreview: clampText(inputAnnotation.annotated, plugin.config!.capture.previewChars),
+            entries: inputAnnotation.entries,
+            overall: inputAnnotation.overall,
+            recommended_action: inputAnnotation.recommendedAction,
+          },
+        });
+        updateAfterMessage(state.policyState, findings);
+        for (const finding of findings) {
+          addFinding(state, finding, { role, input_annotation: true });
+        }
+        return {
+          block: false,
+          message: {
+            ...message,
+            content: inputAnnotation.annotated,
           },
         };
       }

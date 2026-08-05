@@ -143,6 +143,18 @@ async function handleRequest(
   const url = new URL(req.url || "/", "http://agentsentry.local");
   const config = runtime.getConfig();
 
+  if (req.method === "GET" && url.pathname.startsWith("/lab-content/")) {
+    const name = url.pathname.split("/").pop() || "";
+    const content = labContent(name);
+    if (!content) {
+      sendText(res, 404, "Not found");
+      return;
+    }
+    res.writeHead(200, { "Content-Type": content.contentType, "Cache-Control": "no-store" });
+    res.end(content.body);
+    return;
+  }
+
   if (!authorizeDashboardRequest(req, res, url, security)) return;
 
   if (req.method === "GET" && url.pathname === "/api/health") {
@@ -169,18 +181,6 @@ async function handleRequest(
       runtime_isolation: config.runtimeIsolation,
       system_monitor: systemMonitorStatus(),
     });
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname.startsWith("/lab-content/")) {
-    const name = url.pathname.split("/").pop() || "";
-    const content = labContent(name);
-    if (!content) {
-      sendText(res, 404, "Not found");
-      return;
-    }
-    res.writeHead(200, { "Content-Type": content.contentType, "Cache-Control": "no-store" });
-    res.end(content.body);
     return;
   }
 
@@ -2341,6 +2341,20 @@ function policySessionFor(sessionKey: string, resetSession: boolean): { state: P
 }
 
 function labActionsFromCommand(command: string, scenario: string, body: Record<string, unknown>): LabAction[] {
+  const requestedActions = Array.isArray(body.actions) ? body.actions : [];
+  if (requestedActions.length) {
+    return requestedActions
+      .map((item) => recordParam(item))
+      .filter((item): item is Record<string, unknown> => Boolean(item))
+      .map((item) => {
+        const toolName = String(item.toolName || item.tool || "").trim();
+        const params = recordParam(item.params) || {};
+        return toolName ? { toolName, params } : null;
+      })
+      .filter((item): item is LabAction => Boolean(item))
+      .slice(0, 8);
+  }
+
   const requestedTool = String(body.tool || "").trim();
   const requestedTarget = String(body.target || "").trim();
   if (requestedTool) {
@@ -3286,12 +3300,31 @@ function toolStateDir(): string {
   return resolve(process.env.AGENTSENTRY_TOOL_STATE_DIR || join(process.env.HOME || repoRoot(), ".openclaw", "agentsentry", "business-tools"));
 }
 
+function openClawWorkspaceRoot(): string {
+  const configuredConfig = process.env.AGENTSENTRY_OPENCLAW_CONFIG || join(process.env.HOME || "", ".openclaw", "openclaw.json");
+  try {
+    if (configuredConfig && existsSync(configuredConfig)) {
+      const parsed = JSON.parse(readFileSync(configuredConfig, "utf8")) as Record<string, unknown>;
+      const agents = parsed.agents && typeof parsed.agents === "object" ? parsed.agents as Record<string, unknown> : {};
+      const defaults = agents.defaults && typeof agents.defaults === "object" ? agents.defaults as Record<string, unknown> : {};
+      const workspace = typeof defaults.workspace === "string" ? defaults.workspace.trim() : "";
+      if (workspace) {
+        if (workspace.startsWith("~/")) return resolve(join(process.env.HOME || "", workspace.slice(2)));
+        return resolve(workspace);
+      }
+    }
+  } catch {
+    // Keep lab tooling available even when OpenClaw config is temporarily being rewritten.
+  }
+  return join(repoRoot(), "openclaw-workspace");
+}
+
 function readRoot(): string {
-  return repoRoot();
+  return openClawWorkspaceRoot();
 }
 
 function writeRoot(): string {
-  return resolve(process.env.AGENTSENTRY_WRITE_ROOT || join(repoRoot(), "openclaw-workspace"));
+  return resolve(process.env.AGENTSENTRY_WRITE_ROOT || openClawWorkspaceRoot());
 }
 
 function resolveReadPath(requestedPath: string): string {
@@ -3299,9 +3332,6 @@ function resolveReadPath(requestedPath: string): string {
   const filePath = requestedPath.startsWith("/") ? resolve(requestedPath) : resolve(root, requestedPath);
   if (!insideRoot(filePath, root)) throw new Error(`read path is outside workspace: ${requestedPath}`);
   if (!existsSync(filePath)) {
-    const fallbackRoot = "/home/ubuntu/AgentSentry-";
-    const fallbackPath = requestedPath.startsWith("/") ? resolve(requestedPath) : resolve(fallbackRoot, requestedPath);
-    if (fallbackRoot !== root && insideRoot(fallbackPath, fallbackRoot) && existsSync(fallbackPath)) return fallbackPath;
     throw new Error(`file not found: ${requestedPath}`);
   }
   return filePath;

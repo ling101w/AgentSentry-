@@ -79,8 +79,11 @@ def main() -> int:
       benign = [case for case in cases if not case.attack]
       random.shuffle(attacks)
       random.shuffle(benign)
-      benign_quota = min(len(benign), max(40, args.max_cases // 5))
-      cases = attacks[: args.max_cases - benign_quota] + benign[:benign_quota]
+      benign_quota = min(len(benign), max(1, args.max_cases // 5)) if benign else 0
+      attack_quota = min(len(attacks), max(0, args.max_cases - benign_quota))
+      remaining_quota = max(0, args.max_cases - attack_quota)
+      cases = attacks[:attack_quota] + benign[:remaining_quota]
+      cases = cases[:args.max_cases]
       random.shuffle(cases)
     source_notes = reconcile_source_notes(source_notes, cases)
 
@@ -720,11 +723,10 @@ def reconcile_source_notes(source_notes: list[dict[str, Any]], cases: list[ToolB
     for source in source_notes:
       item = dict(source)
       name = str(item.get("source", ""))
-      if name in counts:
-        item["loaded_cases"] = item.get("used_cases", 0)
-        item["used_cases"] = counts[name]
-        item["protected_expected"] = protected[name]
-        item["allow_expected"] = allow[name]
+      item["loaded_cases"] = item.get("used_cases", 0)
+      item["used_cases"] = counts.get(name, 0)
+      item["protected_expected"] = protected.get(name, 0)
+      item["allow_expected"] = allow.get(name, 0)
       out.append(item)
     return out
 

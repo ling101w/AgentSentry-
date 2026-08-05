@@ -542,6 +542,10 @@ textarea {
 select {
   min-height: 34px;
   padding: 0 10px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 input {

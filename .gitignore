@@ -79,6 +79,8 @@ reports/supervision_ablation/*-memory.json
 reports/supervision_ablation/*-sensitive-read.jsonl
 reports/blind_evaluation/*.private.json
 reports/native_agentdojo/*.private.*
+reports/plugin_comparison/*.json
+reports/plugin_comparison/*.txt
 openclaw-plugin/sbom.cdx.json
 
 # Output keeps the README and compressed deliverables, not expanded build trees.

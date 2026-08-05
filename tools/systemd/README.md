@@ -2,4 +2,7 @@
 
 systemd 用户服务模板目录。
 
-当前用于保存可选的 eBPF observer 服务模板。由于当前环境用户权限限制，eBPF 不一定可用；系统会在健康接口中如实展示状态和原因。
+当前包含两个服务模板：
+
+- `agentsentry-ebpf-observer.service`：eBPF observer 模板。系统会在健康接口中如实展示探针状态和原因。
+- `guard-comparison-console.service`：玄鉴与 AgentWard 插件对比控制台，独立于 OpenClaw 插件运行，可在测试时互斥切换两个插件。

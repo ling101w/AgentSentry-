@@ -86,9 +86,11 @@ def main() -> int:
       benign = [case for case in cases if not case.attack]
       random.shuffle(attacks)
       random.shuffle(benign)
-      benign_quota = min(len(benign), max(40, args.max_cases // 5))
-      attack_quota = args.max_cases - benign_quota
-      cases = attacks[:attack_quota] + benign[:benign_quota]
+      benign_quota = min(len(benign), max(1, args.max_cases // 5)) if benign else 0
+      attack_quota = min(len(attacks), max(0, args.max_cases - benign_quota))
+      remaining_quota = max(0, args.max_cases - attack_quota)
+      cases = attacks[:attack_quota] + benign[:remaining_quota]
+      cases = cases[:args.max_cases]
       random.shuffle(cases)
     source_notes = reconcile_source_notes(source_notes, cases)
 
@@ -195,11 +197,10 @@ def reconcile_source_notes(source_notes: list[dict[str, Any]], cases: list[Bench
     for source in source_notes:
       item = dict(source)
       name = str(item.get("source", ""))
-      if name in counts:
-        item["loaded_cases"] = item.get("used_cases", 0)
-        item["used_cases"] = counts[name]
-        item["attack_cases"] = attack_counts[name]
-        item["benign_cases"] = benign_counts[name]
+      item["loaded_cases"] = item.get("used_cases", 0)
+      item["used_cases"] = counts.get(name, 0)
+      item["attack_cases"] = attack_counts.get(name, 0)
+      item["benign_cases"] = benign_counts.get(name, 0)
       reconciled.append(item)
     return reconciled
 
