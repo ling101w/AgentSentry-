@@ -119,7 +119,7 @@ export function assessActionWithSensitiveAssets(action: PolicyActionInput, sensi
 export function shouldHardBlockTaskMismatch(
   action: PolicyActionInput,
   assessment: ActionAssessment,
-  state: { contaminated: boolean },
+  _state: { contaminated: boolean },
 ): boolean {
   if (!assessment.highRisk && (action.tool === "read_file" || action.tool === "write_file" || action.tool === "call_api")) return false;
   if (action.tool === "send_email") return assessment.sensitive;

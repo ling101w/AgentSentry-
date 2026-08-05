@@ -74,39 +74,3 @@ function blockedTaintFlow(labels: TrustLabel[], sink: TaintSink): DataFlowTaintF
     tags: selected.profile.tags,
   };
 }
-
-function isolatedBranchRequiresReview(input: AbacDecisionInput): boolean {
-  if (!input.sink) return false;
-  if (!isHighRiskSink(input.action, input.assessment, input.sink)) return false;
-  const severeBranch = input.isolatedBranches
-    .filter((branch) => branch.status === "isolated")
-    .some((branch) =>
-      branch.risk >= 80
-      || branch.confidentiality === "tenant-secret"
-      || branch.integrity === "untrusted-external" && branch.risk >= 65
-    );
-  if (!severeBranch) return false;
-  if (hasStrongExplicitSinkAuthorization(input.taskSpec, input.action.tool)) return false;
-  return true;
-}
-
-function hasStrongExplicitSinkAuthorization(taskSpec: TaskSpec, tool: string): boolean {
-  if (!taskSpec.allowed_tools.includes(tool)) return false;
-  const confidence = taskSpec.task_confidence ?? 0;
-  if (confidence < 0.82) return false;
-  return taskSpec.capabilities.some((capability) =>
-    capability.evidence.source === "user"
-    && capability.evidence.explicitAuthorization
-    && !capability.evidence.insideQuotation
-    && !capability.evidence.negated
-    && capability.evidence.targetIsConcrete
-    && capability.evidence.confidence >= 0.82
-  );
-}
-
-function isHighRiskSink(action: PolicyActionInput, assessment: ActionAssessment, sink: TaintSink): boolean {
-  if (sink === "send_email" || sink === "call_api" || sink === "memory_write" || sink === "config_write" || sink === "skill_install") return true;
-  if (sink === "shell_exec") return assessment.highRisk;
-  if (action.tool === "shell_exec" && assessment.highRisk) return true;
-  return assessment.highRisk;
-}

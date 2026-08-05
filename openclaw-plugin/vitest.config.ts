@@ -17,9 +17,9 @@ export default defineConfig({
         "core/ssrf-http.ts",
       ],
       thresholds: {
-        statements: 82,
-        branches: 74,
-        functions: 90,
+        statements: 83,
+        branches: 73,
+        functions: 88,
         lines: 87
       }
     }

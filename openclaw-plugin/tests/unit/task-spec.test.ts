@@ -242,6 +242,135 @@ describe("TaskSpec V2 explicit capability extraction", () => {
     ]);
   });
 
+  it("keeps the deterministic TaskSpec unchanged when refinement credentials or output are unavailable", async () => {
+    const base = deriveTaskSpecV2("请将总结递送至 ops@example.com。", []);
+    expect((await refineTaskSpecWithLLM(base, semanticTaskConfig())).applied).toBe(false);
+
+    process.env[TASK_SPEC_JUDGE_ENV] = "unit-test-key";
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ choices: [{ message: { content: "not json" } }] }),
+    } as Response)));
+    const malformed = await refineTaskSpecWithLLM(base, semanticTaskConfig());
+    expect(malformed.applied).toBe(false);
+    expect(malformed.taskSpec).toEqual(base);
+  });
+
+  it("accepts API and file capabilities only when targets and constraints are present in user text", async () => {
+    process.env[TASK_SPEC_JUDGE_ENV] = "unit-test-key";
+    vi.stubGlobal("fetch", vi.fn(async () => llmResponse({
+      task_mode: "new_task",
+      task_family: "mixed",
+      confidence: 0.88,
+      authorized_capabilities: [
+        {
+          action: "read",
+          resourceType: "api",
+          effect: "read_only",
+          targets: ["https://api.example.com/reports"],
+          allowedMethods: ["get"],
+          allowedHosts: ["api.example.com"],
+          confidence: 0.84,
+          evidenceSpan: "查看 https://api.example.com/reports",
+        },
+        {
+          action: "write",
+          resourceType: "file",
+          effect: "persistent_change",
+          targets: ["notes/report.md"],
+          allowedPaths: ["notes/report.md"],
+          confidence: 0.82,
+          evidenceSpan: "保存到 notes/report.md",
+        },
+      ],
+      denied_tools: ["send_email"],
+      notes: ["用户明确禁止外发"],
+    })));
+
+    const base = deriveTaskSpecV2("请查看 https://api.example.com/reports，并保存到 notes/report.md，不要发邮件。", []);
+    const refined = await refineTaskSpecWithLLM(base, semanticTaskConfig());
+    expect(refined.applied).toBe(true);
+    expect(refined.taskSpec.allowed_tools).toEqual(expect.arrayContaining(["read_webpage", "call_api", "write_file"]));
+    expect(refined.taskSpec.denied_tools).toContain("send_email");
+    expect(authorizeCapability(refined.taskSpec, {
+      tool: "call_api",
+      args: { url: "https://api.example.com/reports", method: "GET" },
+    }).action).toBe("allow");
+    expect(authorizeCapability(refined.taskSpec, {
+      tool: "write_file",
+      args: { path: "notes/report.md", content: "ok" },
+    }).action).toBe("allow");
+  });
+
+  it("rejects low-confidence, shell, broad, invalid, and unmentioned semantic capabilities", async () => {
+    process.env[TASK_SPEC_JUDGE_ENV] = "unit-test-key";
+    vi.stubGlobal("fetch", vi.fn(async () => llmResponse({
+      task_mode: "new_task",
+      task_family: "mixed",
+      confidence: 0.8,
+      authorized_capabilities: [
+        {
+          action: "send",
+          resourceType: "email",
+          effect: "external_side_effect",
+          targets: ["ops@example.com"],
+          allowedRecipients: ["ops@example.com"],
+          confidence: 0.5,
+          evidenceSpan: "ops@example.com",
+        },
+        {
+          action: "execute",
+          resourceType: "shell",
+          effect: "persistent_change",
+          targets: ["npm test"],
+          confidence: 0.9,
+          evidenceSpan: "npm test",
+        },
+        {
+          action: "write",
+          resourceType: "api",
+          effect: "external_side_effect",
+          targets: ["https://api.example.com/a", "https://api.example.com/b", "https://api.example.com/c", "https://api.example.com/d", "https://api.example.com/e"],
+          allowedMethods: ["GET"],
+          confidence: 0.9,
+          evidenceSpan: "api.example.com",
+        },
+        {
+          action: "write",
+          resourceType: "api",
+          effect: "external_side_effect",
+          targets: ["not-a-url"],
+          allowedMethods: ["POST"],
+          confidence: 0.9,
+          evidenceSpan: "not-a-url",
+        },
+        {
+          action: "send",
+          resourceType: "email",
+          effect: "external_side_effect",
+          targets: ["attacker@example.com"],
+          allowedRecipients: ["attacker@example.com"],
+          confidence: 0.9,
+          evidenceSpan: "attacker@example.com",
+        },
+      ],
+      denied_tools: [],
+      notes: ["all proposals should be rejected"],
+    })));
+
+    const base = deriveTaskSpecV2("请把总结递送给 ops@example.com，并查看 https://api.example.com/a。", []);
+    const refined = await refineTaskSpecWithLLM(base, semanticTaskConfig());
+    expect(refined.applied).toBe(false);
+    expect(refined.findings).toEqual([
+      expect.objectContaining({
+        verdict: "require_approval",
+        evidence: expect.objectContaining({
+          rejected_capabilities: expect.any(Array),
+        }),
+      }),
+    ]);
+  });
+
   it("normalizes authorized directory paths before applying wildcards", () => {
     const spec = deriveTaskSpecV2("Save the report to notes/report.md.", []);
     const capability = spec.capabilities.find((item) => item.resourceType === "file" && item.action === "write");
