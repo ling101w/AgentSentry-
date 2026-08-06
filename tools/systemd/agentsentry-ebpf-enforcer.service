@@ -1,0 +1,16 @@
+[Unit]
+Description=AgentSentry eBPF kernel network enforcer
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+LimitMEMLOCK=infinity
+ExecStart=/usr/bin/python3 /home/ubuntu/AgentSentry-/tools/agentsentry-ebpf-enforcer.py --socket /run/agentsentry/ebpf-enforcer.sock --socket-group ubuntu --log /var/log/agentsentry-ebpf-enforcer.jsonl
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

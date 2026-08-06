@@ -15,6 +15,8 @@ export type EbpfObserverStatus = {
   log_exists: boolean;
   log_mtime?: string;
   recent_events?: number;
+  kernel_enforcer_active?: boolean;
+  kernel_enforcer_socket?: string;
 };
 
 export type SystemMonitorStatus = {
@@ -108,6 +110,8 @@ const HOST_ESCAPE_COMMAND_PATTERNS = [
 ];
 
 const EBPF_OBSERVER_SERVICE = "agentsentry-ebpf-observer.service";
+const EBPF_ENFORCER_SERVICE = "agentsentry-ebpf-enforcer.service";
+const EBPF_ENFORCER_SOCKET = "/run/agentsentry/ebpf-enforcer.sock";
 const EBPF_OBSERVER_SCRIPT = "/home/ubuntu/AgentSentry-/tools/agentsentry-ebpf-observer.bt";
 const EBPF_OBSERVER_LOG = "/var/log/agentsentry-ebpf.jsonl";
 export const SYSTEM_MONITOR_STATUS_TTL_MS = 1500;
@@ -575,6 +579,7 @@ function ebpfObserverStatus(): EbpfObserverStatus {
   const systemdActive = systemctlIsActive(EBPF_OBSERVER_SERVICE);
   const processActive = processIsActive("bpftrace .*agentsentry-ebpf-observer\\.bt");
   const log = observerLogInfo(EBPF_OBSERVER_LOG);
+  const kernelEnforcerActive = systemctlIsActive(EBPF_ENFORCER_SERVICE) && existsSync(EBPF_ENFORCER_SOCKET);
   return {
     service: EBPF_OBSERVER_SERVICE,
     active: systemdActive || processActive,
@@ -582,6 +587,8 @@ function ebpfObserverStatus(): EbpfObserverStatus {
     script_path: EBPF_OBSERVER_SCRIPT,
     log_path: EBPF_OBSERVER_LOG,
     ...log,
+    kernel_enforcer_active: kernelEnforcerActive,
+    kernel_enforcer_socket: EBPF_ENFORCER_SOCKET,
   };
 }
 

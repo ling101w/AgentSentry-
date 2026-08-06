@@ -11,6 +11,8 @@ export type SandboxTransaction = {
   wrappedCommand: string;
   useBestEffortNetworkIsolation: boolean;
   requireNetworkIsolation: boolean;
+  kernelEnforcementSocket: string;
+  kernelEnforcementClient: string;
   excludes: string[];
 };
 
@@ -38,6 +40,8 @@ export function createShellSandboxTransaction(
     excludes: DEFAULT_EXCLUDES,
     useBestEffortNetworkIsolation: networkIsolationAvailable,
     requireNetworkIsolation: config.runtimeIsolation.requireNetworkNamespaceForShell,
+    kernelEnforcementSocket: process.env.AGENTSENTRY_KERNEL_ENFORCER_SOCKET || "",
+    kernelEnforcementClient: process.env.AGENTSENTRY_KERNEL_ENFORCER_CLIENT || "",
   });
   return {
     workspaceDir: resolve(workspaceDir),
@@ -46,6 +50,8 @@ export function createShellSandboxTransaction(
     wrappedCommand,
     useBestEffortNetworkIsolation: networkIsolationAvailable,
     requireNetworkIsolation: config.runtimeIsolation.requireNetworkNamespaceForShell,
+    kernelEnforcementSocket: process.env.AGENTSENTRY_KERNEL_ENFORCER_SOCKET || "",
+    kernelEnforcementClient: process.env.AGENTSENTRY_KERNEL_ENFORCER_CLIENT || "",
     excludes: DEFAULT_EXCLUDES,
   };
 }
@@ -81,6 +87,8 @@ function buildSandboxWrapperCommand(input: {
   excludes: string[];
   useBestEffortNetworkIsolation: boolean;
   requireNetworkIsolation: boolean;
+  kernelEnforcementSocket: string;
+  kernelEnforcementClient: string;
 }): string {
   const plan = Buffer.from(JSON.stringify({
     tempDir: input.tempDir,
@@ -89,6 +97,8 @@ function buildSandboxWrapperCommand(input: {
     excludes: input.excludes,
     useBestEffortNetworkIsolation: input.useBestEffortNetworkIsolation,
     requireNetworkIsolation: input.requireNetworkIsolation,
+    kernelEnforcementSocket: input.kernelEnforcementSocket,
+    kernelEnforcementClient: input.kernelEnforcementClient,
   }), "utf8").toString("base64url");
   const script = `
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
@@ -128,8 +138,18 @@ rmSync(plan.tempDir, { recursive: true, force: true });
 mkdirSync(plan.tempDir, { recursive: true });
 copyDirectory(plan.workspaceDir, plan.tempDir);
 const command = plan.command;
+let kernelRegistered = false;
+if (plan.kernelEnforcementSocket && plan.kernelEnforcementClient) {
+  const registration = spawnSync("python3", [
+    plan.kernelEnforcementClient,
+    "--socket", plan.kernelEnforcementSocket,
+    "register", "--pid", String(process.pid),
+  ], { stdio: "ignore" });
+  kernelRegistered = registration.status === 0;
+}
 if (plan.requireNetworkIsolation && !plan.useBestEffortNetworkIsolation) {
   console.error("AgentSentry strict network namespace isolation is unavailable");
+  if (kernelRegistered) spawnSync("python3", [plan.kernelEnforcementClient, "--socket", plan.kernelEnforcementSocket, "unregister", "--pid", String(process.pid)], { stdio: "ignore" });
   process.exit(126);
 }
 const shellCommand = plan.useBestEffortNetworkIsolation && process.platform !== "win32"
@@ -141,6 +161,7 @@ const result = spawnSync(shellCommand[0], shellCommand[1], {
   encoding: "utf8",
   stdio: "inherit",
 });
+if (kernelRegistered) spawnSync("python3", [plan.kernelEnforcementClient, "--socket", plan.kernelEnforcementSocket, "unregister", "--pid", String(process.pid)], { stdio: "ignore" });
 process.exit(typeof result.status === "number" ? result.status : 1);
 `;
   return `AGENTSENTRY_SANDBOX_PLAN=${shellEscape(plan)} node --input-type=module -e ${shellEscape(script)}`;
