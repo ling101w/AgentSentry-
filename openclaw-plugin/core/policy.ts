@@ -2,6 +2,7 @@ import type { PluginConfig } from "../config.ts";
 import type { SemanticGraph } from "./action-semantics.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { decisionFromRisk, mergeDecision } from "./judge/decision-merge.ts";
+import { memoryContentHash, normalizeMemoryKey, type PersistentMemoryLabel } from "./memory-ifc.ts";
 import {
   assessAction,
   assessActionWithSensitiveAssets,
@@ -36,9 +37,11 @@ import {
 import {
   extractFieldProvenance,
   publicProvenance,
+  semanticClaimsForValue,
   transformProvenance,
   type DataProvenance,
   type FieldProvenance,
+  type SemanticClaim,
 } from "./taint/provenance-graph.ts";
 import {
   authorizeCapability,
@@ -133,6 +136,7 @@ export type PolicyState = {
     text: string;
     label: Label;
     provenanceId?: string;
+    semanticClaims?: SemanticClaim[];
   }>;
   apiCallCounts: Map<string, number>;
   behaviorProfiles: Map<string, BehaviorProfile>;
@@ -143,6 +147,7 @@ export type PolicyState = {
   taintFlows: DataFlowTaintFlow[];
   dataProvenance: DataProvenance[];
   ifcBranches: IFCBranch[];
+  persistentMemoryLabels: PersistentMemoryLabel[];
   semanticActionGraph: SemanticActionGraphState;
 };
 
@@ -225,8 +230,17 @@ export function createPolicyState(): PolicyState {
     taintFlows: [],
     dataProvenance: [],
     ifcBranches: [],
+    persistentMemoryLabels: [],
     semanticActionGraph,
   };
+}
+
+export function hydratePersistentMemoryLabels(state: PolicyState, labels: PersistentMemoryLabel[]): void {
+  const byKey = new Map<string, PersistentMemoryLabel>();
+  for (const label of [...state.persistentMemoryLabels, ...labels].filter(isPersistentMemoryLabel)) {
+    byKey.set(`${label.key}:${label.content_sha256}`, label);
+  }
+  state.persistentMemoryLabels = [...byKey.values()].slice(-400);
 }
 
 export function updateTaskSpec(state: PolicyState, messages: unknown, config: PluginConfig): void {
@@ -330,15 +344,16 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
           : "sink argument may inherit malicious or secret taint through an inferred match",
         observed ? 100 : 60,
         {
-        tool: action.tool,
-        arg: key,
-        source: exposure.source,
-        match: mode,
-        evidence_basis: matchEvidence.basis,
-        confidence: matchEvidence.confidence,
-        provenance_id: lineage?.id || exposure.provenanceId || "",
-        parent_ids: lineage?.parentIds || [],
-        provenance_path: lineage?.path || "",
+          tool: action.tool,
+          arg: key,
+          source: exposure.source,
+          match: mode,
+          evidence_basis: matchEvidence.basis,
+          confidence: matchEvidence.confidence,
+          semantic_claims: exposure.semanticClaims || [],
+          provenance_id: lineage?.id || exposure.provenanceId || "",
+          parent_ids: lineage?.parentIds || [],
+          provenance_path: lineage?.path || "",
         },
       ));
     }
@@ -509,6 +524,12 @@ function evaluateMutable(
   for (const ifcFinding of ifcExecutionFindings) {
     findings.push(ifcFinding);
     if (ifcFinding.verdict === "block") violations.push(ifcFinding.reason);
+  }
+
+  const memoryIfcFindings = config.policy.deterministic ? persistentMemoryIFCFindings(action, assessment, state) : [];
+  for (const memoryFinding of memoryIfcFindings) {
+    findings.push(memoryFinding);
+    if (memoryFinding.verdict === "block") violations.push(memoryFinding.reason);
   }
 
   const outsideTaskSpec = taskSpec.forbidden_tools.includes(action.tool) || !taskSpec.allowed_tools.includes(action.tool);
@@ -823,8 +844,10 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
       incompleteReason = "field provenance extraction failed";
     }
   }
-  const provenanceUntrusted = !toolName || ["external_web", "email_html", "pdf_text", "image_metadata", "webhook"].includes(source);
-  const maliciousTaint = Boolean(incompleteReason) || analysis.label.tainted || hasInjectionSignal(text) || riskMax(analysis.risk_vector) >= 50;
+  const persistentMemoryMatches = source === "memory" ? matchingPersistentMemoryLabels(state, result, fieldProvenance) : [];
+  const memoryLowTrust = persistentMemoryMatches.some((item) => item.integrity === "untrusted-external" || item.confidentiality === "tenant-secret" || riskMax(item.risk_vector) >= 50);
+  const provenanceUntrusted = !toolName || ["external_web", "email_html", "pdf_text", "image_metadata", "webhook", "unknown"].includes(source);
+  const maliciousTaint = Boolean(incompleteReason) || memoryLowTrust || analysis.label.tainted || hasInjectionSignal(text) || riskMax(analysis.risk_vector) >= 50;
   const label: Label = {
     source: toolCallId ? `tool:${toolCallId}` : "tool:unknown",
     integrity: "untrusted",
@@ -834,7 +857,7 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
     influence: "none",
     trust_label: analysis.label,
     risk_vector: analysis.risk_vector,
-    tags: unique([...analysis.tags, ...(incompleteReason ? ["analysis_incomplete"] : [])]),
+    tags: unique([...analysis.tags, ...persistentMemoryMatches.flatMap((item) => item.tags), ...(memoryLowTrust ? ["persistent_memory_low_trust"] : []), ...(incompleteReason ? ["analysis_incomplete"] : [])]),
     taint_profile: taintProfileFromLabel(analysis.label) || undefined,
     provenance_ids: fieldProvenance.map((field) => field.id),
   };
@@ -853,8 +876,8 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
       lifetime: source === "memory" ? "memory" : "turn",
       createdAt: new Date().toISOString(),
       provenanceIds: fieldProvenance.map((field) => field.id),
-      risk: riskMax(analysis.risk_vector),
-      confidence: Math.max(0, Math.min(1, (riskMax(analysis.risk_vector) || 0) / 100)),
+      risk: Math.max(riskMax(analysis.risk_vector), ...persistentMemoryMatches.map((item) => riskMax(item.risk_vector))),
+      confidence: Math.max(0, Math.min(1, (Math.max(riskMax(analysis.risk_vector), ...persistentMemoryMatches.map((item) => riskMax(item.risk_vector))) || 0) / 100)),
     });
   }
   if (!provenanceUntrusted && !maliciousTaint && analysis.label.confidentiality === "public") {
@@ -872,20 +895,21 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
   }
   for (const field of fieldProvenance) {
     rememberTrustLabel(state, field.trustLabel);
-    if (field.integrity === "tainted" || field.confidentiality === "secret") {
+    const claimConfidentiality = strongestSemanticClaimConfidentiality(field.semanticClaims);
+    if (field.integrity === "tainted" || field.confidentiality === "secret" || claimConfidentiality !== "public") {
       const fieldLabel: Label = {
         source: `${toolCallId ? `tool:${toolCallId}` : "tool:unknown"}::${field.path}`,
         integrity: field.integrity === "trusted" ? "trusted" : "untrusted",
-        confidentiality: field.confidentiality,
-        tainted: field.integrity === "tainted",
+        confidentiality: strongerConfidentiality(field.confidentiality, claimConfidentiality === "tenant-secret" || claimConfidentiality === "user-private" ? "secret" : claimConfidentiality),
+        tainted: field.integrity === "tainted" || field.semanticClaims.some((claim) => claim.confidentiality === "secret"),
         provenance_untrusted: provenanceUntrusted,
         influence: "none",
         trust_label: field.trustLabel,
         risk_vector: field.riskVector,
-        tags: field.tags,
+        tags: unique([...field.tags, ...field.semanticClaims.flatMap((claim) => claim.tags)]),
         taint_profile: taintProfileFromLabel(field.trustLabel) || undefined,
       };
-      state.exposures.push({ source: fieldLabel.source, text: field.value, label: fieldLabel, provenanceId: field.id });
+      state.exposures.push({ source: fieldLabel.source, text: field.value, label: fieldLabel, provenanceId: field.id, semanticClaims: field.semanticClaims });
     }
   }
   const publicFields = fieldProvenance.map(publicProvenance);
@@ -901,7 +925,7 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, analysis.risk_vector);
   if (toolCallId) state.toolResultLabels.set(toolCallId, label);
   if (!fieldProvenance.length && label.tainted && text.trim()) {
-    state.exposures.push({ source: label.source, text, label: { ...label } });
+    state.exposures.push({ source: label.source, text, label: { ...label }, semanticClaims: semanticClaimsForValue({ value: text, tags: label.tags, confidentiality: label.confidentiality }) });
   }
   if (state.exposures.length > 80) state.exposures = state.exposures.slice(-80);
   return label;
@@ -936,7 +960,8 @@ export function resultFindings(
   }
   const injectionSignal = hasInjectionSignal(safeStringify(result));
   const incomplete = label.tags?.includes("analysis_incomplete") || false;
-  if (!findings.length && !injectionSignal && !incomplete) return [];
+  const lowTrustPersistentMemory = label.tags?.includes("persistent_memory_low_trust") || false;
+  if (!findings.length && !injectionSignal && !incomplete && !lowTrustPersistentMemory) return [];
   return [
     ...findings,
     ...(injectionSignal
@@ -953,6 +978,13 @@ export function resultFindings(
       ? [finding("Context Provenance", "deterministic", "block", "tool result could not be completely analyzed; taint is preserved and policy failed closed", 100, {
         source: label.source,
         tags: label.tags || [],
+      })]
+      : []),
+    ...(lowTrustPersistentMemory
+      ? [finding("Memory IFC", "deterministic", "require_approval", "persistent memory label was restored from the IFC ledger and kept in an isolated branch", 55, {
+        source: label.source,
+        tags: label.tags || [],
+        trust_label: label.trust_label || null,
       })]
       : []),
   ];
@@ -1092,6 +1124,7 @@ export function policyTrustSnapshot(state: PolicyState): Record<string, unknown>
     tainted_sources: state.taintedSources.slice(-12),
     taint_flows: state.taintFlows.slice(-12),
     ifc_branches: state.ifcBranches.slice(-12),
+    persistent_memory_labels: state.persistentMemoryLabels.slice(-12).map(publicPersistentMemoryLabel),
     provenance: state.dataProvenance.slice(-20),
     semantic_action_graph: semanticActionGraphSnapshot(state.semanticActionGraph),
     runtime_feedback: Array.from(state.runtimeProfiles.values()).slice(-10),
@@ -1682,6 +1715,110 @@ function confidentialityRank(value: IFCBranch["confidentiality"]): number {
   return { public: 0, internal: 1, "user-private": 2, "tenant-secret": 3 }[value] ?? 0;
 }
 
+function strongestSemanticClaimConfidentiality(claims: SemanticClaim[]): IFCBranch["confidentiality"] {
+  return claims.reduce<IFCBranch["confidentiality"]>((strongest, claim) => {
+    const next: IFCBranch["confidentiality"] = claim.confidentiality === "secret" ? "tenant-secret" : claim.confidentiality;
+    return confidentialityRank(next) > confidentialityRank(strongest) ? next : strongest;
+  }, "public");
+}
+
+function matchingPersistentMemoryLabels(
+  state: PolicyState,
+  result: unknown,
+  fields: FieldProvenance[],
+): PersistentMemoryLabel[] {
+  if (!state.persistentMemoryLabels.length) return [];
+  const hashes = new Set<string>([
+    memoryContentHash(result),
+    ...fields.map((field) => field.contentFingerprint),
+  ]);
+  return state.persistentMemoryLabels.filter((label) => hashes.has(label.content_sha256)).slice(-12);
+}
+
+function persistentMemoryIFCFindings(
+  action: AgentSentryAction,
+  assessment: ActionAssessment,
+  state: PolicyState,
+): DetectionFinding[] {
+  if (!state.persistentMemoryLabels.length) return [];
+  const key = memoryKeyForAction(action);
+  if (!key) return [];
+  const labels = state.persistentMemoryLabels.filter((label) => memoryKeysOverlap(label.key, key)).slice(-12);
+  if (!labels.length) return [];
+  const lowTrust = labels.filter((label) =>
+    label.integrity === "untrusted-external"
+    || label.confidentiality === "tenant-secret"
+    || riskMax(label.risk_vector) >= 50
+  );
+  if (!lowTrust.length) return [];
+  if (action.tool === "memory_read" || action.tool === "read_file") {
+    return [finding(
+      "Memory IFC",
+      "deterministic",
+      "require_approval",
+      "跨会话记忆标签提示：读取的长期记忆包含低信任或高风险来源，读取后只能进入隔离分析分支",
+      55,
+      {
+        key,
+        labels: lowTrust.map(publicPersistentMemoryLabel),
+      },
+    )];
+  }
+  if (!isTrustSensitiveSink(action, assessment)) return [];
+  return [finding(
+    "Memory IFC",
+    "deterministic",
+    "block",
+    "跨会话记忆标签阻断：低信任长期记忆不能直接授权高风险工具动作",
+    100,
+    {
+      key,
+      tool: action.tool,
+      labels: lowTrust.map(publicPersistentMemoryLabel),
+    },
+  )];
+}
+
+function memoryKeyForAction(action: AgentSentryAction): string {
+  if (action.tool !== "memory_read" && action.tool !== "memory_write" && action.tool !== "read_file" && action.tool !== "write_file") return "";
+  const path = readFirstString(action.args, ["key", "name", "path", "file", "filename", "target"]);
+  return path ? normalizeMemoryKey(path) : action.tool.startsWith("memory_") ? "memory" : "";
+}
+
+function memoryKeysOverlap(left: string, right: string): boolean {
+  const a = normalizeMemoryKey(left).toLowerCase();
+  const b = normalizeMemoryKey(right).toLowerCase();
+  if (a === b) return true;
+  const abase = a.split("/").pop();
+  const bbase = b.split("/").pop();
+  return Boolean(abase && bbase && abase === bbase);
+}
+
+function publicPersistentMemoryLabel(label: PersistentMemoryLabel): Record<string, unknown> {
+  return {
+    id: label.id,
+    key: label.key,
+    source_class: label.source_class,
+    integrity: label.integrity,
+    confidentiality: label.confidentiality,
+    purpose: label.purpose,
+    lifetime: label.lifetime,
+    tags: label.tags.slice(0, 8),
+    risk_vector: label.risk_vector,
+    updated_at: label.updated_at,
+  };
+}
+
+function isPersistentMemoryLabel(value: unknown): value is PersistentMemoryLabel {
+  return Boolean(value
+    && typeof value === "object"
+    && typeof (value as PersistentMemoryLabel).id === "string"
+    && typeof (value as PersistentMemoryLabel).key === "string"
+    && typeof (value as PersistentMemoryLabel).content_sha256 === "string"
+    && typeof (value as PersistentMemoryLabel).integrity === "string"
+    && typeof (value as PersistentMemoryLabel).confidentiality === "string");
+}
+
 function isRuntimeAuditFinding(item: DetectionFinding): boolean {
   const audit = (item.evidence || {}).runtime_audit as Record<string, unknown> | undefined;
   return item.layer === "Tool Boundary"
@@ -1752,7 +1889,12 @@ function trustLabelsForAction(action: AgentSentryAction, state: PolicyState): Tr
   collectActionTrustLabels(action.args, labels);
   const argsText = flattenText(action.args);
   const matched = matchExposure(argsText, state.exposures);
-  if (matched?.exposure.label.trust_label) labels.push(matched.exposure.label.trust_label);
+  if (matched?.exposure.label.trust_label) {
+    const evidence = provenanceEvidenceForMatch(matched.mode);
+    if (evidence.basis !== "conservative" && evidence.confidence >= 0.95) {
+      labels.push(matched.exposure.label.trust_label);
+    }
+  }
   return labels;
 }
 
@@ -1943,9 +2085,11 @@ function analyzePolicyResult(
   let source: ReturnType<typeof sourceFromTool> = "tool_result";
   try {
     source = toolName ? sourceForToolResult(toolName, result) : "tool_result";
+    if (toolName && !resolveToolManifest(toolName) && source === "tool_result") source = "unknown";
   } catch {
     failures.push("tool result source classification failed");
     source = sourceFromTool(typeof toolName === "string" ? toolName : "unknown_tool");
+    if (toolName && !resolveToolManifest(toolName) && source === "tool_result") source = "unknown";
   }
   const structuralIssue = inspectPolicyValue(result);
   if (structuralIssue) failures.push(structuralIssue);
@@ -2230,6 +2374,7 @@ function printableText(value: string): string {
 function matchExposure(text: string, exposures: PolicyState["exposures"]): { exposure: PolicyState["exposures"][number]; mode: string } | null {
   const normalizedVariants = exposureTextVariants(text);
   if (!normalizedVariants.length) return null;
+  const targetClaims = semanticClaimsForValue({ value: text });
   for (let exposureIndex = exposures.length - 1; exposureIndex >= 0; exposureIndex -= 1) {
     const exposure = exposures[exposureIndex];
     const candidateVariants = exposureTextVariants(exposure.text);
@@ -2250,6 +2395,8 @@ function matchExposure(text: string, exposures: PolicyState["exposures"]): { exp
         }
       }
     }
+    const semanticMatch = matchSemanticClaims(targetClaims, exposure.semanticClaims || []);
+    if (semanticMatch) return { exposure, mode: semanticMatch };
   }
   return null;
 }
@@ -2261,7 +2408,27 @@ function provenanceEvidenceForMatch(mode: string): { basis: SemanticEvidenceBasi
   if (mode === "encoded_substring") return { basis: "conservative", confidence: 0.86 };
   if (mode === "fuzzy") return { basis: "conservative", confidence: 0.82 };
   if (mode === "encoded_fuzzy") return { basis: "conservative", confidence: 0.78 };
+  if (mode === "semantic_derivation") return { basis: "conservative", confidence: 0.72 };
   return { basis: "conservative", confidence: 0.7 };
+}
+
+function matchSemanticClaims(targetClaims: SemanticClaim[], sourceClaims: SemanticClaim[]): "semantic_derivation" | "" {
+  if (!targetClaims.length || !sourceClaims.length) return "";
+  for (const source of sourceClaims) {
+    for (const target of targetClaims) {
+      if (source.kind !== target.kind) continue;
+      if (source.kind === "financial_band" && source.value === target.value && Math.min(source.confidence, target.confidence) >= 0.68) {
+        return "semantic_derivation";
+      }
+      if (source.kind === "credential_reference" && target.value === "credential_material" && Math.min(source.confidence, target.confidence) >= 0.82) {
+        return "semantic_derivation";
+      }
+      if (source.kind === "privileged_access" && target.value === "privileged_system_surface" && Math.min(source.confidence, target.confidence) >= 0.78) {
+        return "semantic_derivation";
+      }
+    }
+  }
+  return "";
 }
 
 function compactEvidenceList(values: string[], limit: number): string[] {

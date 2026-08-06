@@ -6,6 +6,12 @@ import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
 import { handleAgentSentryCommand } from "./core/commands.ts";
 import { detectMessageContent, detectToolCall, serializeToolParams } from "./core/detect.ts";
 import { annotateUserInputForRisk } from "./core/input-annotation.ts";
+import {
+  buildPersistentMemoryLabel,
+  loadPersistentMemoryLabels,
+  upsertPersistentMemoryLabel,
+  type PersistentMemoryLabel,
+} from "./core/memory-ifc.ts";
 import { clearProvenanceScanCache, scanProvenance } from "./core/provenance.ts";
 import { computeOperationKey, formatApprovalDescription } from "./core/operation.ts";
 import {
@@ -19,6 +25,7 @@ import {
 } from "./core/plugin-helpers.ts";
 import {
   createPolicyState,
+  hydratePersistentMemoryLabels,
   policyTrustSnapshot,
   resultFindings,
   updateActionGraphEnforcement,
@@ -511,6 +518,7 @@ const plugin = {
           ? "blocked"
           : "executing";
       updateAfterDecision(state.policyState, effectivePolicy);
+      persistAllowedMemoryLabel(state, effectivePolicy.action.tool, params, effectiveDecision);
       updateActionGraphEnforcement(state.policyState, effectivePolicy, graphStatus);
       const payload = {
         toolName: event.toolName,
@@ -785,6 +793,7 @@ const plugin = {
           runtimeCheckpoints: new Map(),
           workspaceDir: "",
         };
+        hydratePersistentMemoryLabels(state.policyState, loadPersistentMemoryLabels(plugin.config!));
         plugin.sessions.set(sessionIdentity, state);
       }
       const workspaceDir = typeof ctx.workspaceDir === "string" && ctx.workspaceDir.trim() ? ctx.workspaceDir.trim() : "";
@@ -816,6 +825,70 @@ const plugin = {
         }
       }
       return "";
+    }
+
+    function persistAllowedMemoryLabel(
+      state: SessionState,
+      normalizedTool: string,
+      params: Record<string, unknown>,
+      decision: "allow" | "ask" | "deny",
+    ): void {
+      if (decision === "deny" || normalizedTool !== "memory_write") return;
+      const content = firstToolValue(params, ["content", "body", "text", "value", "payload", "new_string", "replacement", "patch"]) ?? params;
+      const key = memoryKeyFromToolParams(params);
+      const sourceClass = memorySourceClassFromToolParams(params);
+      try {
+        const label = buildPersistentMemoryLabel({
+          key,
+          content,
+          context: state.policyState.currentTask,
+          sourceClass,
+          sessionId: state.sessionId,
+          tenant: state.sourceSessionKey || "default",
+          config: plugin.config!,
+        });
+        upsertPersistentMemoryLabel(plugin.config!, label);
+        hydratePersistentMemoryLabels(state.policyState, [label]);
+      } catch (error) {
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "guard_finding",
+          layer: "Memory IFC",
+          severity: "warning",
+          title: "Memory IFC label persistence failed",
+          summary: error instanceof Error ? error.message : String(error),
+          payload: { key },
+        });
+      }
+    }
+
+    function firstToolValue(params: Record<string, unknown>, keys: string[]): unknown {
+      for (const key of keys) {
+        if (typeof params[key] !== "undefined") return params[key];
+      }
+      return undefined;
+    }
+
+    function memoryKeyFromToolParams(params: Record<string, unknown>): string {
+      const raw = firstToolString(params, ["key", "name", "path", "file"]) || "memory";
+      const normalized = raw.replace(/\\/g, "/");
+      const memoryFile = normalized.match(/(?:^|\/)memory\/([^/]+\.md)$/i);
+      if (memoryFile?.[1]) return `memory/${memoryFile[1]}`;
+      const namedMemory = normalized.match(/(?:^|\/)(user\.md|soul\.md|memory\.md|agents\.md)$/i);
+      if (namedMemory?.[1]) return namedMemory[1].toLowerCase();
+      return raw;
+    }
+
+    function memorySourceClassFromToolParams(params: Record<string, unknown>): PersistentMemoryLabel["source_class"] | undefined {
+      const raw = firstToolString(params, ["source_class", "sourceClass", "source", "origin"]).toLowerCase();
+      if (!raw) return undefined;
+      if (raw === "user_directive" || raw === "user" || raw === "direct_user") return "user_directive";
+      if (raw === "agent_inference" || raw === "agent" || raw === "self") return "agent_inference";
+      if (raw === "external_web" || raw === "web" || raw === "pdf" || raw === "image" || raw === "email") return "external_web";
+      if (raw === "tool_result" || raw === "tool") return "tool_result";
+      if (raw === "webhook" || raw.includes("hooks/wake")) return "webhook";
+      return "unknown";
     }
 
     function trimRuntimeCheckpoints(state: SessionState): void {
