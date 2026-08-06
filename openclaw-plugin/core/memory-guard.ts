@@ -1,10 +1,10 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { clampText, safeStringify } from "./redact.ts";
+import { loadOrCreateStateSecret } from "./state-secret.ts";
 import {
   analyzeTrustContent,
-  createRiskVector,
   finding,
   riskMax,
   type RiskVector,
@@ -117,6 +117,7 @@ export function memoryGuardScanWrite(input: {
     sourceClass,
     analysis,
     existing: input.existing || null,
+    config: input.config,
   });
   const findings = [...analysis.findings, ...memoryStructuralFindings(key, content, passport, input.existing || null, input.config)];
   const action = chooseMemoryAction(findings, passport);
@@ -134,7 +135,7 @@ export function memoryGuardScanRead(input: {
   const envelope = normalizeEnvelope(key, input.envelope, input.context, input.config);
   const content = stringifyMemory(envelope.value);
   const contentHash = sha256(content);
-  const integrityOk = envelope.passport.content_sha256 === contentHash && verifyPassport(envelope.passport);
+  const integrityOk = envelope.passport.content_sha256 === contentHash && verifyPassport(envelope.passport, input.config);
   const findings: DetectionFinding[] = [];
   const analysis = analyzeTrustContent(content, {
     source: "memory",
@@ -210,6 +211,7 @@ export function normalizeEnvelope(key: string, value: unknown, context: string, 
     sourceClass: "unknown",
     analysis,
     existing: null,
+    config,
   });
   return {
     updated_at: typeof (value as { updated_at?: unknown })?.updated_at === "string" ? String((value as { updated_at: string }).updated_at) : new Date().toISOString(),
@@ -245,6 +247,7 @@ function createMemoryPassport(input: {
   sourceClass: MemorySourceClass;
   analysis: TrustAnalysis;
   existing: MemoryEnvelope | null;
+  config: PluginConfig;
 }): MemoryPassport {
   const now = new Date().toISOString();
   const previous = input.existing?.passport;
@@ -265,7 +268,7 @@ function createMemoryPassport(input: {
     trust_label: input.analysis.label,
     protected_key: protectedKey,
   };
-  return { ...passport, signature: signPassport(passport) };
+  return { ...passport, signature: signPassport(passport, input.config) };
 }
 
 function memoryStructuralFindings(
@@ -418,17 +421,16 @@ function isMemoryEnvelope(value: unknown): value is MemoryEnvelope {
     && Boolean(obj.passport && typeof obj.passport === "object" && typeof obj.passport.content_sha256 === "string");
 }
 
-function signPassport(passport: Omit<MemoryPassport, "signature">): string {
-  return createHmac("sha256", passportSecret()).update(stableStringify(passport)).digest("hex");
+function signPassport(passport: Omit<MemoryPassport, "signature">, config: PluginConfig): string {
+  return createHmac("sha256", loadOrCreateStateSecret(config, "memory-guard")).update(stableStringify(passport)).digest("hex");
 }
 
-function verifyPassport(passport: MemoryPassport): boolean {
+function verifyPassport(passport: MemoryPassport, config: PluginConfig): boolean {
   const { signature: _signature, ...unsigned } = passport;
-  return signPassport(unsigned) === passport.signature;
-}
-
-function passportSecret(): string {
-  return process.env.AGENTSENTRY_TRUST_SECRET || process.env.AGENTSENTRY_API_KEY || "agentsentry-local-memory-guard";
+  if (!/^[a-f0-9]{64}$/i.test(passport.signature)) return false;
+  const expected = Buffer.from(signPassport(unsigned, config), "hex");
+  const actual = Buffer.from(passport.signature, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 function stableStringify(value: unknown): string {

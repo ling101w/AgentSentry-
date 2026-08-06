@@ -77,4 +77,5 @@ if (Test-Path $OpenClawConfig) {
 Write-Host ""
 Write-Host "===== Setup Complete ====="
 Write-Host "OpenClaw command: /agentsentry"
-Write-Host "Dashboard default: http://127.0.0.1:8765"
+Write-Host "Dashboard bind: http://127.0.0.1:8765 (authentication required)"
+Write-Host "Run /agentsentry after the Gateway starts to get the authenticated browser URL."

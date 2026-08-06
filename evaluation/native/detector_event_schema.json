@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentsentry.dev/schemas/agentdojo-detector-event-v1.json",
+  "title": "AgentSentry native detector transcript event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "routing", "detector_input", "detector_output"],
+  "properties": {
+    "event_id": { "type": "string", "pattern": "^event_[0-9]{8}$" },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "opaque_session_id", "opaque_call_id"],
+      "properties": {
+        "op": { "enum": ["start", "before_tool", "after_tool"] },
+        "opaque_session_id": { "type": "string", "pattern": "^trial_[0-9a-f]{24}$" },
+        "opaque_call_id": { "type": ["string", "null"] }
+      }
+    },
+    "detector_input": { "$ref": "#/$defs/detectorInput" },
+    "detector_output": { "type": "object" }
+  },
+  "$defs": {
+    "detectorInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_message", "tool_name", "tool_args", "tool_result", "session_history"],
+      "properties": {
+        "user_message": { "type": "string" },
+        "tool_name": { "type": "string" },
+        "tool_args": { "type": "object" },
+        "tool_result": {},
+        "session_history": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    }
+  },
+  "x-evaluator-only-fields": [
+    "benchmark_case_id",
+    "user_task_id",
+    "injection_task_id",
+    "is_attack",
+    "attack_type",
+    "expected",
+    "security",
+    "utility"
+  ]
+}

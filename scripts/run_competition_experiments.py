@@ -7,6 +7,8 @@ import re
 import sys
 from urllib.error import URLError
 from urllib.request import urlopen
+
+from _dashboard_auth import dashboard_request
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -407,7 +409,7 @@ def _load_openclaw_records() -> tuple[list[dict[str, Any]], str]:
 
 def _load_records_from_dashboard() -> list[dict[str, Any]]:
     try:
-        with urlopen(f"{OPENCLAW_DASHBOARD}/api/records?limit=5000", timeout=2) as response:
+        with urlopen(dashboard_request(f"{OPENCLAW_DASHBOARD}/api/records?limit=5000"), timeout=2) as response:
             raw = json.loads(response.read().decode("utf-8"))
         records = raw.get("records", [])
         return [item for item in records if isinstance(item, dict)] if isinstance(records, list) else []
@@ -417,7 +419,7 @@ def _load_records_from_dashboard() -> list[dict[str, Any]]:
 
 def _load_dashboard_health() -> dict[str, Any]:
     try:
-        with urlopen(f"{OPENCLAW_DASHBOARD}/api/health", timeout=2) as response:
+        with urlopen(dashboard_request(f"{OPENCLAW_DASHBOARD}/api/health"), timeout=2) as response:
             raw = json.loads(response.read().decode("utf-8"))
         return raw if isinstance(raw, dict) else {}
     except (OSError, URLError, json.JSONDecodeError):
@@ -693,7 +695,7 @@ def render_report(payload: dict[str, Any]) -> str:
         lines.extend(
             [
                 f"- 未发现可用 OpenClaw 导出文件：`{openclaw.get('path')}`。",
-                "- 可运行 `curl http://127.0.0.1:8765/api/records > runtime/openclaw-agentsentry-records.json` 后重新执行实验脚本。",
+                "- 可读取 `~/.openclaw/agentsentry/dashboard-session.key`，以 `Authorization: Bearer <token>` 调用 `/api/records` 后重新执行实验脚本。",
                 "",
             ]
         )
@@ -717,7 +719,7 @@ def render_report(payload: dict[str, Any]) -> str:
             "pytest -q",
             "python scripts/check_ui_layout.py",
             "curl http://127.0.0.1:8000/api/llm/config",
-            "curl http://127.0.0.1:8765/api/stats",
+            "curl -H 'Authorization: Bearer <token>' http://127.0.0.1:8765/api/stats",
             "```",
             "",
             "## 局限",

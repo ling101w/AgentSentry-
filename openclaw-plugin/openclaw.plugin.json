@@ -6,6 +6,11 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "profile": {
+        "type": "string",
+        "enum": ["observe", "balanced", "competition", "high-security"],
+        "description": "Named security posture. Explicit nested settings may refine the selected profile."
+      },
       "dashboard": {
         "type": "object",
         "additionalProperties": false,
@@ -21,6 +26,14 @@
           "port": {
             "type": "number",
             "description": "Dashboard port. Defaults to 8765."
+          },
+          "allowRemote": {
+            "type": "boolean",
+            "description": "Explicitly allow a non-loopback dashboard bind. Requires authToken."
+          },
+          "authToken": {
+            "type": "string",
+            "description": "Bearer token required for remote dashboard access. Use at least 32 random characters."
           }
         }
       },
@@ -35,6 +48,14 @@
           "maxRecords": {
             "type": "number",
             "description": "Maximum JSONL records retained after periodic compaction."
+          },
+          "sessionIdleTtlMs": {
+            "type": "number",
+            "description": "Evict session policy state after this idle interval. Default: 1800000."
+          },
+          "maxSessions": {
+            "type": "number",
+            "description": "Maximum in-memory session states retained by LRU. Default: 256."
           }
         }
       },
@@ -93,19 +114,19 @@
           },
           "judgeToolCalls": {
             "type": "boolean",
-            "description": "Use semantic judge for high-risk tool call review."
+            "description": "Use one semantic judge call only when deterministic enforcement returns ambiguous."
           },
           "judgeMessages": {
             "type": "boolean",
-            "description": "Use semantic judge for message and tool-result content review."
+            "description": "Legacy compatibility option; runtime message provenance is handled deterministically."
           },
           "judgeProvenance": {
             "type": "boolean",
-            "description": "Use semantic judge for workspace provenance files such as SKILL.md and config files."
+            "description": "Legacy compatibility option; workspace provenance scanning is deterministic."
           },
           "judgeMemoryWrites": {
             "type": "boolean",
-            "description": "Use semantic judge for long-term memory write review."
+            "description": "Legacy compatibility option; ambiguous memory writes share the single action judge call."
           },
           "baseUrl": {
             "type": "string",
@@ -121,7 +142,7 @@
           },
           "timeoutMs": {
             "type": "number",
-            "description": "Semantic judge request timeout in milliseconds."
+            "description": "Semantic judge budget in milliseconds; runtime clamps this to 500-2000 ms. Default: 1500."
           },
           "maxInputChars": {
             "type": "number",
@@ -159,7 +180,7 @@
           },
           "rescanIntervalMs": {
             "type": "number",
-            "description": "Minimum interval before rescanning the same workspace."
+            "description": "Compatibility setting retained for older configs; file fingerprints and watcher invalidation now control rescans."
           }
         }
       },
@@ -187,12 +208,12 @@
           "allowlistedApiHosts": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "API hosts allowed for network sink tools. Empty means host allowlist is not enforced."
+            "description": "Public HTTP hosts allowed for call_api and read_webpage execution. Empty means host allowlist is not enforced; SSRF address checks still apply."
           },
           "allowedWriteRoots": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Allowed write roots when restrictWritesToAllowedRoots is enabled."
+            "description": "Absolute directory roots allowed for writes when restrictWritesToAllowedRoots is enabled."
           },
           "sensitiveAssets": {
             "type": "array",
@@ -213,6 +234,25 @@
           "approvalTimeoutMs": {
             "type": "number",
             "description": "Approval timeout used when enforcement.mode is approval."
+          }
+        }
+      },
+      "runtimeIsolation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "requireKernelObserverForHighRisk": {
+            "type": "boolean",
+            "description": "Require the kernel observer before high-risk execution is released."
+          },
+          "unavailableAction": {
+            "type": "string",
+            "enum": ["require_approval", "block"],
+            "description": "Action used when required runtime isolation is unavailable."
+          },
+          "auditAfterExecution": {
+            "type": "boolean",
+            "description": "Audit runtime observer events after an allowed tool call."
           }
         }
       },
@@ -256,6 +296,10 @@
     }
   },
   "uiHints": {
+    "profile": {
+      "label": "Security Profile",
+      "help": "Use competition for the judged demo and observe for telemetry-only deployments."
+    },
     "dashboard.enabled": {
       "label": "Enable Dashboard",
       "help": "Starts the local AgentSentry records dashboard."
@@ -267,6 +311,14 @@
     "dashboard.port": {
       "label": "Dashboard Port",
       "help": "Default: 8765."
+    },
+    "dashboard.allowRemote": {
+      "label": "Allow Remote Dashboard",
+      "help": "Required with a strong auth token before binding outside loopback."
+    },
+    "dashboard.authToken": {
+      "label": "Dashboard Auth Token",
+      "help": "Explicit bearer token for remote dashboard access."
     },
     "capture.includeMessageText": {
       "label": "Capture Message Text",
@@ -294,11 +346,11 @@
     },
     "semantic.judgeProvenance": {
       "label": "Semantic Provenance Scan",
-      "help": "Uses the semantic judge to review SKILL.md and config files during workspace provenance scan."
+      "help": "Legacy compatibility option; provenance scanning now uses deterministic rules."
     },
     "semantic.judgeMemoryWrites": {
       "label": "Semantic Memory Write Review",
-      "help": "Uses the semantic judge to review whether candidate long-term memory is safe to persist."
+      "help": "Ambiguous memory writes share the single action-level semantic decision."
     },
     "semantic.model": {
       "label": "Semantic Model",

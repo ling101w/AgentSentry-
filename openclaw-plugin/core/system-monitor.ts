@@ -2,7 +2,8 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { RuntimeIsolationUnavailableAction } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
-import { clampText, safeStringify } from "./redact.ts";
+import { isLowRiskShellReadCommand, isSafeSystemReadPath } from "./policy/safe-ops.ts";
+import { clampText, redactObject, safeStringify } from "./redact.ts";
 import { createRiskVector, finding, type RiskVector } from "./trust.ts";
 
 export type EbpfObserverStatus = {
@@ -39,9 +40,9 @@ export type EbpfLogCheckpoint = {
   log_path: string;
   size: number;
   created_at: string;
-  monitor: SystemMonitorStatus;
   root_pid: number;
   root_uid?: number;
+  monitor: SystemMonitorStatus;
 };
 
 export type EbpfRuntimeAudit = {
@@ -79,7 +80,7 @@ const PRIVILEGE_COMMAND_PATTERNS = [
 ];
 
 const SENSITIVE_PATH_PATTERNS = [
-  /(?:^|\/)\.env(?:\.|$)?/i,
+  /(?:^|\/)\.env(?:\.|$)/i,
   /(?:^|\/)openclaw\.json$/i,
   /(?:^|\/)(?:id_rsa|id_ed25519|id_ecdsa|id_dsa)$/i,
   /(?:^|\/)(?:secret|secrets|credentials)(?:\.json|\.txt|\.yaml|\.yml)?$/i,
@@ -109,6 +110,9 @@ const HOST_ESCAPE_COMMAND_PATTERNS = [
 const EBPF_OBSERVER_SERVICE = "agentsentry-ebpf-observer.service";
 const EBPF_OBSERVER_SCRIPT = "/home/ubuntu/AgentSentry-/tools/agentsentry-ebpf-observer.bt";
 const EBPF_OBSERVER_LOG = "/var/log/agentsentry-ebpf.jsonl";
+export const SYSTEM_MONITOR_STATUS_TTL_MS = 1500;
+
+let statusCache: { value: SystemMonitorStatus; cachedAt: number; expiresAt: number } | null = null;
 
 export function systemPreflight(
   toolName: string,
@@ -130,7 +134,7 @@ export function systemPreflight(
   const monitor = systemMonitorStatus();
 
   if (/shell|command|exec|terminal|powershell|cmd/.test(normalized) || command) {
-    const safeRead = command ? isLowRiskShellRead(command) : false;
+    const safeRead = command ? isLowRiskShellReadCommand(command) : false;
     const exfilMatches = safeRead ? [] : matchPatterns(command || text, EXFIL_COMMAND_PATTERNS);
     const privilegeMatches = safeRead ? [] : matchPatterns(command || text, PRIVILEGE_COMMAND_PATTERNS);
     const escapeMatches = safeRead ? [] : matchPatterns(command || text, HOST_ESCAPE_COMMAND_PATTERNS);
@@ -167,7 +171,7 @@ export function systemPreflight(
       risk.exfiltration = Math.max(risk.exfiltration, 45);
       findings.push(finding("Tool Boundary", "heuristic", "require_approval", "command performs network egress and requires sandbox egress review", 45, {
         command: clampText(command || text, previewChars),
-        urls: egressUrls.slice(0, 8),
+        urls: redactEvidenceStrings(egressUrls, 8, previewChars),
         monitor,
         isolation_plan: isolationPlan("review"),
       }));
@@ -178,7 +182,7 @@ export function systemPreflight(
   if (sensitivePaths.length) {
     risk.sensitive_data = Math.max(risk.sensitive_data, 85);
     findings.push(finding("Tool Boundary", "deterministic", "block", "tool parameters target sensitive local paths", 90, {
-      paths: sensitivePaths.slice(0, 8),
+      paths: redactEvidenceStrings(sensitivePaths, 8, previewChars),
       monitor,
       isolation_plan: isolationPlan("block"),
     }));
@@ -191,17 +195,20 @@ export function systemPreflight(
   if (protectedPersistencePaths.length) {
     risk.persistence = 90;
     findings.push(finding("Tool Boundary", "deterministic", "block", "tool parameters target memory, startup, or OpenClaw configuration paths", 95, {
-      paths: protectedPersistencePaths.slice(0, 8),
+      paths: redactEvidenceStrings(protectedPersistencePaths, 8, previewChars),
       monitor,
       isolation_plan: isolationPlan("block"),
     }));
   }
 
-  const gatewayUrls = urls.filter((url) => NON_LOCAL_GATEWAY_PATTERN.test(url) || /gatewayURL/i.test(url));
+  const gatewayUrls = Array.from(new Set([
+    ...urls.filter((url) => NON_LOCAL_GATEWAY_PATTERN.test(url)),
+    ...collectGatewayOverrideUrls(params),
+  ]));
   if (gatewayUrls.length) {
     risk.tool_hijack = 100;
     findings.push(finding("Tool Boundary", "deterministic", "block", "Control UI gateway URL override detected before network call", 100, {
-      urls: gatewayUrls.slice(0, 6),
+      urls: redactEvidenceStrings(gatewayUrls, 6, previewChars),
       monitor,
       isolation_plan: isolationPlan("block"),
     }));
@@ -243,7 +250,7 @@ function kernelRuntimeGateFindings(input: {
 }): DetectionFinding[] {
   if (!input.requireKernelObserver) return [];
   const externalUrls = input.urls.filter((url) => isExternalUrl(url));
-  const highRiskShell = Boolean(input.command && /shell|command|exec|terminal|powershell|cmd/.test(input.normalized) && !isLowRiskShellRead(input.command));
+  const highRiskShell = Boolean(input.command && /shell|command|exec|terminal|powershell|cmd/.test(input.normalized) && !isLowRiskShellReadCommand(input.command));
   const riskyFileMutation = /write|delete|remove|move|chmod|chown/.test(input.normalized)
     && input.paths.some((path) => path.startsWith("/") || path.includes("..") || SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(path)) || PERSISTENCE_PATH_PATTERNS.some((pattern) => pattern.test(path)));
   const guardedSurfaces = [
@@ -256,11 +263,11 @@ function kernelRuntimeGateFindings(input: {
   if (!guardedSurfaces.length) return [];
 
   const evidence = {
-    toolName: input.toolName,
+    toolName: clampText(input.toolName, input.previewChars),
     guarded_surfaces: guardedSurfaces,
     command: input.command ? clampText(input.command, input.previewChars) : "",
-    paths: input.paths.slice(0, 8),
-    urls: externalUrls.slice(0, 8),
+    paths: redactEvidenceStrings(input.paths, 8, input.previewChars),
+    urls: redactEvidenceStrings(externalUrls, 8, input.previewChars),
     monitor: input.monitor,
     runtime_gate: {
       required: true,
@@ -285,13 +292,24 @@ function kernelRuntimeGateFindings(input: {
   )];
 }
 
-export function systemMonitorStatus(): SystemMonitorStatus {
+export function clearSystemMonitorStatusCache(): void {
+  statusCache = null;
+}
+
+export function systemMonitorStatus(now = Date.now()): SystemMonitorStatus {
+  if (statusCache && now >= statusCache.cachedAt && now < statusCache.expiresAt) return statusCache.value;
+  const value = probeSystemMonitorStatus();
+  statusCache = { value, cachedAt: now, expiresAt: now + SYSTEM_MONITOR_STATUS_TTL_MS };
+  return value;
+}
+
+function probeSystemMonitorStatus(): SystemMonitorStatus {
   const observer = ebpfObserverStatus();
   if (observer.active) {
     return withIsolation({
       pre_exec_policy: "active",
       ebpf: "attached",
-      reason: `AgentSentry eBPF observer is active via ${observer.detected_by}; kernel exec/open/connect events are written to ${observer.log_path}`,
+      reason: `AgentSentry eBPF observer is active via ${observer.detected_by}; exec/open evidence and destination-unaware connect syscall observations are written to ${observer.log_path}`,
       observer,
     });
   }
@@ -328,9 +346,9 @@ export function ebpfLogCheckpoint(): EbpfLogCheckpoint | null {
       log_path: EBPF_OBSERVER_LOG,
       size: stats.size,
       created_at: new Date().toISOString(),
-      monitor,
       root_pid: process.pid,
       root_uid: typeof process.getuid === "function" ? process.getuid() : undefined,
+      monitor,
     };
   } catch {
     return null;
@@ -375,30 +393,14 @@ export function auditRuntimeEventsSince(
   };
 }
 
-function attributeEventsToRuntime(
+export function auditRuntimeEventBatch(
   events: Array<Record<string, unknown>>,
-  checkpoint: EbpfLogCheckpoint,
-): Array<Record<string, unknown>> {
-  const rootPid = checkpoint.root_pid;
-  if (!Number.isFinite(rootPid) || rootPid <= 0) return events;
-  const rootUid = checkpoint.root_uid;
-  const processTree = new Set<number>([rootPid]);
-  const attributed: Array<Record<string, unknown>> = [];
-  const sorted = [...events].sort((a, b) => numericField(a, "ts_ns") - numericField(b, "ts_ns"));
-  for (const event of sorted) {
-    const pid = numericField(event, "pid");
-    const ppid = numericField(event, "ppid");
-    const uid = numericField(event, "uid");
-    const uidMatches = rootUid === undefined || uid === 0 || uid === rootUid;
-    const belongsToRuntime = uidMatches && (
-      (pid > 0 && processTree.has(pid))
-      || (ppid > 0 && processTree.has(ppid))
-    );
-    if (!belongsToRuntime) continue;
-    if (pid > 0) processTree.add(pid);
-    attributed.push(event);
-  }
-  return attributed;
+  toolName: string,
+  params: Record<string, unknown>,
+  monitor: SystemMonitorStatus,
+  options: { previewChars?: number } = {},
+): { findings: DetectionFinding[]; interestingEvents: Array<Record<string, unknown>> } {
+  return auditEbpfEvents(events, toolName, params, monitor, options.previewChars ?? 1200);
 }
 
 function readEbpfEventsSince(
@@ -448,9 +450,8 @@ function auditEbpfEvents(
   const expectedPaths = collectPathLike(params);
   const expectedUrls = collectUrls(params);
   const shellTool = /shell|command|exec|terminal|powershell|cmd/.test(normalized);
-  const lowRiskShell = shellTool && command ? isLowRiskShellRead(command) : false;
-  const networkTool = /http|fetch|request|api|browser|email|mail|message|send|webhook|curl|wget/.test(normalized)
-    || expectedUrls.some((url) => isExternalUrl(url));
+  const networkTool = /api|http|web|browser|fetch|request|curl|wget|url/.test(normalized);
+  const lowRiskShell = shellTool && command ? isLowRiskShellReadCommand(command) : false;
   const interestingEvents: Array<Record<string, unknown>> = [];
   const findings: DetectionFinding[] = [];
 
@@ -463,11 +464,11 @@ function auditEbpfEvents(
     .slice(0, 12);
 
   if (sensitiveOpenEvents.length) {
-    interestingEvents.push(...sensitiveOpenEvents.map((item) => item.event));
+    interestingEvents.push(...sensitiveOpenEvents.map((item) => redactEvent(item.event, previewChars)));
     findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected sensitive file access after tool was allowed", 80, {
-      toolName,
-      expected_paths: expectedPaths.slice(0, 8),
-      observed_paths: sensitiveOpenEvents.map((item) => item.filename).slice(0, 8),
+      toolName: clampText(toolName, previewChars),
+      expected_paths: redactEvidenceStrings(expectedPaths, 8, previewChars),
+      observed_paths: redactEvidenceStrings(sensitiveOpenEvents.map((item) => item.filename), 8, previewChars),
       monitor,
       runtime_audit: {
         source: "ebpf",
@@ -487,9 +488,9 @@ function auditEbpfEvents(
 
   const unexpectedExecEvents = execEvents.filter(({ text }) => !shellTool || (lowRiskShell && command && !text.includes(command)));
   if (unexpectedExecEvents.length) {
-    interestingEvents.push(...unexpectedExecEvents.map((item) => item.event));
+    interestingEvents.push(...unexpectedExecEvents.map((item) => redactEvent(item.event, previewChars)));
     findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected process execution after non-shell or low-risk tool was allowed", 85, {
-      toolName,
+      toolName: clampText(toolName, previewChars),
       command: command ? clampText(command, previewChars) : "",
       observed_exec: unexpectedExecEvents.map((item) => clampText(item.text, 240)).slice(0, 8),
       monitor,
@@ -504,19 +505,15 @@ function auditEbpfEvents(
   const unexpectedConnectEvents = events
     .filter((event) => String(event.event || "") === "connect")
     .filter((event) => isRelevantComm(String(event.comm || "")))
-    .filter(() => !networkTool)
+    .filter(() => !networkTool && !expectedUrls.length)
     .slice(0, 12);
+
   if (unexpectedConnectEvents.length) {
-    interestingEvents.push(...unexpectedConnectEvents);
-    findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected socket connection after non-network tool was allowed", 75, {
-      toolName,
-      expected_urls: expectedUrls.slice(0, 8),
-      observed_processes: unexpectedConnectEvents.map((event) => ({
-        pid: event.pid,
-        ppid: event.ppid,
-        comm: event.comm,
-        fd: event.fd,
-      })).slice(0, 8),
+    interestingEvents.push(...unexpectedConnectEvents.map((event) => redactEvent(event, previewChars)));
+    findings.push(finding("Tool Boundary", "deterministic", "require_approval", "eBPF observed unexpected socket connection after non-network tool was allowed", 70, {
+      toolName: clampText(toolName, previewChars),
+      command: command ? clampText(command, previewChars) : "",
+      observed_connect: unexpectedConnectEvents.map((event) => redactEvent(event, previewChars)).slice(0, 8),
       monitor,
       runtime_audit: {
         source: "ebpf",
@@ -530,6 +527,29 @@ function auditEbpfEvents(
     findings: dedupeFindings(findings),
     interestingEvents: interestingEvents.slice(0, 20),
   };
+}
+
+function attributeEventsToRuntime(events: Array<Record<string, unknown>>, checkpoint: EbpfLogCheckpoint): Array<Record<string, unknown>> {
+  const rootPid = checkpoint.root_pid;
+  const rootUid = checkpoint.root_uid;
+  if (!rootPid && rootUid === undefined) return events;
+
+  const acceptedPids = new Set<number>([rootPid].filter((pid) => Number.isFinite(pid) && pid > 0));
+  const attributed: Array<Record<string, unknown>> = [];
+  for (const event of events) {
+    const pid = numericField(event.pid);
+    const ppid = numericField(event.ppid);
+    const uid = numericField(event.uid);
+    const parentMatched = Boolean(ppid && acceptedPids.has(ppid));
+    const pidMatched = Boolean(pid && acceptedPids.has(pid));
+    const sameRuntimeUser = rootUid === undefined || uid === undefined || uid === rootUid;
+    if (!sameRuntimeUser) continue;
+    if (pidMatched || parentMatched) {
+      attributed.push(event);
+      if (pid) acceptedPids.add(pid);
+    }
+  }
+  return attributed;
 }
 
 function ebpfObserverStatus(): EbpfObserverStatus {
@@ -608,16 +628,23 @@ function isolationStatus(ebpf: SystemMonitorStatus["ebpf"]): SystemMonitorStatus
       "persistence surface denylist",
       "privileged command denylist",
       "gateway override denylist",
-      "network egress review",
+      "application pre-exec network command and URL review",
     ],
     limitations: ebpf === "available" || ebpf === "attached"
-      ? ["kernel probes require privileged service deployment"]
-      : ["kernel eBPF enforcement is unavailable to this user service", "post-exec syscall observation is not attached"],
+      ? [
+        "kernel probes require privileged service deployment",
+        "connect events are syscall-only and do not extract, allowlist, or classify destination addresses",
+      ]
+      : [
+        "kernel eBPF enforcement is unavailable to this user service",
+        "post-exec syscall observation is not attached",
+        "connect destination anomaly detection is not provided by the observer",
+      ],
     recommended_runtime: [
       "run OpenClaw tools as a low-privilege user",
       "mount workspace read-write and system paths read-only",
       "apply outbound network allowlist",
-      "enable seccomp/AppArmor or eBPF observer when host policy permits",
+      "enable seccomp/AppArmor or a destination-aware network monitor when host policy permits",
     ],
   };
 }
@@ -688,6 +715,19 @@ function collectUrls(value: unknown, out: string[] = []): string[] {
   return Array.from(new Set(out));
 }
 
+function collectGatewayOverrideUrls(value: unknown, out: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const item of value) collectGatewayOverrideUrls(item, out);
+    return Array.from(new Set(out));
+  }
+  if (!value || typeof value !== "object") return Array.from(new Set(out));
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (/^gateway(?:_?url)?$/i.test(key) && typeof item === "string" && isExternalUrl(item)) out.push(item);
+    collectGatewayOverrideUrls(item, out);
+  }
+  return Array.from(new Set(out));
+}
+
 function isExternalUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -707,46 +747,25 @@ function matchPatterns(text: string, patterns: RegExp[]): string[] {
   const matches: string[] = [];
   for (const pattern of patterns) {
     const match = pattern.exec(text);
-    if (match) matches.push(match[0].slice(0, 180).replace(/\bsk-[a-zA-Z0-9_-]{8,}\b/g, "[redacted]"));
+    if (match) matches.push(clampText(match[0], 180));
   }
   return Array.from(new Set(matches));
 }
 
-function isSafeSystemReadPath(path: string): boolean {
-  const normalized = path.replace(/\\/g, "/").toLowerCase();
-  return [
-    "/etc/os-release",
-    "/etc/issue",
-    "/etc/hostname",
-    "/proc/cpuinfo",
-    "/proc/meminfo",
-    "/proc/loadavg",
-    "/proc/uptime",
-  ].includes(normalized);
+function redactEvidenceStrings(values: string[], limit: number, previewChars: number): string[] {
+  const maxChars = Math.max(64, Math.min(previewChars, 512));
+  return values.slice(0, limit).map((value) => clampText(value, maxChars));
 }
 
-function isLowRiskShellRead(command: string): boolean {
-  const trimmed = command.trim();
-  const safePatterns = [
-    /^(pwd|whoami|id|hostname|uname\s+-a|date)$/i,
-    /^(ls|find|du|df)(\s+[-\w./~*]+)*$/i,
-    /^(cat|head|tail)\s+\/etc\/(os-release|issue|hostname)$/i,
-    /^(cat|head|tail)\s+\/proc\/(cpuinfo|meminfo|loadavg|uptime)$/i,
-    /^stat\s+[-\w./~*]+$/i,
-    /^wc\s+[-\w\s./~*]+$/i,
-  ];
-  return safePatterns.some((pattern) => pattern.test(trimmed));
+function redactEvent(event: Record<string, unknown>, previewChars: number): Record<string, unknown> {
+  const redacted = redactObject(event, Math.max(64, Math.min(previewChars, 512)));
+  return redacted && typeof redacted === "object" && !Array.isArray(redacted)
+    ? redacted as Record<string, unknown>
+    : {};
 }
 
 function isRelevantComm(comm: string): boolean {
-  return /^(node|bash|sh|zsh|python|python3|cat|head|tail|curl|wget|nc|ncat|socat)$/i.test(comm.trim());
-}
-
-function isAgentSentryMonitorInternalExec(text: string): boolean {
-  return /(?:^|\/)systemctl\s+is-active\s+--quiet\s+agentsentry-ebpf-observer\.service\b/.test(text)
-    || /(?:^|\/)systemctl\s+is-active\s+--quiet\s*$/.test(text)
-    || /(?:^|\/)pgrep\s+-f\s+bpftrace\s+\.\*agentsentry-ebpf-observer/i.test(text)
-    || /(?:^|\/)bpftool\s+version\b/.test(text);
+  return /^(node|bash|sh|zsh|python|python3|curl|wget|nc|ncat|socat|cat|head|tail)$/i.test(comm.trim());
 }
 
 function isBenignRuntimePath(path: string): boolean {
@@ -788,22 +807,27 @@ function execEventText(event: Record<string, unknown>): string {
     .join(" ");
 }
 
-function numericField(event: Record<string, unknown>, key: string): number {
-  const value = event[key];
-  if (typeof value === "number") return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
-}
-
 function isDangerousRuntimeExec(text: string): boolean {
   return /\b(?:curl|wget)\b[\s\S]{0,160}\|\s*(?:bash|sh|zsh|python|node)\b/i.test(text)
     || /\b(?:curl|wget|nc|ncat|socat|scp|rsync)\b[\s\S]{0,180}(?:\.env|id_rsa|id_ed25519|openclaw\.json|token|secret|credential)/i.test(text)
     || /\b(?:bash|sh|zsh|python|python3|node)\s+-c\b/i.test(text)
     || /\b(?:sudo|chmod|chown|systemctl|service|crontab|iptables|ufw|docker)\b/i.test(text)
     || /\brm\s+-rf\b/i.test(text);
+}
+
+function isAgentSentryMonitorInternalExec(text: string): boolean {
+  return /systemctl\s+is-active\s+--quiet(?:\s+agentsentry-ebpf-observer\.service)?/i.test(text)
+    || /pgrep\s+-f\s+bpftrace[\s\S]{0,80}agentsentry-ebpf-observer/i.test(text)
+    || /bpftool\s+version/i.test(text);
+}
+
+function numericField(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function canAccess(path: string): boolean {

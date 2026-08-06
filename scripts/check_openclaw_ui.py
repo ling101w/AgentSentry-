@@ -8,11 +8,15 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from _dashboard_auth import dashboard_access_url, dashboard_request
+
 from playwright.sync_api import sync_playwright
+
+from playwright_browser import launch_chromium
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "reports" / "ui-screenshots-8765"
+OUT_DIR = Path(os.environ.get("AGENTSENTRY_UI_OUTPUT_DIR", ROOT / "reports" / "ui-screenshots-8765")).expanduser().resolve()
 BASE_URL = "http://127.0.0.1:8765"
 KEEP_SCREENSHOTS = os.environ.get("AGENTSENTRY_KEEP_SCREENSHOTS") == "1"
 
@@ -63,20 +67,26 @@ def main() -> int:
         "enforcement_settings_api",
         mode_settings.get("ok") is True
         and mode_settings.get("mode") in {"observe", "approval", "block"}
-        and len(mode_settings.get("modes", [])) == 3,
+        and len(mode_settings.get("modes", [])) == 3
+        and mode_settings.get("profile") == "competition"
+        and mode_settings.get("competitionReady") is True
+        and len(mode_settings.get("securityStack", [])) == 5,
         {
+            "profile": mode_settings.get("profile"),
             "mode": mode_settings.get("mode"),
             "modes": [item.get("value") for item in mode_settings.get("modes", []) if isinstance(item, dict)],
+            "enabledSecurityLayers": mode_settings.get("enabledSecurityLayers"),
+            "competitionReady": mode_settings.get("competitionReady"),
         },
     )
 
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = launch_chromium(p)
         console_errors: list[str] = []
 
         page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
-        page.goto(f"{BASE_URL}/", wait_until="domcontentloaded", timeout=30000)
+        page.goto(dashboard_access_url(BASE_URL, "/"), wait_until="domcontentloaded", timeout=30000)
         page.wait_for_timeout(900)
         save_screenshot(page, report, "home-1440x900.png")
         add_check(
@@ -97,11 +107,44 @@ def main() -> int:
                 "help": page.locator("#modeHelpText").inner_text()[:120] if page.locator("#modeHelpText").count() else "",
             },
         )
+        home_stack_count = page.locator("#securityStack .stack-item").count()
+        home_story_count = page.locator(".decision-story .decision-step").count()
+        add_check(
+            report,
+            "home_defense_stack_and_evidence_chain",
+            home_stack_count == 5
+            and "比赛防护链已就绪" in page.locator("#stackReadiness").inner_text()
+            and home_story_count == 5,
+            {
+                "stackCount": home_stack_count,
+                "readiness": page.locator("#stackReadiness").inner_text(),
+                "evidenceSteps": home_story_count,
+            },
+        )
+        page.close()
+
+        page = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1)
+        page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+        page.goto(f"{BASE_URL}/", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_selector("#securityStack .stack-item", timeout=15000)
+        page.wait_for_timeout(700)
+        save_screenshot(page, report, "home-390x844.png")
+        mobile_stack_count = page.locator("#securityStack .stack-item").count()
+        add_check(
+            report,
+            "home_mobile_defense_stack",
+            mobile_stack_count == 5 and page.locator("#stackReadiness").is_visible(),
+            {
+                "stackCount": mobile_stack_count,
+                "readiness": page.locator("#stackReadiness").inner_text(),
+            },
+        )
+        report["layout_issues"].extend({"viewport": "home-390x844", **issue} for issue in page.evaluate(LAYOUT_CHECK_JS))
         page.close()
 
         page = browser.new_page(viewport={"width": 1440, "height": 900}, device_scale_factor=1)
         page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
-        page.goto(f"{BASE_URL}/command-lab", wait_until="domcontentloaded", timeout=30000)
+        page.goto(dashboard_access_url(BASE_URL, "/command-lab"), wait_until="domcontentloaded", timeout=30000)
         page.wait_for_selector("#commandInput", timeout=15000)
         page.wait_for_selector("#modeSelect", timeout=15000)
         page.wait_for_timeout(900)
@@ -115,6 +158,24 @@ def main() -> int:
                 "mode": page.locator("#modeSelect").input_value(),
                 "status": page.locator("#modeStatus").inner_text(),
                 "help": page.locator("#modeHelpText").inner_text()[:120],
+            },
+        )
+        benign_demo = page.locator('[data-demo-scenario="benign"]')
+        attack_demo = page.locator('[data-demo-scenario="external_email_hidden"]')
+        benign_demo.click()
+        benign_selected = page.locator("#scenarioSelect").input_value() == "benign" and "active" in (benign_demo.get_attribute("class") or "")
+        attack_demo.click()
+        libraries_collapsed = page.evaluate("Array.from(document.querySelectorAll('details.library-panel')).every(item => !item.open)")
+        add_check(
+            report,
+            "command_lab_attack_benign_switch",
+            benign_selected
+            and page.locator("#scenarioSelect").input_value() == "external_email_hidden"
+            and libraries_collapsed,
+            {
+                "benignSelected": benign_selected,
+                "currentScenario": page.locator("#scenarioSelect").input_value(),
+                "collapsedLibraries": libraries_collapsed,
             },
         )
         page.locator("#commandInput").fill("请阅读这封客户邮件，整理项目风险、预算变化和交付日期。")
@@ -140,14 +201,37 @@ def main() -> int:
         add_check(
             report,
             "command_lab_submit",
-            ("阻断" in state_text or "确认" in state_text) and ui_has_decision and ui_has_alert,
+            ("阻断" in state_text or "确认" in state_text)
+            and ui_has_decision
+            and ui_has_alert
+            and page.locator("#flowDecisionSummary .flow-decision-item").count() == 5,
             {
                 "state": state_text,
                 "streamPreview": stream_text[:240],
                 "recentSessionTypes": [item.get("type") for item in ui_session_records[:24]],
+                "decisionSummarySteps": page.locator("#flowDecisionSummary .flow-decision-item").count(),
             },
         )
         report["layout_issues"].extend({"viewport": "command-lab-1440x900", **issue} for issue in page.evaluate(LAYOUT_CHECK_JS))
+        page.close()
+
+        page = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=1)
+        page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
+        page.goto(f"{BASE_URL}/command-lab", wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_selector("#flowDecisionSummary .flow-decision-item", timeout=15000)
+        page.wait_for_timeout(700)
+        save_screenshot(page, report, "command-lab-390x844.png")
+        add_check(
+            report,
+            "command_lab_mobile_demo_controls",
+            page.locator("[data-demo-scenario]").count() == 2
+            and page.locator("#flowDecisionSummary .flow-decision-item").count() == 5,
+            {
+                "demoControls": page.locator("[data-demo-scenario]").count(),
+                "decisionSummarySteps": page.locator("#flowDecisionSummary .flow-decision-item").count(),
+            },
+        )
+        report["layout_issues"].extend({"viewport": "command-lab-390x844", **issue} for issue in page.evaluate(LAYOUT_CHECK_JS))
         page.close()
 
         for name, width, height in [
@@ -157,7 +241,7 @@ def main() -> int:
         ]:
             page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=1)
             page.on("console", lambda msg: console_errors.append(msg.text) if msg.type == "error" else None)
-            page.goto(f"{BASE_URL}/security-screen", wait_until="domcontentloaded", timeout=30000)
+            page.goto(dashboard_access_url(BASE_URL, "/security-screen"), wait_until="domcontentloaded", timeout=30000)
             wait_for_kpis(page)
             api = page.evaluate("fetch('/api/security/overview').then((res) => res.json())")
             stats = page.evaluate("fetch('/api/stats?limit=5000').then((res) => res.json())")
@@ -176,7 +260,10 @@ def main() -> int:
                 source_mode == "openclaw"
                 and kpi_count >= 8
                 and total_delta <= 25
-                and page.locator("#runtimeMode").inner_text() != "NO API",
+                and page.locator("#runtimeMode").inner_text() != "NO API"
+                and page.locator("#evidenceChain > span").count() == 5
+                and page.evaluate("Array.from(document.querySelectorAll('#evidenceChain > span')).every(item => getComputedStyle(item).display !== 'none')")
+                and "比赛防护链路已就绪" in page.locator("#defenseMainText").inner_text(),
                 {
                     "runtime": page.locator("#runtimeMode").inner_text(),
                     "kpiCount": kpi_count,
@@ -186,9 +273,28 @@ def main() -> int:
                     "totalDelta": total_delta,
                     "source": source,
                     "protectionIndex": page.locator("#protectionIndex").inner_text(),
+                    "evidenceSteps": page.locator("#evidenceChain > span").count(),
+                    "defenseState": page.locator("#defenseMainText").inner_text(),
                 },
             )
             if name == "screen-1920x1080":
+                live_alert = page.locator("#alertStream [data-alert-index]").first
+                live_alert_available = live_alert.count() > 0 and live_alert.is_visible()
+                if live_alert_available:
+                    live_alert.click()
+                    page.wait_for_timeout(180)
+                add_check(
+                    report,
+                    "alert_selects_evidence_chain",
+                    live_alert_available
+                    and "selected" in (live_alert.get_attribute("class") or "")
+                    and page.locator("#evidenceChain > span").count() == 5,
+                    {
+                        "alertAvailable": live_alert_available,
+                        "selectedClass": live_alert.get_attribute("class") if live_alert_available else "",
+                        "chainText": page.locator("#evidenceChain").inner_text()[:220],
+                    },
+                )
                 pause_button = page.locator("#pauseBtn")
                 if pause_button.count() > 0 and pause_button.inner_text() == "暂停":
                     pause_button.click()
@@ -245,7 +351,10 @@ def save_screenshot(page, report: dict[str, object], filename: str) -> None:
     page.screenshot(path=str(screenshot), full_page=True)
     screenshots = report.get("screenshots")
     if isinstance(screenshots, list):
-        screenshots.append(str(screenshot.relative_to(ROOT)))
+        try:
+            screenshots.append(str(screenshot.relative_to(ROOT)))
+        except ValueError:
+            screenshots.append(str(screenshot))
 
 
 def wait_for_server(timeout: float = 45.0) -> None:
@@ -253,7 +362,7 @@ def wait_for_server(timeout: float = 45.0) -> None:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
-            with urlopen(f"{BASE_URL}/api/health", timeout=2) as response:
+            with urlopen(dashboard_request(f"{BASE_URL}/api/health"), timeout=2) as response:
                 if response.status < 500:
                     return
         except (OSError, URLError) as exc:
@@ -263,13 +372,13 @@ def wait_for_server(timeout: float = 45.0) -> None:
 
 
 def get_json(path: str) -> dict:
-    with urlopen(f"{BASE_URL}{path}", timeout=15) as response:
+    with urlopen(dashboard_request(f"{BASE_URL}{path}"), timeout=15) as response:
         value = json.loads(response.read().decode("utf-8"))
     return value if isinstance(value, dict) else {}
 
 
 def post_json(path: str, payload: dict) -> dict:
-    req = Request(
+    req = dashboard_request(
         f"{BASE_URL}{path}",
         data=json.dumps(payload).encode("utf-8"),
         method="POST",

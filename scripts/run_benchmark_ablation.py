@@ -20,6 +20,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from _dashboard_auth import dashboard_request
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BASE_URL = os.environ.get("AGENTSENTRY_DASHBOARD", "http://127.0.0.1:8765").rstrip("/")
@@ -774,13 +776,13 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def get_json(base_url: str, path: str, timeout: float) -> dict[str, Any]:
-    with urlopen(f"{base_url}{path}", timeout=timeout) as response:
+    with urlopen(dashboard_request(f"{base_url}{path}"), timeout=timeout) as response:
         value = json.loads(response.read().decode("utf-8"))
     return value if isinstance(value, dict) else {}
 
 
 def post_json(base_url: str, path: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
-    request = Request(
+    request = dashboard_request(
         f"{base_url}{path}",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         method="POST",

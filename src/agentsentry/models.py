@@ -31,6 +31,9 @@ class DetectionVerdict(StrEnum):
 class FindingType(StrEnum):
     DETERMINISTIC = "deterministic"
     HEURISTIC = "heuristic"
+    BEHAVIORAL = "behavioral"
+    SEMANTIC = "semantic"
+    # Read compatibility for archived records; new code must not emit this type.
     LEARNED = "learned"
 
 

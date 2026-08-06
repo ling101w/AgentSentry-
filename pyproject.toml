@@ -1,6 +1,6 @@
 [project]
 name = "agentsentry"
-version = "0.1.0"
+version = "0.2.0"
 description = "AgentSentry: supervised LLM agent behavior firewall prototype"
 requires-python = ">=3.11"
 dependencies = [
@@ -8,14 +8,17 @@ dependencies = [
     "httpx",
     "pydantic",
     "pyyaml",
-    "scikit-learn",
     "uvicorn",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "jsonschema>=4.23",
     "playwright",
     "pytest",
+]
+native-agentdojo = [
+    "agentdojo==0.1.35",
 ]
 
 [tool.pytest.ini_options]

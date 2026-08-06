@@ -1,0 +1,31 @@
+name: AgentDojo Native Contract
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: openclaw-plugin/package-lock.json
+      - run: python -m pip install -e ".[dev,native-agentdojo]"
+      - run: npm ci --legacy-peer-deps
+        working-directory: openclaw-plugin
+      - run: npm run build
+        working-directory: openclaw-plugin
+      - run: python scripts/run_agentdojo_native.py --doctor
+      - run: python scripts/run_agentdojo_native.py --plan
+      - run: python scripts/run_agentdojo_native.py --contract
+      - run: python -m pytest -q tests/test_agentdojo_adapter.py tests/test_agentdojo_native_runner.py tests/test_native_protocol.py

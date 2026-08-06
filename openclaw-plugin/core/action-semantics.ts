@@ -8,7 +8,7 @@ type SemanticFact = {
   variants: string[];
 };
 
-type SemanticGraph = {
+export type SemanticGraph = {
   operations: string[];
   sensitiveSources: string[];
   externalSinks: string[];
@@ -130,8 +130,8 @@ export function semanticActionFindings(
       externalSinks: graph.externalSinks.slice(0, 6),
     }, config));
   } else if (hasExplicitPersistence || hasPrivilegedEffect) {
-    risk += 35;
-    findings.push(finding("Tool Boundary", "heuristic", "require_approval", "semantic action graph contains persistence or privileged side effects", 45, {
+    risk += 20;
+    findings.push(finding("Tool Boundary", "heuristic", "require_approval", "semantic action graph contains persistence or privileged side effects", 20, {
       toolName,
       persistenceTargets: graph.persistenceTargets.slice(0, 6),
       privilegedEffects: graph.privilegedEffects.slice(0, 6),
@@ -375,7 +375,7 @@ function printableText(value: string): string {
 
 function finding(
   layer: string,
-  findingType: "deterministic" | "heuristic" | "learned",
+  findingType: DetectionFinding["finding_type"],
   verdict: "pass" | "require_approval" | "block",
   reason: string,
   score: number,

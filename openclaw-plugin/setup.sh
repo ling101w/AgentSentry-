@@ -78,4 +78,5 @@ fi
 echo ""
 echo "===== Setup Complete ====="
 echo "OpenClaw command: /agentsentry"
-echo "Dashboard default: http://127.0.0.1:8765"
+echo "Dashboard bind: http://127.0.0.1:8765 (authentication required)"
+echo "Run /agentsentry after the Gateway starts to get the authenticated browser URL."

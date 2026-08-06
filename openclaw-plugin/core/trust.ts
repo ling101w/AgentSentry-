@@ -439,7 +439,7 @@ export function sourceFromTool(toolName: string): TrustSource {
 
 export function finding(
   layer: string,
-  findingType: "deterministic" | "heuristic" | "learned",
+  findingType: DetectionFinding["finding_type"],
   verdict: "pass" | "require_approval" | "block",
   reason: string,
   score: number,

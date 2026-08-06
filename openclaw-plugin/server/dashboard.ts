@@ -1,11 +1,17 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { isIP } from "node:net";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGzip } from "node:zlib";
 import type { PluginConfig } from "../config.ts";
 import { detectMessageContent, detectToolCall } from "../core/detect.ts";
 import { runtimeConfigPath, saveRuntimeConfig } from "../core/runtime-config.ts";
+import { loadOrCreateStateSecret } from "../core/state-secret.ts";
+import { matchAllowedWritePath, pathWithinRoot } from "../core/path-security.ts";
+import { safeHttpGet } from "../core/ssrf-http.ts";
 import {
   memoryConsensusFindings,
   memoryGuardScanRead,
@@ -16,14 +22,24 @@ import {
   type MemoryGuardAction,
   type MemorySourceClass,
 } from "../core/memory-guard.ts";
-import { createPolicyState, normalizeAction, policyTrustSnapshot, resultFindings, updateAfterDecision, updateAfterMessage, updateAfterRuntimeFindings, updateTaskSpec } from "../core/policy.ts";
+import {
+  createPolicyState,
+  policyTrustSnapshot,
+  resultFindings,
+  updateActionGraphEnforcement,
+  updateAfterDecision,
+  updateAfterMessage,
+  updateAfterRuntimeFindings,
+  updateTaskSpec,
+} from "../core/policy.ts";
 import type { PolicyState } from "../core/policy.ts";
 import type { AgentSentryRecord, RecordSeverity, RecordStore } from "../core/records.ts";
-import { semanticJudgeMemoryWrite, semanticJudgeMessage, semanticJudgeToolCall } from "../core/semantic.ts";
+import { semanticJudgeAmbiguousAction } from "../core/semantic.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfRuntimeAudit } from "../core/system-monitor.ts";
 
 export type DashboardServer = {
   url: string;
+  accessUrl: string;
   close: () => Promise<void>;
 };
 
@@ -69,17 +85,32 @@ const ENFORCEMENT_MODES = [
 type DashboardEnforcementMode = (typeof ENFORCEMENT_MODES)[number]["value"];
 type SemanticJudgeOverride = "default" | "on" | "off";
 
+type DashboardSecurity = {
+  bindHost: string;
+  port: number;
+  token: string;
+};
+
 export function startDashboard(config: PluginConfig, store: RecordStore, logger: LoggerLike, runtime?: DashboardRuntime): Promise<DashboardServer> {
   const publicDir = join(fileURLToPath(new URL(".", import.meta.url)), "..", "public");
   const host = config.dashboard.host;
   const port = config.dashboard.port;
+  const loopback = isLoopbackHost(host);
+  if (!loopback && !config.dashboard.allowRemote) {
+    throw new Error(`dashboard host ${host} is not loopback; set dashboard.allowRemote=true and configure dashboard.authToken to enable remote access`);
+  }
+  if (!loopback && config.dashboard.authToken.length < 32) {
+    throw new Error("remote dashboard access requires dashboard.authToken with at least 32 characters");
+  }
+  const token = config.dashboard.authToken || loadOrCreateStateSecret(config, "dashboard-session").toString("base64url");
+  const security: DashboardSecurity = { bindHost: host, port, token };
   const dashboardRuntime: DashboardRuntime = runtime ?? {
     getConfig: () => config,
     setConfig: () => undefined,
   };
 
   const server = createServer((req, res) => {
-    void handleRequest(req, res, publicDir, store, dashboardRuntime);
+    void handleRequest(req, res, publicDir, store, dashboardRuntime, security);
   });
 
   return new Promise((resolve, reject) => {
@@ -88,10 +119,13 @@ export function startDashboard(config: PluginConfig, store: RecordStore, logger:
       server.off("error", reject);
       const address = server.address();
       const actualPort = typeof address === "object" && address ? address.port : port;
-      const url = `http://${host}:${actualPort}`;
+      security.port = actualPort;
+      const url = `http://${formatHostForUrl(host)}:${actualPort}`;
+      const accessUrl = `${url}/?access_token=${encodeURIComponent(token)}`;
       logger.info(`[AgentSentry] dashboard listening at ${url}`);
       resolve({
         url,
+        accessUrl,
         close: () => closeServer(server),
       });
     });
@@ -104,9 +138,24 @@ async function handleRequest(
   publicDir: string,
   store: RecordStore,
   runtime: DashboardRuntime,
+  security: DashboardSecurity,
 ): Promise<void> {
   const url = new URL(req.url || "/", "http://agentsentry.local");
   const config = runtime.getConfig();
+
+  if (req.method === "GET" && url.pathname.startsWith("/lab-content/")) {
+    const name = url.pathname.split("/").pop() || "";
+    const content = labContent(name);
+    if (!content) {
+      sendText(res, 404, "Not found");
+      return;
+    }
+    res.writeHead(200, { "Content-Type": content.contentType, "Cache-Control": "no-store" });
+    res.end(content.body);
+    return;
+  }
+
+  if (!authorizeDashboardRequest(req, res, url, security)) return;
 
   if (req.method === "GET" && url.pathname === "/api/health") {
     sendJson(req, res, {
@@ -132,18 +181,6 @@ async function handleRequest(
       runtime_isolation: config.runtimeIsolation,
       system_monitor: systemMonitorStatus(),
     });
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname.startsWith("/lab-content/")) {
-    const name = url.pathname.split("/").pop() || "";
-    const content = labContent(name);
-    if (!content) {
-      sendText(res, 404, "Not found");
-      return;
-    }
-    res.writeHead(200, { "Content-Type": content.contentType, "Cache-Control": "no-store" });
-    res.end(content.body);
     return;
   }
 
@@ -369,6 +406,121 @@ async function handleRequest(
   serveStaticFile(req, res, filePath, requested);
 }
 
+function authorizeDashboardRequest(req: IncomingMessage, res: ServerResponse, url: URL, security: DashboardSecurity): boolean {
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+
+  const hostHeader = typeof req.headers.host === "string" ? req.headers.host.trim() : "";
+  if (!validDashboardHost(hostHeader, security)) {
+    sendText(res, 421, "Invalid dashboard Host header");
+    return false;
+  }
+
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin.trim() : "";
+  if (origin && !validDashboardOrigin(origin, hostHeader)) {
+    sendText(res, 403, "Invalid dashboard Origin header");
+    return false;
+  }
+
+  const bearer = bearerToken(req);
+  const bearerAuthenticated = Boolean(bearer && secureTokenEqual(bearer, security.token));
+  const sessionAuthenticated = secureTokenEqual(cookieValue(req, "agentsentry_session"), security.token);
+  const method = (req.method || "GET").toUpperCase();
+  const safeMethod = method === "GET" || method === "HEAD";
+
+  if (!safeMethod && !origin && !bearerAuthenticated) {
+    sendText(res, 403, "Dashboard state changes require a same-origin request or bearer token");
+    return false;
+  }
+  if (bearerAuthenticated || sessionAuthenticated) return true;
+
+  const bootstrapToken = url.searchParams.get("access_token") || "";
+  if (safeMethod && secureTokenEqual(bootstrapToken, security.token)) {
+    url.searchParams.delete("access_token");
+    const location = `${url.pathname}${url.search}` || "/";
+    res.writeHead(303, {
+      Location: location,
+      "Cache-Control": "no-store",
+      "Set-Cookie": `agentsentry_session=${encodeURIComponent(security.token)}; Path=/; HttpOnly; SameSite=Strict`,
+    });
+    res.end();
+    return false;
+  }
+
+  res.setHeader("WWW-Authenticate", 'Bearer realm="AgentSentry Dashboard"');
+  sendText(res, 401, "Dashboard authentication required");
+  return false;
+}
+
+function validDashboardHost(hostHeader: string, security: DashboardSecurity): boolean {
+  if (!hostHeader) return false;
+  try {
+    const parsed = new URL(`http://${hostHeader}`);
+    const requestPort = parsed.port ? Number(parsed.port) : 80;
+    if (requestPort !== security.port) return false;
+    const requestHost = parsed.hostname.toLowerCase();
+    const bindHost = stripIpv6Brackets(security.bindHost).toLowerCase();
+    if (isLoopbackHost(bindHost)) return isLoopbackHost(requestHost);
+    if (bindHost === "0.0.0.0" || bindHost === "::") return isIP(requestHost) !== 0;
+    return requestHost === bindHost;
+  } catch {
+    return false;
+  }
+}
+
+function validDashboardOrigin(origin: string, hostHeader: string): boolean {
+  try {
+    return new URL(origin).origin === new URL(`http://${hostHeader}`).origin;
+  } catch {
+    return false;
+  }
+}
+
+function bearerToken(req: IncomingMessage): string {
+  const authorization = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || "";
+}
+
+function cookieValue(req: IncomingMessage, name: string): string {
+  const cookie = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
+  for (const item of cookie.split(";")) {
+    const separator = item.indexOf("=");
+    if (separator < 0 || item.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(item.slice(separator + 1).trim());
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+function secureTokenEqual(left: string, right: string): boolean {
+  if (!left || !right) return false;
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = stripIpv6Brackets(host).toLowerCase();
+  if (normalized === "localhost" || normalized === "::1") return true;
+  if (isIP(normalized) !== 4) return false;
+  const firstOctet = Number(normalized.split(".")[0]);
+  return firstOctet === 127;
+}
+
+function stripIpv6Brackets(host: string): string {
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+function formatHostForUrl(host: string): string {
+  const normalized = stripIpv6Brackets(host);
+  return isIP(normalized) === 6 ? `[${normalized}]` : normalized;
+}
+
 function compactRecord(record: AgentSentryRecord): AgentSentryRecord {
   return {
     ...record,
@@ -377,12 +529,25 @@ function compactRecord(record: AgentSentryRecord): AgentSentryRecord {
 }
 
 function enforcementSettings(config: PluginConfig): Record<string, unknown> {
+  const securityStack = [
+    { key: "task_spec", label: "TaskSpec 授权", enabled: true },
+    { key: "deterministic", label: "确定性策略", enabled: config.policy.deterministic },
+    { key: "taint_feedback", label: "污点与证据回流", enabled: config.policy.taintFeedback },
+    { key: "semantic", label: "语义复核", enabled: config.semantic.enabled },
+    { key: "response_cover", label: "污染响应覆盖", enabled: config.responseCover.enabled },
+  ];
   return {
     ok: true,
+    profile: config.profile,
     mode: config.enforcement.mode,
     approvalTimeoutMs: config.enforcement.approvalTimeoutMs,
     runtimeConfigPath: runtimeConfigPath(config),
     modes: ENFORCEMENT_MODES,
+    securityStack,
+    enabledSecurityLayers: securityStack.filter((item) => item.enabled).length,
+    competitionReady: config.enforcement.mode !== "observe"
+      && securityStack.every((item) => item.enabled)
+      && config.policy.restrictWritesToAllowedRoots,
   };
 }
 
@@ -695,6 +860,7 @@ function compactPayload(record: AgentSentryRecord): Record<string, unknown> {
   if (payload.task_spec && typeof payload.task_spec === "object") {
     const taskSpec = payload.task_spec as Record<string, unknown>;
     compact.task_spec = {
+      capabilities: Array.isArray(taskSpec.capabilities) ? taskSpec.capabilities.slice(0, 12) : undefined,
       allowed_tools: Array.isArray(taskSpec.allowed_tools) ? taskSpec.allowed_tools.slice(0, 12) : undefined,
       allowed_targets: Array.isArray(taskSpec.allowed_targets) ? taskSpec.allowed_targets.slice(0, 3) : undefined,
     };
@@ -974,7 +1140,32 @@ type OverviewEvent = {
   score: number;
   created_at: string;
   text: string;
+  causal_chain: string[];
+  causal_graph: OverviewCausalGraph | null;
 };
+
+export type OverviewCausalGraph = {
+  version: number;
+  trace_kind: "attack" | "authorized" | "enforcement_bypass";
+  path_id: string;
+  risk: string;
+  verdict: string;
+  certainty: string;
+  confidence: number;
+  session_node_count: number;
+  session_edge_count: number;
+  session_path_count: number;
+  snapshot_truncated: boolean;
+  projection_truncated: boolean;
+  path_node_ids: string[];
+  path_edge_ids: string[];
+  nodes: Array<Record<string, unknown>>;
+  edges: Array<Record<string, unknown>>;
+};
+
+const OVERVIEW_CAUSAL_PATH_NODE_LIMIT = 12;
+const OVERVIEW_CAUSAL_TOTAL_NODE_LIMIT = 16;
+const OVERVIEW_CAUSAL_EDGE_LIMIT = 24;
 
 const OVERVIEW_LAYERS: Array<[string, string]> = [
   ["Context Provenance", "上下文溯源"],
@@ -1040,8 +1231,9 @@ function buildOpenClawSecurityOverview(store: RecordStore, limit: number): Recor
   const memory = events.filter((event) => overviewHasAny(event.text, ["memory", "poison", "记忆", "投毒"]));
   const toolEvents = events.filter((event) => event.tool !== "agent" || overviewHasAny(event.text, ["tool", "工具", "read", "write", "call"]));
   const protectionIndex = overviewProtectionIndex(decisions, dangerous, taints);
-  const alerts = overviewAlerts(events);
-  const allAlertCount = records.length === totalRecords ? alerts.length : cachedAlertCount(store, totalRecords);
+  const riskAlerts = overviewAlerts(events);
+  const alerts = overviewAlerts(events, { includeAuthorizedTrace: true });
+  const allAlertCount = records.length === totalRecords ? riskAlerts.length : cachedAlertCount(store, totalRecords);
   const timeline = overviewTimeline(events);
   return {
     generated_at: new Date().toISOString(),
@@ -1138,6 +1330,7 @@ function buildOpenClawAlertPage(store: RecordStore, page: number, pageSize: numb
 function overviewEvent(record: AgentSentryRecord): OverviewEvent {
   const payload = record.payload && typeof record.payload === "object" ? record.payload : {};
   const text = overviewText(record, payload);
+  const causalGraph = overviewCausalGraph(payload);
   return {
     id: record.id,
     run_id: record.run_id || record.session_key || "",
@@ -1153,6 +1346,8 @@ function overviewEvent(record: AgentSentryRecord): OverviewEvent {
     score: overviewScore(payload),
     created_at: record.created_at || new Date().toISOString(),
     text,
+    causal_chain: overviewCausalChain(payload),
+    causal_graph: causalGraph,
   };
 }
 
@@ -1193,13 +1388,29 @@ function overviewProtectionIndex(decisions: OverviewEvent[], dangerous: Overview
   return Math.max(0, Math.min(100, Math.round(containment * 74 + businessFactor * 24)));
 }
 
-function overviewAlerts(events: OverviewEvent[]): Array<Record<string, unknown>> {
+export function overviewAlerts(
+  events: OverviewEvent[],
+  options: { includeAuthorizedTrace?: boolean } = {},
+): Array<Record<string, unknown>> {
+  let includedAuthorizedTrace = false;
   return events
-    .filter(isOverviewAlertEvent)
+    .filter((event) => {
+      const isAuthorizedTrace = event.decision === "ALLOW" && event.causal_graph?.trace_kind === "authorized";
+      if (isAuthorizedTrace) {
+        if (includedAuthorizedTrace || !options.includeAuthorizedTrace) return false;
+        includedAuthorizedTrace = true;
+        return true;
+      }
+      return isOverviewAlertEvent(event);
+    })
     .map((event) => ({
       id: event.id,
       severity: event.severity,
-      type: overviewAttackType(event),
+      type: event.causal_graph?.trace_kind === "authorized"
+        ? "精确授权放行"
+        : event.causal_graph?.trace_kind === "enforcement_bypass"
+          ? "阻断后执行"
+          : overviewAttackType(event),
       tool: event.tool,
       action: event.decision || "INFO",
       time: overviewFormatTime(event.created_at),
@@ -1207,7 +1418,581 @@ function overviewAlerts(events: OverviewEvent[]): Array<Record<string, unknown>>
       source: event.source,
       rule: event.rule,
       score: event.score,
+      causal_chain: event.causal_chain,
+      causal_graph: event.causal_graph,
     }));
+}
+
+export function overviewCausalChain(payload: Record<string, unknown>): string[] {
+  const candidates: unknown[] = [payload];
+  if (Array.isArray(payload.findings)) candidates.push(...payload.findings);
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const row = candidate as Record<string, unknown>;
+    const evidence = row.evidence && typeof row.evidence === "object" && !Array.isArray(row.evidence)
+      ? row.evidence as Record<string, unknown>
+      : row;
+    if (!Array.isArray(evidence.causal_chain)) continue;
+    const steps = evidence.causal_chain
+      .filter((step): step is string => typeof step === "string" && Boolean(step.trim()))
+      .map((step) => step.trim().slice(0, 180));
+    if (steps.length) return overviewGraphBoundaries(steps, 12);
+  }
+  return [];
+}
+
+type OverviewGraphTrace = {
+  traceKind: OverviewCausalGraph["trace_kind"];
+  pathId: string;
+  risk: string;
+  verdict: string;
+  certainty: string;
+  confidence: number;
+  nodeIds: string[];
+  edgeIds: string[];
+  supportNodeIds: string[];
+  supportEdgeIds: string[];
+};
+
+function overviewGraphTrace(
+  payload: Record<string, unknown>,
+  snapshot: Record<string, unknown>,
+  graphNodes: Array<Record<string, unknown>>,
+  graphEdges: Array<Record<string, unknown>>,
+  attackPaths: Array<Record<string, unknown>>,
+  nodeById: Map<string, Record<string, unknown>>,
+): OverviewGraphTrace | null {
+  return overviewEnforcementBypassTrace(payload, snapshot, graphNodes, graphEdges, nodeById)
+    || overviewAttackTrace(payload, attackPaths)
+    || overviewAuthorizedTrace(payload, graphNodes, graphEdges, nodeById);
+}
+
+function overviewAttackTrace(
+  payload: Record<string, unknown>,
+  attackPaths: Array<Record<string, unknown>>,
+): OverviewGraphTrace | null {
+  const evidence = overviewCausalEvidence(payload);
+  if (!evidence) return null;
+  const pathId = overviewGraphText(evidence.path_id, 96);
+  const snapshotPath = attackPaths.find((path) => overviewGraphText(path.id, 96) === pathId);
+  const snapshotNodeIds = overviewGraphIds(snapshotPath?.nodeIds, 128);
+  const snapshotEdgeIds = overviewGraphIds(snapshotPath?.edgeIds, 128);
+  return {
+    traceKind: "attack",
+    pathId,
+    risk: overviewGraphText(evidence.risk ?? snapshotPath?.risk, 80),
+    verdict: overviewGraphText(evidence.path_verdict ?? snapshotPath?.verdict ?? "review", 24),
+    certainty: overviewGraphText(evidence.path_certainty ?? snapshotPath?.certainty, 24),
+    confidence: overviewGraphConfidence(evidence.path_confidence ?? snapshotPath?.confidence),
+    nodeIds: snapshotNodeIds.length ? snapshotNodeIds : overviewGraphIds(evidence.node_ids, 128),
+    edgeIds: snapshotEdgeIds.length ? snapshotEdgeIds : overviewGraphIds(evidence.edge_ids, 128),
+    supportNodeIds: [],
+    supportEdgeIds: [],
+  };
+}
+
+function overviewAuthorizedTrace(
+  payload: Record<string, unknown>,
+  graphNodes: Array<Record<string, unknown>>,
+  graphEdges: Array<Record<string, unknown>>,
+  nodeById: Map<string, Record<string, unknown>>,
+): OverviewGraphTrace | null {
+  if (overviewGraphText(payload.decision, 24).toLowerCase() !== "allow") return null;
+  const requestedTools = new Set([
+    overviewGraphText(payload.normalized_tool, 96).toLowerCase(),
+    overviewGraphText(payload.toolName, 96).toLowerCase(),
+  ].filter(Boolean));
+  if (!requestedTools.size) return null;
+
+  const callId = typeof payload.toolCallId === "string" ? payload.toolCallId.trim() : "";
+  const callIdHash = callId ? createHash("sha256").update(callId).digest("hex").slice(0, 24) : "";
+  let actions = graphNodes.filter((node) => {
+    if (node.kind !== "action" || node.authorized !== true) return false;
+    if (overviewGraphText(node.decision, 24).toLowerCase() !== "allow") return false;
+    if (overviewGraphText(node.status, 24).toLowerCase() !== "executing") return false;
+    const tool = overviewGraphText(node.tool, 96).toLowerCase();
+    const originalTool = overviewGraphText(node.originalTool, 96).toLowerCase();
+    return requestedTools.has(tool) || requestedTools.has(originalTool);
+  });
+  if (callIdHash) {
+    actions = actions.filter((node) => overviewGraphText(node.callIdHash, 32) === callIdHash);
+  }
+  const action = actions.sort((left, right) => overviewGraphSequence(right) - overviewGraphSequence(left))[0];
+  if (!action) return null;
+  const actionId = overviewGraphText(action.id, 96);
+
+  const authorizes = graphEdges.find((edge) =>
+    overviewGraphText(edge.to, 96) === actionId
+    && overviewGraphText(edge.kind, 32) === "authorizes"
+    && nodeById.get(overviewGraphText(edge.from, 96))?.kind === "capability"
+  );
+  if (!authorizes) return null;
+  const capabilityId = overviewGraphText(authorizes.from, 96);
+  const capability = nodeById.get(capabilityId);
+  if (capability?.authorized !== true) return null;
+  const declares = graphEdges.find((edge) =>
+    overviewGraphText(edge.to, 96) === capabilityId
+    && overviewGraphText(edge.kind, 32) === "declares"
+    && nodeById.get(overviewGraphText(edge.from, 96))?.kind === "intent"
+  );
+  const targets = graphEdges.find((edge) =>
+    overviewGraphText(edge.from, 96) === actionId
+    && overviewGraphText(edge.kind, 32) === "targets"
+    && nodeById.get(overviewGraphText(edge.to, 96))?.kind === "sink"
+  );
+  if (!declares || !targets) return null;
+  const intentId = overviewGraphText(declares.from, 96);
+  const sinkId = overviewGraphText(targets.to, 96);
+  const pathEdges = [declares, authorizes, targets];
+  return {
+    traceKind: "authorized",
+    pathId: overviewGraphText(`authorized:${actionId}`, 96),
+    risk: "authorized_tool_execution",
+    verdict: "allow",
+    certainty: "observed",
+    confidence: overviewGraphMinimumConfidence(pathEdges),
+    nodeIds: [intentId, capabilityId, actionId, sinkId],
+    edgeIds: pathEdges.map((edge) => overviewGraphText(edge.id, 96)),
+    supportNodeIds: [],
+    supportEdgeIds: [],
+  };
+}
+
+function overviewEnforcementBypassTrace(
+  payload: Record<string, unknown>,
+  snapshot: Record<string, unknown>,
+  graphNodes: Array<Record<string, unknown>>,
+  graphEdges: Array<Record<string, unknown>>,
+  nodeById: Map<string, Record<string, unknown>>,
+): OverviewGraphTrace | null {
+  const evidence = overviewEnforcementBypassEvidence(payload);
+  if (!evidence) return null;
+  const blockedActionId = overviewGraphText(evidence.action_node_id, 96);
+  const blockedAction = nodeById.get(blockedActionId);
+  if (blockedAction?.kind !== "action" || blockedAction.status !== "blocked") return null;
+  const blockedCallHash = overviewGraphText(blockedAction.callIdHash, 32);
+  const evidenceCallHash = overviewGraphText(evidence.call_id_hash, 32);
+  if (!blockedCallHash || (evidenceCallHash && evidenceCallHash !== blockedCallHash)) return null;
+  const hasLifecycleAnomaly = Array.isArray(snapshot.lifecycle_anomalies)
+    && snapshot.lifecycle_anomalies.some((item) => {
+      const anomaly = recordParam(item);
+      return overviewGraphText(anomaly?.actionNodeId, 96) === blockedActionId
+        && anomaly?.from === "blocked"
+        && anomaly?.to === "succeeded";
+    });
+  if (!hasLifecycleAnomaly) return null;
+
+  const blockedTool = overviewGraphText(blockedAction.tool, 96);
+  const observedAction = graphNodes
+    .filter((node) => node.kind === "action"
+      && node.status === "observed"
+      && node.authorizationReason === "post_block_execution"
+      && node.synthetic === true
+      && overviewGraphText(node.callIdHash, 32) === blockedCallHash
+      && (!blockedTool || overviewGraphText(node.tool, 96) === blockedTool)
+      && overviewGraphSequence(node) > overviewGraphSequence(blockedAction))
+    .sort((left, right) => overviewGraphSequence(right) - overviewGraphSequence(left))[0];
+  if (!observedAction) return null;
+  const observedActionId = overviewGraphText(observedAction.id, 96);
+
+  const blockedTargets = graphEdges.filter((edge) =>
+    overviewGraphText(edge.from, 96) === blockedActionId
+    && overviewGraphText(edge.kind, 32) === "targets"
+  );
+  const blockedSinkIds = new Set(blockedTargets.map((edge) => overviewGraphText(edge.to, 96)));
+  const observedTarget = graphEdges.find((edge) =>
+    overviewGraphText(edge.from, 96) === observedActionId
+    && overviewGraphText(edge.kind, 32) === "targets"
+    && blockedSinkIds.has(overviewGraphText(edge.to, 96))
+    && nodeById.get(overviewGraphText(edge.to, 96))?.kind === "sink"
+  );
+  if (!observedTarget) return null;
+  const sinkId = overviewGraphText(observedTarget.to, 96);
+  const blockedTarget = blockedTargets.find((edge) => overviewGraphText(edge.to, 96) === sinkId);
+  if (!blockedTarget) return null;
+
+  const governs = graphEdges.find((edge) =>
+    overviewGraphText(edge.to, 96) === observedActionId
+    && overviewGraphText(edge.kind, 32) === "governs"
+    && nodeById.get(overviewGraphText(edge.from, 96))?.kind === "intent"
+  );
+  const pathEdges = governs ? [governs, observedTarget] : [observedTarget];
+  const pathNodes = governs
+    ? [overviewGraphText(governs.from, 96), observedActionId, sinkId]
+    : [observedActionId, sinkId];
+  return {
+    traceKind: "enforcement_bypass",
+    pathId: overviewGraphText(`enforcement-bypass:${blockedActionId}`, 96),
+    risk: "execution_after_block",
+    verdict: "critical",
+    certainty: "observed",
+    confidence: 1,
+    nodeIds: pathNodes,
+    edgeIds: pathEdges.map((edge) => overviewGraphText(edge.id, 96)),
+    supportNodeIds: [blockedActionId],
+    supportEdgeIds: [overviewGraphText(blockedTarget.id, 96)],
+  };
+}
+
+function overviewEnforcementBypassEvidence(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const candidates: unknown[] = [payload];
+  if (Array.isArray(payload.findings)) candidates.push(...payload.findings);
+  for (const candidate of candidates) {
+    const row = recordParam(candidate);
+    const evidence = recordParam(row?.evidence) || row;
+    if (!evidence) continue;
+    if (evidence.event === "enforcement_bypass"
+      && evidence.execution_status === "executed_after_block"
+      && overviewGraphText(evidence.action_node_id, 96)) return evidence;
+  }
+  return null;
+}
+
+function overviewGraphSequence(node: Record<string, unknown>): number {
+  const sequence = Number(node.sequence);
+  return Number.isFinite(sequence) ? Math.max(0, Math.trunc(sequence)) : 0;
+}
+
+function overviewGraphMinimumConfidence(edges: Array<Record<string, unknown>>): number {
+  return edges.reduce((minimum, edge) => Math.min(minimum, overviewGraphConfidence(edge.confidence)), 1);
+}
+
+export function overviewCausalGraph(payload: Record<string, unknown>): OverviewCausalGraph | null {
+  const trust = recordParam(payload.trust);
+  const snapshot = recordParam(trust?.semantic_action_graph);
+  if (!snapshot || Number(snapshot.version) !== 2) return null;
+
+  const graphNodes = Array.isArray(snapshot.nodes)
+    ? snapshot.nodes.map(recordParam).filter((node): node is Record<string, unknown> => Boolean(node))
+    : [];
+  const graphEdges = Array.isArray(snapshot.edges)
+    ? snapshot.edges.map(recordParam).filter((edge): edge is Record<string, unknown> => Boolean(edge))
+    : [];
+  const attackPaths = Array.isArray(snapshot.attack_paths)
+    ? snapshot.attack_paths.map(recordParam).filter((path): path is Record<string, unknown> => Boolean(path))
+    : [];
+  const nodeById = new Map(graphNodes.map((node) => [overviewGraphText(node.id, 96), node]));
+  const trace = overviewGraphTrace(payload, snapshot, graphNodes, graphEdges, attackPaths, nodeById);
+  if (!trace) return null;
+  const fullPathNodeIds = trace.nodeIds;
+  const fullPathEdgeIds = trace.edgeIds;
+  if (fullPathNodeIds.length < 2 || fullPathNodeIds.some((id) => !nodeById.has(id))) return null;
+
+  const pathProjection = overviewGraphPathProjection(fullPathNodeIds, fullPathEdgeIds, nodeById, graphEdges);
+  const pathNodeSet = new Set(pathProjection.nodeIds);
+  const includedNodeIds = new Set([
+    ...pathProjection.nodeIds.filter((id) => nodeById.has(id)),
+    ...trace.supportNodeIds.filter((id) => nodeById.has(id)),
+  ]);
+  const supportEdgeKinds = new Set(["governs", "authorizes", "constrains", "requests"]);
+  for (const edge of graphEdges) {
+    const from = overviewGraphText(edge.from, 96);
+    const to = overviewGraphText(edge.to, 96);
+    const kind = overviewGraphText(edge.kind, 32);
+    if (!includedNodeIds.has(to) || !supportEdgeKinds.has(kind)) continue;
+    const support = nodeById.get(from);
+    if (support?.kind === "intent" || support?.kind === "capability") includedNodeIds.add(from);
+  }
+  for (const edge of graphEdges) {
+    const from = overviewGraphText(edge.from, 96);
+    const to = overviewGraphText(edge.to, 96);
+    if (overviewGraphText(edge.kind, 32) === "declares" && includedNodeIds.has(to)) includedNodeIds.add(from);
+  }
+
+  const supportLimit = Math.max(0, OVERVIEW_CAUSAL_TOTAL_NODE_LIMIT - pathProjection.nodeIds.length);
+  const supportIds = graphNodes
+    .map((node) => overviewGraphText(node.id, 96))
+    .filter((id) => includedNodeIds.has(id) && !pathNodeSet.has(id))
+    .slice(0, supportLimit);
+  const allowedNodeIds = new Set([...pathProjection.nodeIds, ...supportIds]);
+  const syntheticNodeById = new Map(pathProjection.syntheticNodes.map((node) => [String(node.id), node]));
+  const nodes = [
+    ...pathProjection.nodeIds.map((id) => {
+      const synthetic = syntheticNodeById.get(id);
+      if (synthetic) return synthetic;
+      return overviewGraphNode(nodeById.get(id)!);
+    }),
+    ...supportIds
+      .map((id) => nodeById.get(id))
+      .filter((node): node is Record<string, unknown> => Boolean(node))
+      .map(overviewGraphNode),
+  ];
+  const projectedPathEdgeIds = new Set(pathProjection.edgeIds);
+  const originalPathEdgeIds = new Set(fullPathEdgeIds);
+  const explicitSupportEdgeIds = new Set(trace.supportEdgeIds);
+  const supportEdges = graphEdges
+    .filter((edge) => {
+      const id = overviewGraphText(edge.id, 96);
+      const from = overviewGraphText(edge.from, 96);
+      const to = overviewGraphText(edge.to, 96);
+      const kind = overviewGraphText(edge.kind, 32);
+      return !projectedPathEdgeIds.has(id)
+        && allowedNodeIds.has(from)
+        && allowedNodeIds.has(to)
+        && (supportEdgeKinds.has(kind) || kind === "declares" || explicitSupportEdgeIds.has(id));
+    })
+    .slice(0, Math.max(0, OVERVIEW_CAUSAL_EDGE_LIMIT - pathProjection.edges.length))
+    .map((edge) => overviewGraphEdge(edge, originalPathEdgeIds));
+  const edges = [...pathProjection.edges, ...supportEdges];
+
+  const connected = pathProjection.nodeIds.slice(1).every((to, index) => {
+    const from = pathProjection.nodeIds[index];
+    return pathProjection.edges.some((edge) => edge.from === from && edge.to === to && edge.on_path === true);
+  });
+  if (nodes.length < 2 || !edges.length || !connected) return null;
+  return {
+    version: 2,
+    trace_kind: trace.traceKind,
+    path_id: trace.pathId,
+    risk: trace.risk,
+    verdict: trace.verdict,
+    certainty: trace.certainty,
+    confidence: trace.confidence,
+    session_node_count: overviewGraphCount(snapshot.node_count, graphNodes.length),
+    session_edge_count: overviewGraphCount(snapshot.edge_count, graphEdges.length),
+    session_path_count: overviewGraphCount(snapshot.path_count, attackPaths.length),
+    snapshot_truncated: snapshot.snapshot_truncated === true,
+    projection_truncated: snapshot.snapshot_truncated === true
+      || pathProjection.syntheticNodes.length > 0
+      || fullPathNodeIds.length > pathProjection.nodeIds.length
+      || graphNodes.length > nodes.length
+      || graphEdges.length > edges.length,
+    path_node_ids: pathProjection.nodeIds,
+    path_edge_ids: pathProjection.edgeIds,
+    nodes,
+    edges,
+  };
+}
+
+type OverviewGraphPathProjection = {
+  nodeIds: string[];
+  edgeIds: string[];
+  syntheticNodes: Array<Record<string, unknown>>;
+  edges: Array<Record<string, unknown>>;
+};
+
+function overviewGraphPathProjection(
+  fullNodeIds: string[],
+  fullEdgeIds: string[],
+  nodeById: Map<string, Record<string, unknown>>,
+  graphEdges: Array<Record<string, unknown>>,
+): OverviewGraphPathProjection {
+  const collapsed = fullNodeIds.length > OVERVIEW_CAUSAL_PATH_NODE_LIMIT;
+  const retainedOriginalLimit = collapsed ? OVERVIEW_CAUSAL_PATH_NODE_LIMIT - 1 : fullNodeIds.length;
+  const headCount = collapsed ? Math.ceil(retainedOriginalLimit / 2) : fullNodeIds.length;
+  const tailCount = collapsed ? Math.floor(retainedOriginalLimit / 2) : 0;
+  const tailStart = collapsed ? fullNodeIds.length - tailCount : fullNodeIds.length;
+  const occupiedNodeIds = new Set(nodeById.keys());
+  const occupiedEdgeIds = new Set(graphEdges.map((edge) => overviewGraphText(edge.id, 96)).filter(Boolean));
+  const originalPathEdgeIds = new Set(fullEdgeIds);
+  const entries: Array<{ id: string; originalIndex: number | null }> = fullNodeIds
+    .slice(0, headCount)
+    .map((id, originalIndex) => ({ id, originalIndex }));
+  const syntheticNodes: Array<Record<string, unknown>> = [];
+  let omittedNodeCount = 0;
+  let omittedEdgeCount = 0;
+
+  if (collapsed) {
+    omittedNodeCount = fullNodeIds.length - retainedOriginalLimit;
+    omittedEdgeCount = tailStart - headCount + 1;
+    const collapsedId = overviewGraphUniqueProjectionId("projection-collapsed", occupiedNodeIds);
+    entries.push({ id: collapsedId, originalIndex: null });
+    syntheticNodes.push({
+      id: collapsedId,
+      kind: "collapsed",
+      label: `COLLAPSED PATH (${omittedNodeCount} omitted nodes)`,
+      sequence: Math.max(0, headCount),
+      effect: "display_only",
+      display_only: true,
+      synthetic: true,
+      projection: "collapsed",
+      omitted_node_count: omittedNodeCount,
+      omitted_edge_count: omittedEdgeCount,
+    });
+    entries.push(...fullNodeIds.slice(tailStart).map((id, offset) => ({
+      id,
+      originalIndex: tailStart + offset,
+    })));
+  }
+
+  const projectedEdges: Array<Record<string, unknown>> = [];
+  for (let index = 0; index < entries.length - 1; index += 1) {
+    const from = entries[index];
+    const to = entries[index + 1];
+    const consecutive = from.originalIndex !== null
+      && to.originalIndex !== null
+      && to.originalIndex === from.originalIndex + 1;
+    const graphEdge = consecutive
+      ? overviewGraphPathEdge(from.id, to.id, from.originalIndex!, fullEdgeIds, graphEdges)
+      : null;
+    if (graphEdge) {
+      const projected = overviewGraphEdge(graphEdge, originalPathEdgeIds);
+      projected.on_path = true;
+      projectedEdges.push(projected);
+      continue;
+    }
+
+    const projection = from.originalIndex === null || to.originalIndex === null ? "collapsed" : "missing_edge";
+    const edgeId = overviewGraphUniqueProjectionId(`projection-summary-${index + 1}`, occupiedEdgeIds);
+    const syntheticEdge: Record<string, unknown> = {
+      id: edgeId,
+      from: from.id,
+      to: to.id,
+      kind: "summary",
+      on_path: true,
+      basis: "conservative",
+      confidence: 0,
+      display_only: true,
+      synthetic: true,
+      projection,
+    };
+    if (projection === "collapsed") {
+      syntheticEdge.omitted_node_count = omittedNodeCount;
+      syntheticEdge.omitted_edge_count = omittedEdgeCount;
+    }
+    projectedEdges.push(syntheticEdge);
+  }
+
+  return {
+    nodeIds: entries.map((entry) => entry.id),
+    edgeIds: projectedEdges.map((edge) => String(edge.id)),
+    syntheticNodes,
+    edges: projectedEdges,
+  };
+}
+
+function overviewGraphPathEdge(
+  from: string,
+  to: string,
+  originalIndex: number,
+  pathEdgeIds: string[],
+  graphEdges: Array<Record<string, unknown>>,
+): Record<string, unknown> | null {
+  const expectedEdgeId = pathEdgeIds[originalIndex];
+  const expected = expectedEdgeId
+    ? graphEdges.find((edge) => overviewGraphText(edge.id, 96) === expectedEdgeId)
+    : null;
+  if (expected && overviewGraphText(expected.from, 96) === from && overviewGraphText(expected.to, 96) === to) {
+    return expected;
+  }
+  const pathEdgeIdSet = new Set(pathEdgeIds);
+  return graphEdges.find((edge) => pathEdgeIdSet.has(overviewGraphText(edge.id, 96))
+    && overviewGraphText(edge.from, 96) === from
+    && overviewGraphText(edge.to, 96) === to) || null;
+}
+
+function overviewGraphUniqueProjectionId(base: string, occupiedIds: Set<string>): string {
+  let candidate = base;
+  let suffix = 2;
+  while (occupiedIds.has(candidate)) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  occupiedIds.add(candidate);
+  return candidate;
+}
+
+function overviewCausalEvidence(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const candidates: unknown[] = [payload];
+  if (Array.isArray(payload.findings)) candidates.push(...payload.findings);
+  const matches: Record<string, unknown>[] = [];
+  for (const candidate of candidates) {
+    const row = recordParam(candidate);
+    const evidence = recordParam(row?.evidence) || row;
+    if (!evidence) continue;
+    if (overviewGraphText(evidence.path_id, 96) && (Array.isArray(evidence.node_ids) || Array.isArray(evidence.causal_chain))) {
+      matches.push(evidence);
+    }
+  }
+  return matches.sort((left, right) => overviewCausalEvidenceScore(right) - overviewCausalEvidenceScore(left))[0] || null;
+}
+
+function overviewCausalEvidenceScore(evidence: Record<string, unknown>): number {
+  const verdict = overviewGraphText(evidence.path_verdict ?? evidence.verdict, 24).toLowerCase();
+  const certainty = overviewGraphText(evidence.path_certainty ?? evidence.certainty, 24).toLowerCase();
+  const verdictScore = verdict === "block" || verdict === "deny" ? 300 : verdict === "review" || verdict === "require_approval" ? 200 : 100;
+  const certaintyScore = certainty === "observed" ? 20 : 0;
+  return verdictScore + certaintyScore + overviewGraphConfidence(evidence.path_confidence ?? evidence.confidence);
+}
+
+function overviewGraphNode(node: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {
+    id: overviewGraphText(node.id, 96),
+    kind: overviewGraphText(node.kind, 24),
+    label: overviewGraphText(node.label, 96),
+    sequence: Number.isFinite(Number(node.sequence)) ? Math.max(0, Math.trunc(Number(node.sequence))) : 0,
+  };
+  for (const key of ["tool", "status", "decision", "path", "source", "confidentiality", "integrity", "sink", "effect"] as const) {
+    const value = overviewGraphText(node[key], key === "path" || key === "source" ? 160 : 96);
+    if (value) result[key] = value;
+  }
+  const originalTool = overviewGraphText(node.originalTool, 96);
+  const authorizationReason = overviewGraphText(node.authorizationReason, 96);
+  const provenanceId = overviewGraphText(node.provenanceId, 96);
+  if (originalTool) result.original_tool = originalTool;
+  if (authorizationReason) result.authorization_reason = authorizationReason;
+  if (node.kind === "capability" && result.source) result.authorization_actor = result.source;
+  if (provenanceId) result.provenance_id = provenanceId;
+  if (Array.isArray(node.transformations)) {
+    const transformations = node.transformations
+      .map((item) => overviewGraphText(item, 64))
+      .filter(Boolean)
+      .slice(-8);
+    if (transformations.length) result.transformations = transformations;
+  }
+  if (typeof node.authorized === "boolean") result.authorized = node.authorized;
+  if (node.synthetic === true) result.synthetic = true;
+  return result;
+}
+
+function overviewGraphEdge(edge: Record<string, unknown>, pathEdgeIds: Set<string>): Record<string, unknown> {
+  const id = overviewGraphText(edge.id, 96);
+  const result: Record<string, unknown> = {
+    id,
+    from: overviewGraphText(edge.from, 96),
+    to: overviewGraphText(edge.to, 96),
+    kind: overviewGraphText(edge.kind, 32),
+    on_path: pathEdgeIds.has(id),
+    basis: overviewGraphText(edge.basis, 24) || "observed",
+    confidence: overviewGraphConfidence(edge.confidence),
+  };
+  const argPath = overviewGraphText(edge.argPath, 160);
+  const match = overviewGraphText(edge.match, 80);
+  if (argPath) result.arg_path = argPath;
+  if (match) result.match = match;
+  return result;
+}
+
+function overviewGraphIds(value: unknown, limit: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value
+    .map((item) => overviewGraphText(item, 96))
+    .filter(Boolean)))
+    .slice(0, limit);
+}
+
+function overviewGraphBoundaries<T>(values: T[], limit: number): T[] {
+  if (limit <= 0) return [];
+  if (values.length <= limit) return [...values];
+  const head = Math.ceil(limit / 2);
+  const tail = Math.floor(limit / 2);
+  return [...values.slice(0, head), ...values.slice(-tail)];
+}
+
+function overviewGraphText(value: unknown, limit: number): string {
+  return typeof value === "string"
+    ? value.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, limit)
+    : "";
+}
+
+function overviewGraphConfidence(value: unknown): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : 0;
+}
+
+function overviewGraphCount(value: unknown, fallback = 0): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.trunc(number)) : Math.max(0, fallback);
 }
 
 function isOverviewAlertEvent(event: OverviewEvent): boolean {
@@ -1556,6 +2341,20 @@ function policySessionFor(sessionKey: string, resetSession: boolean): { state: P
 }
 
 function labActionsFromCommand(command: string, scenario: string, body: Record<string, unknown>): LabAction[] {
+  const requestedActions = Array.isArray(body.actions) ? body.actions : [];
+  if (requestedActions.length) {
+    return requestedActions
+      .map((item) => recordParam(item))
+      .filter((item): item is Record<string, unknown> => Boolean(item))
+      .map((item) => {
+        const toolName = String(item.toolName || item.tool || "").trim();
+        const params = recordParam(item.params) || {};
+        return toolName ? { toolName, params } : null;
+      })
+      .filter((item): item is LabAction => Boolean(item))
+      .slice(0, 8);
+  }
+
   const requestedTool = String(body.tool || "").trim();
   const requestedTarget = String(body.target || "").trim();
   if (requestedTool) {
@@ -1889,10 +2688,6 @@ async function executeLabActions(input: {
   updateTaskSpec(policyState, [{ role: "user", content: input.command }], config);
   const messageFindings = [
     ...detectMessageContent(input.command, config),
-    ...await semanticJudgeMessage(input.command, config, {
-      policyState,
-      phase: "message",
-    }),
   ];
   updateAfterMessage(policyState, messageFindings);
   for (const finding of messageFindings) {
@@ -1906,26 +2701,29 @@ async function executeLabActions(input: {
 
   const decisions: Array<Record<string, unknown>> = [];
   for (const [index, action] of input.actions.entries()) {
-    const normalizedTool = normalizeAction(action.toolName, action.params).tool;
-    const semanticFindings = [
-      ...await semanticJudgeToolCall(action.toolName, action.params, policyState.currentTask, config, {
-        policyState,
-        phase: "tool_call",
-      }),
-      ...(normalizedTool === "memory_write"
-        ? await semanticJudgeMemoryWrite(action.params, policyState.currentTask, config, {
-          policyState,
-          phase: "memory_write",
-        })
-        : []),
-    ];
-    const result = detectToolCall(action.toolName, action.params, config, policyState, semanticFindings);
+    const toolCallId = `lab_${labSession.turn}_${input.commandId}_${index + 1}`;
+    const context = { toolCallId };
+    const preliminary = detectToolCall(action.toolName, action.params, config, policyState, [], context);
+    const semanticFindings = await semanticJudgeAmbiguousAction({
+      action: preliminary.policy.action,
+      taskSpec: preliminary.policy.task_spec,
+      policyState,
+      preliminary: preliminary.policy,
+    }, config);
+    const result = semanticFindings.length
+      ? detectToolCall(action.toolName, action.params, config, policyState, semanticFindings, context)
+      : preliminary;
     const severity = severityForDecision(result.decision);
-    const toolCallId = `lab_tool_${index + 1}`;
     const normalizedAction: LabAction = {
       toolName: result.policy.action.tool,
       params: result.policy.action.args,
     };
+    updateAfterDecision(policyState, result.policy);
+    updateActionGraphEnforcement(
+      policyState,
+      result.policy,
+      result.decision === "allow" ? "executing" : "blocked",
+    );
     const payload = {
       toolName: action.toolName,
       normalized_tool: result.policy.action.tool,
@@ -1936,6 +2734,7 @@ async function executeLabActions(input: {
       risk_score: result.risk_score,
       sentry_score: result.policy.sentry_score,
       deterministic_block: result.policy.deterministic_block,
+      deterministic_disposition: result.policy.deterministic_disposition,
       reasons: result.policy.reasons,
       violations: result.policy.violations,
       verdict: result.policy.findings.some((finding) => finding.verdict === "block")
@@ -1978,7 +2777,6 @@ async function executeLabActions(input: {
         semantic_judge: semanticProfile,
       });
     }
-    updateAfterDecision(policyState, result.policy);
     if (result.decision === "deny" || result.decision === "ask") {
       input.store.add({
         run_id: input.runId,
@@ -2085,6 +2883,15 @@ async function executeLabActions(input: {
             },
           });
         }
+      } else {
+        resultFindings(
+          toolCallId,
+          null,
+          policyState,
+          config,
+          normalizedAction.toolName,
+          { error: execution.error || execution.reason || "tool execution failed" },
+        );
       }
     }
     decisions.push({
@@ -2094,6 +2901,8 @@ async function executeLabActions(input: {
       risk_score: result.risk_score,
       violations: result.policy.violations,
       findings: result.findings.length,
+      finding_types: Array.from(new Set(result.findings.map((finding) => finding.finding_type))),
+      semantic_judge_called: result.findings.some((finding) => finding.finding_type === "semantic"),
       semantic_judge: semanticProfile,
     });
   }
@@ -2176,7 +2985,7 @@ async function executeBusinessTool(action: LabAction, config: PluginConfig, cont
   try {
     if (action.toolName === "send_email") execution = executeEmail(action);
     else if (action.toolName === "read_file") execution = executeReadFile(action, config);
-    else if (action.toolName === "write_file") execution = executeWriteFile(action);
+    else if (action.toolName === "write_file") execution = executeWriteFile(action, config);
     else if (action.toolName === "call_api" || action.toolName === "read_webpage") execution = await executeHttpRequest(action, config);
     else if (action.toolName === "memory_write") execution = executeMemoryWrite(action, config, context);
     else if (action.toolName === "memory_read") execution = executeMemoryRead(action, config, context);
@@ -2249,12 +3058,13 @@ function executeReadFile(action: LabAction, config: PluginConfig): BusinessExecu
   };
 }
 
-function executeWriteFile(action: LabAction): BusinessExecution {
+function executeWriteFile(action: LabAction, config: PluginConfig): BusinessExecution {
   const requestedPath = firstParam(action.params, ["path", "file", "filename", "target"]);
   if (!requestedPath) return { ok: false, error: "missing file path" };
-  const filePath = resolveWritePath(requestedPath);
+  let filePath = resolveWritePath(requestedPath, config);
   const content = stringifyValue(action.params.content ?? action.params.body ?? action.params.text ?? "");
   ensureParent(filePath);
+  filePath = resolveWritePath(requestedPath, config);
   writeFileSync(filePath, content, "utf8");
   return {
     ok: true,
@@ -2273,34 +3083,30 @@ async function executeHttpRequest(action: LabAction, config: PluginConfig): Prom
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { ok: false, error: `unsupported URL protocol ${parsed.protocol}` };
   }
-  if (action.toolName === "call_api" && config.policy.allowlistedApiHosts.length && !config.policy.allowlistedApiHosts.includes(parsed.hostname)) {
-    return { ok: false, error: `api host ${parsed.hostname} is not allowlisted` };
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
-  try {
-    const response = await fetch(parsed.toString(), {
-      method: "GET",
-      headers: { Accept: "application/json, text/plain;q=0.9, */*;q=0.8", "User-Agent": "AgentSentry-BusinessTool/1.0" },
-      signal: controller.signal,
-    });
-    const contentType = response.headers.get("content-type") || "";
-    const text = await response.text();
-    return {
-      ok: response.ok,
+  const response = await safeHttpGet(parsed, {
+    allowedHosts: config.policy.allowlistedApiHosts,
+    maxBytes: 1024 * 1024,
+    maxRedirects: 5,
+    timeoutMs: 5000,
+  });
+  const contentType = Array.isArray(response.headers["content-type"])
+    ? response.headers["content-type"][0] || ""
+    : response.headers["content-type"] || "";
+  const ok = response.status >= 200 && response.status < 300 && !response.truncated;
+  return {
+    ok,
+    status: response.status,
+    output: {
+      url: response.finalUrl,
       status: response.status,
-      output: {
-        url: parsed.toString(),
-        status: response.status,
-        content_type: contentType,
-        bytes: Buffer.byteLength(text, "utf8"),
-        preview: clip(text, config.capture.previewChars),
-      },
-      error: response.ok ? undefined : `HTTP ${response.status}`,
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+      content_type: contentType,
+      bytes: response.bytes,
+      truncated: response.truncated,
+      redirects: response.redirects,
+      preview: clip(response.body, config.capture.previewChars),
+    },
+    error: response.truncated ? "HTTP response exceeded 1048576 byte limit" : ok ? undefined : `HTTP ${response.status}`,
+  };
 }
 
 function executeMemoryWrite(action: LabAction, config: PluginConfig, context: string): BusinessExecution {
@@ -2494,12 +3300,31 @@ function toolStateDir(): string {
   return resolve(process.env.AGENTSENTRY_TOOL_STATE_DIR || join(process.env.HOME || repoRoot(), ".openclaw", "agentsentry", "business-tools"));
 }
 
+function openClawWorkspaceRoot(): string {
+  const configuredConfig = process.env.AGENTSENTRY_OPENCLAW_CONFIG || join(process.env.HOME || "", ".openclaw", "openclaw.json");
+  try {
+    if (configuredConfig && existsSync(configuredConfig)) {
+      const parsed = JSON.parse(readFileSync(configuredConfig, "utf8")) as Record<string, unknown>;
+      const agents = parsed.agents && typeof parsed.agents === "object" ? parsed.agents as Record<string, unknown> : {};
+      const defaults = agents.defaults && typeof agents.defaults === "object" ? agents.defaults as Record<string, unknown> : {};
+      const workspace = typeof defaults.workspace === "string" ? defaults.workspace.trim() : "";
+      if (workspace) {
+        if (workspace.startsWith("~/")) return resolve(join(process.env.HOME || "", workspace.slice(2)));
+        return resolve(workspace);
+      }
+    }
+  } catch {
+    // Keep lab tooling available even when OpenClaw config is temporarily being rewritten.
+  }
+  return join(repoRoot(), "openclaw-workspace");
+}
+
 function readRoot(): string {
-  return repoRoot();
+  return openClawWorkspaceRoot();
 }
 
 function writeRoot(): string {
-  return resolve(process.env.AGENTSENTRY_WRITE_ROOT || join(repoRoot(), "openclaw-workspace"));
+  return resolve(process.env.AGENTSENTRY_WRITE_ROOT || openClawWorkspaceRoot());
 }
 
 function resolveReadPath(requestedPath: string): string {
@@ -2507,19 +3332,23 @@ function resolveReadPath(requestedPath: string): string {
   const filePath = requestedPath.startsWith("/") ? resolve(requestedPath) : resolve(root, requestedPath);
   if (!insideRoot(filePath, root)) throw new Error(`read path is outside workspace: ${requestedPath}`);
   if (!existsSync(filePath)) {
-    const fallbackRoot = "/home/ubuntu/AgentSentry-";
-    const fallbackPath = requestedPath.startsWith("/") ? resolve(requestedPath) : resolve(fallbackRoot, requestedPath);
-    if (fallbackRoot !== root && insideRoot(fallbackPath, fallbackRoot) && existsSync(fallbackPath)) return fallbackPath;
     throw new Error(`file not found: ${requestedPath}`);
   }
   return filePath;
 }
 
-function resolveWritePath(requestedPath: string): string {
+function resolveWritePath(requestedPath: string, config: PluginConfig): string {
   const root = writeRoot();
+  mkdirSync(root, { recursive: true });
   const filePath = requestedPath.startsWith("/") ? resolve(requestedPath) : resolve(root, requestedPath);
-  if (!insideRoot(filePath, root)) throw new Error(`write path is outside allowed workspace: ${requestedPath}`);
-  return filePath;
+  const workspaceBoundary = pathWithinRoot(filePath, root);
+  if (!workspaceBoundary.allowed) throw new Error(`write path is outside allowed workspace: ${requestedPath}`);
+  if (config.policy.restrictWritesToAllowedRoots) {
+    const allowlistBoundary = matchAllowedWritePath(workspaceBoundary.target, config.policy.allowedWriteRoots, root);
+    if (!allowlistBoundary.allowed) throw new Error(allowlistBoundary.reason || `write path is outside configured allowed roots: ${requestedPath}`);
+    return allowlistBoundary.target;
+  }
+  return workspaceBoundary.target;
 }
 
 function insideRoot(filePath: string, root: string): boolean {

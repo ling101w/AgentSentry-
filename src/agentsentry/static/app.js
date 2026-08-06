@@ -30,7 +30,8 @@ const matrixLayers = ["Foundation", "Input Sanitization", "Cognition Protection"
 const matrixTypes = [
   { key: "deterministic", label: "确定性", hint: "可证明硬闸门" },
   { key: "heuristic", label: "启发式", hint: "规则/轨迹兜底" },
-  { key: "learned", label: "哨兵", hint: "轻量特征/语义扩展" },
+  { key: "behavioral", label: "行为基线", hint: "在线统计特征" },
+  { key: "semantic", label: "语义复核", hint: "隔离式 LLM-Judge" },
 ];
 
 const typeNames = {
@@ -47,7 +48,7 @@ const typeNames = {
 
 const decisionNames = { allow: "放行", ask: "待确认", deny: "拒绝" };
 const executionNames = { executed: "已执行", blocked: "未执行", skipped: "跳过" };
-const findingTypeNames = { deterministic: "确定性", heuristic: "启发式", learned: "哨兵" };
+const findingTypeNames = { deterministic: "确定性", heuristic: "启发式", behavioral: "行为基线", semantic: "语义复核", learned: "旧版哨兵" };
 const verdictNames = { pass: "记录", require_approval: "需确认", block: "阻断" };
 const defenseNames = {
   full: "完整防御",
@@ -234,7 +235,7 @@ function renderDefenseMatrix(findings) {
   const counts = {};
   for (const finding of findings) {
     const layer = finding.layer || "Unknown";
-    const type = finding.finding_type || "heuristic";
+    const type = finding.finding_type === "learned" ? "behavioral" : finding.finding_type || "heuristic";
     counts[`${layer}:${type}`] = (counts[`${layer}:${type}`] || 0) + 1;
   }
   const header = [

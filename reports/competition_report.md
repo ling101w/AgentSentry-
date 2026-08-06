@@ -2,6 +2,8 @@
 
 更新时间：2026-07-03
 
+评测声明：本文中的 520 + 320 条数字来自公开 benchmark 内容映射到本地 `/command-lab` 的开发回归。它们不是独立盲测，也不是 AgentDojo/InjecAgent 原生环境结果；证据等级和新盲测协议见 `reports/EVALUATION_METHODOLOGY.md`。
+
 ## 摘要
 
 玄鉴是一个面向 OpenClaw 等工具型智能体的运行时安全监督系统。系统在智能体执行工具之前，对文件访问、代码/命令执行、邮件发送、API 调用、长期记忆写入和第三方 Skill 安装进行实时审计与 `allow / ask / deny` 裁决，并在 `8765` 监督端展示告警、阻断、污点传播和调用链。
@@ -135,7 +137,7 @@
 
 ## 当前限制
 
-- eBPF 内核级观测脚本存在，但当前 OpenClaw 用户服务无法访问 `/sys/fs/bpf`，因此健康检查如实显示 `ebpf: unavailable`。应用层系统预执行策略仍为 `active`。
+- eBPF 脚本重点观测 `execve`、`openat` 等系统事件，并把 `connect` 系统调用记录为不含目的地址的运行证据；当前网络目的地址控制由应用层 URL/命令执行前策略负责。当前 OpenClaw 用户服务无法访问 `/sys/fs/bpf`，因此健康检查如实显示 `ebpf: unavailable`，应用层系统预执行策略仍为 `active`。
 - 危险 shell payload 不直接落地执行，实验评估的是执行前真实裁决，避免破坏主机。
 - 邮件发送工具使用本机 outbox 受控实现，不连接真实 SMTP。
 - LLM-Judge 依赖 DeepSeek-compatible API；API 不可用时，确定性策略、TaskSpec、污点传播、ABAC、Memory Guard 和 System Preflight 仍工作。

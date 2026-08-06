@@ -1,19 +1,34 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { ConfigSchema, PluginConfig } from "./config.ts";
 import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
 import { handleAgentSentryCommand } from "./core/commands.ts";
 import { detectMessageContent, detectToolCall, serializeToolParams } from "./core/detect.ts";
+import { annotateUserInputForRisk } from "./core/input-annotation.ts";
+import {
+  buildPersistentMemoryLabel,
+  loadPersistentMemoryLabels,
+  upsertPersistentMemoryLabel,
+  type PersistentMemoryLabel,
+} from "./core/memory-ifc.ts";
 import { clearProvenanceScanCache, scanProvenance } from "./core/provenance.ts";
 import { computeOperationKey, formatApprovalDescription } from "./core/operation.ts";
 import {
+  notificationRoute,
+  provenanceRootsFor,
+  severityForDecision,
+  severityForVerdict,
+  shouldCoverAssistantResponse,
+  shouldNotify,
+  shouldReturnJudgeAnalysis,
+} from "./core/plugin-helpers.ts";
+import {
   createPolicyState,
-  normalizeAction,
+  hydratePersistentMemoryLabels,
   policyTrustSnapshot,
   resultFindings,
+  updateActionGraphEnforcement,
   updateAfterDecision,
   updateAfterMessage,
   updateAfterRuntimeFindings,
@@ -23,19 +38,35 @@ import {
 import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
-import { semanticJudgeMemoryWrite, semanticJudgeToolCall } from "./core/semantic.ts";
+import {
+  semanticJudgeAmbiguousAction,
+  semanticJudgeMemoryWrite,
+  semanticJudgeMessage,
+  semanticJudgeTaskSpec,
+  semanticJudgeToolCall,
+} from "./core/semantic.ts";
+import { SessionRegistry } from "./core/session-registry.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
+import { refineTaskSpecWithLLM } from "./core/task-spec/index.ts";
 
 type SessionState = {
   runId: string;
   sessionKey: string;
+  sourceSessionKey: string;
+  sessionId: string;
   messageCount: number;
   toolCount: number;
+  workspaceDir: string;
   coverNextAssistantResponse: boolean;
+  lastAccessedAt: number;
   policyState: PolicyState;
   runtimeCheckpoints: Map<string, { checkpoint: EbpfLogCheckpoint | null; toolName: string; params: Record<string, unknown> }>;
 };
+
+function sessionCanEvict(state: SessionState): boolean {
+  return state.policyState.semanticActionGraph.pendingCalls.size === 0 && state.runtimeCheckpoints.size === 0;
+}
 
 const plugin = {
   id: "agent-sentry",
@@ -47,7 +78,7 @@ const plugin = {
   approvalCache: null as ApprovalCache | null,
   dashboard: null as DashboardServer | null,
   startupConfig: null as PluginConfig | null,
-  sessions: new Map<string, SessionState>(),
+  sessions: new SessionRegistry<SessionState>({ canEvict: sessionCanEvict }),
 
   register(api: OpenClawPluginApi) {
     const baseConfig = PluginConfig.fromPluginConfig(api.pluginConfig);
@@ -55,6 +86,11 @@ const plugin = {
     plugin.config = loadRuntimeConfig(baseConfig);
     plugin.store = new RecordStore(plugin.config);
     plugin.approvalCache = new ApprovalCache(plugin.config);
+    plugin.sessions = new SessionRegistry<SessionState>({
+      idleTtlMs: plugin.config.storage.sessionIdleTtlMs,
+      maxSessions: plugin.config.storage.maxSessions,
+      canEvict: sessionCanEvict,
+    });
 
     api.registerService({
       id: "agent-sentry-dashboard",
@@ -73,6 +109,8 @@ const plugin = {
           await plugin.dashboard.close();
           plugin.dashboard = null;
         }
+        await plugin.store?.close();
+        plugin.sessions.clear();
       },
     });
 
@@ -82,7 +120,7 @@ const plugin = {
       acceptsArgs: true,
       requireAuth: true,
       handler: (ctx) => {
-        const dashboard = plugin.dashboard?.url || `http://${plugin.config!.dashboard.host}:${plugin.config!.dashboard.port}`;
+        const dashboard = plugin.dashboard?.accessUrl || `http://${plugin.config!.dashboard.host}:${plugin.config!.dashboard.port}`;
         return handleAgentSentryCommand(ctx, plugin.config!, plugin.startupConfig!, {
           dashboardUrl: dashboard,
           recordsPath: plugin.store!.recordsPath,
@@ -108,8 +146,80 @@ const plugin = {
       const state = getSession(ctx);
       const messageCount = Array.isArray(event?.messages) ? event.messages.length : 0;
       state.messageCount = messageCount;
-      updateTaskSpec(state.policyState, event?.messages, plugin.config!);
-      const workspaceDir = typeof ctx.workspaceDir === "string" ? ctx.workspaceDir : "";
+      const promptText = typeof event?.prompt === "string" ? event.prompt : "";
+      const workspaceDir = workspaceDirFor(ctx, state);
+      if (workspaceDir) state.workspaceDir = workspaceDir;
+      updateTaskSpec(
+        state.policyState,
+        [
+          ...(Array.isArray(event?.messages) ? event.messages : []),
+          ...(promptText.trim() ? [{ role: "user", content: promptText }] : []),
+        ],
+        plugin.config!,
+      );
+      const taskSpecRefinement = await refineTaskSpecWithLLM(state.policyState.taskSpec, plugin.config!);
+      if (taskSpecRefinement.findings.length) {
+        state.policyState.taskSpec = taskSpecRefinement.taskSpec;
+        state.policyState.authorizationState.taskSpec = taskSpecRefinement.taskSpec;
+        updateAfterMessage(state.policyState, taskSpecRefinement.findings);
+        for (const finding of taskSpecRefinement.findings) {
+          addFinding(state, finding, { role: "user", task_spec_refinement: true });
+        }
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "guard_finding",
+          layer: "Intent Authorization",
+          severity: taskSpecRefinement.findings.some((finding) => finding.verdict === "block") ? "danger" : "warning",
+          title: "LLM structured TaskSpec refinement",
+          summary: taskSpecRefinement.findings.map((finding) => finding.reason).join("; "),
+          payload: {
+            applied: taskSpecRefinement.applied,
+            task_spec: state.policyState.taskSpec,
+            findings: taskSpecRefinement.findings,
+          },
+        });
+      }
+      void semanticJudgeTaskSpec(state.policyState.taskSpec, plugin.config!, {
+        policyState: state.policyState,
+        relatedFindings: promptText.trim() ? detectMessageContent(promptText, plugin.config!) : [],
+      }).then((taskSpecFindings) => {
+        if (!taskSpecFindings.length) return;
+        updateAfterMessage(state.policyState, taskSpecFindings);
+        for (const finding of taskSpecFindings) {
+          addFinding(state, finding, { role: "user", task_spec: true });
+        }
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "guard_finding",
+          layer: "Intent Authorization",
+          severity: taskSpecFindings.some((finding) => finding.verdict === "block") ? "danger" : "warning",
+          title: "LLM-Judge task spec finding",
+          summary: taskSpecFindings.map((finding) => finding.reason).join("; "),
+          payload: {
+            task_spec: state.policyState.taskSpec,
+            findings: taskSpecFindings,
+          },
+        });
+      }).catch((error) => {
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "guard_finding",
+          layer: "Intent Authorization",
+          severity: "warning",
+          title: "LLM-Judge task spec check failed",
+          summary: String(error instanceof Error ? error.message : error),
+          payload: {
+            task_spec: state.policyState.taskSpec,
+          },
+        });
+      });
+      const promptFindings = promptText.trim() ? detectMessageContent(promptText, plugin.config!) : [];
+      const promptAnnotation = promptText.trim()
+        ? annotateUserInputForRisk(promptText, promptFindings, plugin.config!)
+        : null;
       const provenanceScans = [];
       for (const scanRoot of provenanceRootsFor(workspaceDir)) {
         const scan = await scanProvenance(scanRoot, plugin.config!);
@@ -177,6 +287,32 @@ const plugin = {
           system_monitor: systemMonitorStatus(),
         },
       });
+      if (promptAnnotation) {
+        updateAfterMessage(state.policyState, promptFindings);
+        for (const finding of promptFindings) {
+          addFinding(state, finding, { role: "user", prompt_annotation: true });
+        }
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "input_annotation",
+          layer: "Context Provenance",
+          severity: promptAnnotation.recommendedAction === "Deny" ? "danger" : "warning",
+          title: "User request risk annotation",
+          summary: `${promptAnnotation.overall}; ${promptAnnotation.recommendedAction}; ${promptAnnotation.entries.length} marked item(s)`,
+          payload: {
+            role: "user",
+            originalPreview: clampText(promptText, plugin.config!.capture.previewChars),
+            annotatedPreview: clampText(promptAnnotation.annotated, plugin.config!.capture.previewChars),
+            entries: promptAnnotation.entries,
+            overall: promptAnnotation.overall,
+            recommended_action: promptAnnotation.recommendedAction,
+          },
+        });
+        return {
+          appendContext: promptAnnotation.annotated,
+        };
+      }
     });
 
     api.on("llm_input", (event, ctx) => {
@@ -206,14 +342,47 @@ const plugin = {
         ? clampText(message.content ?? message, plugin.config!.capture.previewChars)
         : "[disabled]";
       const ruleFindings = detectMessageContent(message.content ?? message, plugin.config!);
-      const findings = [...ruleFindings];
-      const severity = findings.length ? "warning" : role === "assistant" ? "success" : "info";
-
       if (role === "user") {
         updateTaskSpec(state.policyState, [{ role: "user", content: message.content ?? message }], plugin.config!);
+        void semanticJudgeMessage(message.content ?? message, plugin.config!, {
+          policyState: state.policyState,
+          relatedFindings: ruleFindings,
+        }).then((semanticMessageFindings) => {
+          if (!semanticMessageFindings.length) return;
+          updateAfterMessage(state.policyState, semanticMessageFindings);
+          for (const finding of semanticMessageFindings) {
+            addFinding(state, finding, { role, semantic_message: true });
+          }
+          plugin.store!.add({
+            run_id: state.runId,
+            session_key: state.sessionKey,
+            type: "guard_finding",
+            layer: "Context Provenance",
+            severity: semanticMessageFindings.some((finding) => finding.verdict === "block") ? "danger" : "warning",
+            title: "LLM-Judge message finding",
+            summary: semanticMessageFindings.map((finding) => finding.reason).join("; "),
+            payload: {
+              role,
+              findings: semanticMessageFindings,
+            },
+          });
+        }).catch((error) => {
+          plugin.store!.add({
+            run_id: state.runId,
+            session_key: state.sessionKey,
+            type: "guard_finding",
+            layer: "Context Provenance",
+            severity: "warning",
+            title: "LLM-Judge message check failed",
+            summary: String(error instanceof Error ? error.message : error),
+            payload: { role },
+          });
+        });
       }
+      const findings = ruleFindings;
+      const severity = findings.length ? "warning" : role === "assistant" ? "success" : "info";
 
-      if (shouldCoverAssistantResponse(state, role)) {
+      if (shouldCoverAssistantResponse(plugin.config!.responseCover, state.coverNextAssistantResponse, role)) {
         state.coverNextAssistantResponse = false;
         const coverMessage = plugin.config!.responseCover.message;
         plugin.store!.add({
@@ -235,6 +404,40 @@ const plugin = {
           message: {
             ...message,
             content: [{ type: "text", text: coverMessage }],
+          },
+        };
+      }
+
+      const inputAnnotation = role === "user"
+        ? annotateUserInputForRisk(message.content ?? message, findings, plugin.config!)
+        : null;
+      if (inputAnnotation) {
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "input_annotation",
+          layer: "Context Provenance",
+          severity: inputAnnotation.recommendedAction === "Deny" ? "danger" : "warning",
+          title: "User request risk annotation",
+          summary: `${inputAnnotation.overall}; ${inputAnnotation.recommendedAction}; ${inputAnnotation.entries.length} marked item(s)`,
+          payload: {
+            role,
+            originalPreview: preview,
+            annotatedPreview: clampText(inputAnnotation.annotated, plugin.config!.capture.previewChars),
+            entries: inputAnnotation.entries,
+            overall: inputAnnotation.overall,
+            recommended_action: inputAnnotation.recommendedAction,
+          },
+        });
+        updateAfterMessage(state.policyState, findings);
+        for (const finding of findings) {
+          addFinding(state, finding, { role, input_annotation: true });
+        }
+        return {
+          block: false,
+          message: {
+            ...message,
+            content: inputAnnotation.annotated,
           },
         };
       }
@@ -265,26 +468,58 @@ const plugin = {
       const state = getSession(ctx);
       state.toolCount += 1;
       const params = (event?.params || {}) as Record<string, unknown>;
-      const operationKey = computeOperationKey(event.toolName, params);
-      const normalizedTool = normalizeAction(event.toolName, params).tool;
-      const semanticFindings = [
-        ...await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
+      const operationKey = computeOperationKey(event.toolName, params, {
+        profile: plugin.config!.profile,
+        policy: plugin.config!.policy,
+        detection: plugin.config!.detection,
+        semantic: plugin.config!.semantic,
+        provenanceScan: plugin.config!.provenanceScan,
+        runtimeIsolation: plugin.config!.runtimeIsolation,
+        enforcement: plugin.config!.enforcement.mode,
+        taskSpec: state.policyState.taskSpec,
+      });
+      const detectionContext = {
+        toolCallId: event.toolCallId || "",
+        workspaceDir: workspaceDirFor(ctx, state),
+      };
+      const preliminary = detectToolCall(event.toolName, params, plugin.config!, state.policyState, [], detectionContext);
+      const action = preliminary.policy.action;
+      const semanticToolFindings = await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
+        policyState: state.policyState,
+        relatedFindings: preliminary.policy.findings,
+      });
+      const memoryContent = action.tool === "memory_write"
+        ? firstToolString(params, ["content", "body", "text", "value", "payload", "new_string", "replacement", "patch"]) || params
+        : "";
+      const semanticMemoryFindings = action.tool === "memory_write"
+        ? await semanticJudgeMemoryWrite(memoryContent, state.policyState.currentTask, plugin.config!, {
           policyState: state.policyState,
-          phase: "tool_call",
-        }),
-        ...(normalizedTool === "memory_write"
-          ? await semanticJudgeMemoryWrite(params, state.policyState.currentTask, plugin.config!, {
-            policyState: state.policyState,
-            phase: "memory_write",
-          })
-          : []),
-      ];
-      const result = detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings);
+          relatedFindings: preliminary.policy.findings,
+        })
+        : [];
+      const semanticAmbiguousFindings = await semanticJudgeAmbiguousAction({
+        action: preliminary.policy.action,
+        taskSpec: preliminary.policy.task_spec,
+        policyState: state.policyState,
+        preliminary: preliminary.policy,
+      }, plugin.config!);
+      const semanticFindings = [...semanticToolFindings, ...semanticMemoryFindings, ...semanticAmbiguousFindings];
+      const result = semanticFindings.length
+        ? detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings, detectionContext)
+        : preliminary;
       const cachedApproval = plugin.approvalCache!.has(operationKey) && result.decision === "ask" && !result.policy.deterministic_block;
       const effectiveDecision = cachedApproval ? "allow" : result.decision;
       const effectivePolicy = cachedApproval ? { ...result.policy, decision: "allow" as const } : result.policy;
       const cacheEntry = cachedApproval ? plugin.approvalCache!.recordHit(operationKey) : null;
       const severity = severityForDecision(effectiveDecision);
+      const graphStatus = plugin.config!.enforcement.mode === "approval" && (effectiveDecision === "deny" || effectiveDecision === "ask")
+        ? "awaiting_approval"
+        : plugin.config!.enforcement.mode === "block" && effectiveDecision === "deny"
+          ? "blocked"
+          : "executing";
+      updateAfterDecision(state.policyState, effectivePolicy);
+      persistAllowedMemoryLabel(state, effectivePolicy.action.tool, params, effectiveDecision);
+      updateActionGraphEnforcement(state.policyState, effectivePolicy, graphStatus);
       const payload = {
         toolName: event.toolName,
         normalized_tool: result.policy.action.tool,
@@ -359,8 +594,6 @@ const plugin = {
         addFinding(state, finding, { toolName: event.toolName, toolCallId: event.toolCallId || "" });
       }
 
-      updateAfterDecision(state.policyState, effectivePolicy);
-
       if (effectiveDecision === "deny") {
         addAlert(state, `High-risk tool call: ${event.toolName}`, result.summary, payload);
         sendProactiveNotification(ctx, "danger", `High-risk tool call: ${event.toolName}`, result.summary);
@@ -421,7 +654,14 @@ const plugin = {
             timeoutMs: plugin.config!.enforcement.approvalTimeoutMs,
             timeoutBehavior: "deny",
             onResolution: (decision: string) => {
-              if (decision === "allow-always") plugin.approvalCache!.add(operationKey, event.toolName);
+              const cacheEligible = result.decision === "ask" && !result.policy.deterministic_block;
+              if (decision === "allow-always" && cacheEligible) plugin.approvalCache!.add(operationKey, event.toolName);
+              const approved = decision.startsWith("allow");
+              updateActionGraphEnforcement(
+                state.policyState,
+                { ...result.policy, decision: approved ? "allow" : "deny" },
+                approved ? "executing" : "blocked",
+              );
               plugin.store!.add({
                 run_id: state.runId,
                 session_key: state.sessionKey,
@@ -429,9 +669,12 @@ const plugin = {
                 layer: "Tool Boundary",
                 severity: decision.startsWith("allow") ? "success" : "warning",
                 title: `Approval ${decision}: ${event.toolName}`,
-                summary: decision === "allow-always" ? "Exact operation added to allow-always cache." : `Operator decision: ${decision}`,
+                summary: decision === "allow-always" && cacheEligible
+                  ? "Exact operation added to allow-always cache."
+                  : `Operator decision: ${decision}`,
                 payload: {
                   decision,
+                  approval_cache_eligible: cacheEligible,
                   toolName: event.toolName,
                   toolCallId: event.toolCallId || "",
                   operation_key: operationKey,
@@ -449,7 +692,14 @@ const plugin = {
 
     api.on("after_tool_call", (event, ctx) => {
       const state = getSession(ctx);
-      const findings = resultFindings(event?.toolCallId || "", event?.result, state.policyState, plugin.config!, event?.toolName || "");
+      const findings = resultFindings(
+        event?.toolCallId || "",
+        event?.result,
+        state.policyState,
+        plugin.config!,
+        event?.toolName || "",
+        { error: event?.error },
+      );
       const checkpointKey = runtimeCheckpointKey(event?.toolCallId || "", event?.toolName || "");
       const runtimeCheckpoint = state.runtimeCheckpoints.get(checkpointKey) || null;
       if (runtimeCheckpoint) state.runtimeCheckpoints.delete(checkpointKey);
@@ -499,6 +749,7 @@ const plugin = {
         },
       });
 
+      updateAfterRuntimeFindings(state.policyState, event?.toolName || "", runtimeFindings);
       updateAfterMessage(state.policyState, allFindings);
       for (const finding of allFindings) {
         addFinding(state, finding, { toolCallId: event?.toolCallId || "" });
@@ -518,28 +769,127 @@ const plugin = {
         });
         sendProactiveNotification(ctx, "warning", "eBPF runtime audit finding", runtimeFindings.map((finding) => finding.reason).join("; "));
       }
+      trimSessions();
     });
 
     function getSession(ctx: Record<string, unknown>): SessionState {
       const sessionKey = typeof ctx.sessionKey === "string" ? ctx.sessionKey : "unknown";
-      let state = plugin.sessions.get(sessionKey);
+      const sessionId = typeof ctx.sessionId === "string" && ctx.sessionId.trim() ? ctx.sessionId.trim() : "default";
+      const sessionMaterial = JSON.stringify([sessionKey, sessionId]);
+      const sessionHash = createHash("sha256").update(sessionMaterial).digest("hex");
+      const sessionIdentity = `session:${sessionHash}`;
+      const auditSessionKey = sessionId === "default" ? sessionKey : `${sessionKey}#${sessionHash.slice(0, 12)}`;
+      let state = plugin.sessions.get(sessionIdentity);
       if (!state) {
         state = {
-          sessionKey,
-          runId: runIdForSession(sessionKey),
+          sessionKey: auditSessionKey,
+          sourceSessionKey: sessionKey,
+          sessionId,
+          runId: runIdForSession(sessionMaterial),
           messageCount: 0,
           toolCount: 0,
           coverNextAssistantResponse: false,
+          lastAccessedAt: Date.now(),
           policyState: createPolicyState(),
           runtimeCheckpoints: new Map(),
+          workspaceDir: "",
         };
-        plugin.sessions.set(sessionKey, state);
+        hydratePersistentMemoryLabels(state.policyState, loadPersistentMemoryLabels(plugin.config!));
+        plugin.sessions.set(sessionIdentity, state);
       }
+      const workspaceDir = typeof ctx.workspaceDir === "string" && ctx.workspaceDir.trim() ? ctx.workspaceDir.trim() : "";
+      if (workspaceDir) state.workspaceDir = workspaceDir;
       return state;
+    }
+
+    function workspaceDirFor(ctx: Record<string, unknown>, state: SessionState): string {
+      const fromContext = typeof ctx.workspaceDir === "string" && ctx.workspaceDir.trim() ? ctx.workspaceDir.trim() : "";
+      if (fromContext) return fromContext;
+      return state.workspaceDir || "";
+    }
+
+    function trimSessions(): void {
+      plugin.sessions.evictExpired();
     }
 
     function runtimeCheckpointKey(toolCallId: string, toolName: string): string {
       return toolCallId || `last:${toolName || "unknown"}`;
+    }
+
+    function firstToolString(params: Record<string, unknown>, keys: string[]): string {
+      for (const key of keys) {
+        const value = params[key];
+        if (typeof value === "string" && value.trim()) return value.trim();
+        if (Array.isArray(value) && value.length) {
+          const item = String(value[0] ?? "").trim();
+          if (item) return item;
+        }
+      }
+      return "";
+    }
+
+    function persistAllowedMemoryLabel(
+      state: SessionState,
+      normalizedTool: string,
+      params: Record<string, unknown>,
+      decision: "allow" | "ask" | "deny",
+    ): void {
+      if (decision === "deny" || normalizedTool !== "memory_write") return;
+      const content = firstToolValue(params, ["content", "body", "text", "value", "payload", "new_string", "replacement", "patch"]) ?? params;
+      const key = memoryKeyFromToolParams(params);
+      const sourceClass = memorySourceClassFromToolParams(params);
+      try {
+        const label = buildPersistentMemoryLabel({
+          key,
+          content,
+          context: state.policyState.currentTask,
+          sourceClass,
+          sessionId: state.sessionId,
+          tenant: state.sourceSessionKey || "default",
+          config: plugin.config!,
+        });
+        upsertPersistentMemoryLabel(plugin.config!, label);
+        hydratePersistentMemoryLabels(state.policyState, [label]);
+      } catch (error) {
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "guard_finding",
+          layer: "Memory IFC",
+          severity: "warning",
+          title: "Memory IFC label persistence failed",
+          summary: error instanceof Error ? error.message : String(error),
+          payload: { key },
+        });
+      }
+    }
+
+    function firstToolValue(params: Record<string, unknown>, keys: string[]): unknown {
+      for (const key of keys) {
+        if (typeof params[key] !== "undefined") return params[key];
+      }
+      return undefined;
+    }
+
+    function memoryKeyFromToolParams(params: Record<string, unknown>): string {
+      const raw = firstToolString(params, ["key", "name", "path", "file"]) || "memory";
+      const normalized = raw.replace(/\\/g, "/");
+      const memoryFile = normalized.match(/(?:^|\/)memory\/([^/]+\.md)$/i);
+      if (memoryFile?.[1]) return `memory/${memoryFile[1]}`;
+      const namedMemory = normalized.match(/(?:^|\/)(user\.md|soul\.md|memory\.md|agents\.md)$/i);
+      if (namedMemory?.[1]) return namedMemory[1].toLowerCase();
+      return raw;
+    }
+
+    function memorySourceClassFromToolParams(params: Record<string, unknown>): PersistentMemoryLabel["source_class"] | undefined {
+      const raw = firstToolString(params, ["source_class", "sourceClass", "source", "origin"]).toLowerCase();
+      if (!raw) return undefined;
+      if (raw === "user_directive" || raw === "user" || raw === "direct_user") return "user_directive";
+      if (raw === "agent_inference" || raw === "agent" || raw === "self") return "agent_inference";
+      if (raw === "external_web" || raw === "web" || raw === "pdf" || raw === "image" || raw === "email") return "external_web";
+      if (raw === "tool_result" || raw === "tool") return "tool_result";
+      if (raw === "webhook" || raw.includes("hooks/wake")) return "webhook";
+      return "unknown";
     }
 
     function trimRuntimeCheckpoints(state: SessionState): void {
@@ -595,7 +945,7 @@ const plugin = {
     }
 
     function sendProactiveNotification(ctx: Record<string, unknown>, severity: "warning" | "danger", title: string, summary: string): void {
-      if (!shouldNotify(severity)) return;
+      if (!shouldNotify(plugin.config!.notifications, severity)) return;
       const route = notificationRoute(ctx);
       if (!route) return;
       const message = clampText(
@@ -608,86 +958,15 @@ const plugin = {
         plugin.config!.notifications.maxMessageChars,
       );
       try {
-        spawnSync("openclaw", ["message", "send", "--channel", route.channel, "--target", route.target, "--message", message], {
-          stdio: "ignore",
-        });
+        execFile("openclaw", ["message", "send", "--channel", route.channel, "--target", route.target, "--message", message], {
+          timeout: 5000,
+          windowsHide: true,
+        }, () => undefined);
       } catch {
         // Notification is best-effort; records remain the source of truth.
       }
     }
   },
 };
-
-function shouldReturnJudgeAnalysis(
-  findings: Array<{ finding_type?: unknown; verdict?: unknown; score?: unknown; evidence?: Record<string, unknown> }>,
-  riskScore: number,
-  decision: string,
-): boolean {
-  const hasJudgeFinding = findings.some((finding) => {
-    const evidence = finding.evidence as Record<string, unknown> | undefined;
-    return finding.finding_type === "learned" && typeof evidence?.semanticRisk === "string";
-  });
-  if (!hasJudgeFinding) return false;
-  return decision === "deny" || riskScore >= 55 || findings.some((finding) =>
-    finding.verdict === "block" || Number(finding.score || 0) >= 60
-  );
-}
-
-function severityForDecision(decision: string): RecordSeverity {
-  if (decision === "deny") return "danger";
-  if (decision === "ask") return "warning";
-  return "success";
-}
-
-function shouldCoverAssistantResponse(state: SessionState, role: string): boolean {
-  return Boolean(
-    plugin.config?.responseCover.enabled
-    && plugin.config.responseCover.coverAssistantAfterContamination
-    && state.coverNextAssistantResponse
-    && role === "assistant",
-  );
-}
-
-function severityForVerdict(verdict: string): RecordSeverity {
-  if (verdict === "block") return "danger";
-  if (verdict === "require_approval") return "warning";
-  return "info";
-}
-
-function shouldNotify(severity: "warning" | "danger"): boolean {
-  if (!plugin.config?.notifications.enableProactiveNotifications) return false;
-  if (plugin.config.notifications.minSeverity === "danger") return severity === "danger";
-  return true;
-}
-
-function notificationRoute(ctx: Record<string, unknown>): { channel: string; target: string } | null {
-  const provider = typeof ctx.messageProvider === "string" ? ctx.messageProvider.toLowerCase() : "";
-  const sessionKey = typeof ctx.sessionKey === "string" ? ctx.sessionKey : "";
-  const target = sessionKey.split(":").pop() || "";
-  if (!target) return null;
-  if (provider === "feishu") return { channel: "feishu", target };
-  if (provider === "qqbot") return { channel: "qqbot", target };
-  return null;
-}
-
-function provenanceRootsFor(workspaceDir: string): string[] {
-  const candidates = [
-    workspaceDir,
-    join(homedir(), ".openclaw", "plugin-skills"),
-    join(homedir(), ".openclaw", "skills"),
-    ...String(process.env.OPENCLAW_SKILLS_DIR || "")
-      .split(":")
-      .map((item) => item.trim())
-      .filter(Boolean),
-  ];
-  const roots: string[] = [];
-  for (const candidate of candidates) {
-    if (!candidate || !existsSync(candidate)) continue;
-    const root = resolve(candidate);
-    if (roots.some((existing) => root === existing || root.startsWith(`${existing}/`))) continue;
-    roots.push(root);
-  }
-  return roots;
-}
 
 export default plugin;

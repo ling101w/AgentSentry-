@@ -1,0 +1,41 @@
+{
+  "screenshots": [
+    "reports\\ui-screenshots\\dashboard-1440x900.png",
+    "reports\\ui-screenshots\\dashboard-390x844.png",
+    "reports\\ui-screenshots\\screen-1920x1080.png",
+    "reports\\ui-screenshots\\screen-1366x768.png",
+    "reports\\ui-screenshots\\screen-1180x760.png"
+  ],
+  "matrix_checks": [
+    {
+      "viewport": "dashboard-1440x900",
+      "ok": true,
+      "columnCount": 5,
+      "cellCount": 35,
+      "headerLabels": [
+        "确定性",
+        "启发式",
+        "行为基线",
+        "语义复核"
+      ],
+      "visibleRequiredLabels": true,
+      "learnedMapsToBehavioral": true
+    },
+    {
+      "viewport": "dashboard-390x844",
+      "ok": true,
+      "columnCount": 5,
+      "cellCount": 35,
+      "headerLabels": [
+        "确定性",
+        "启发式",
+        "行为基线",
+        "语义复核"
+      ],
+      "visibleRequiredLabels": true,
+      "learnedMapsToBehavioral": true
+    }
+  ],
+  "issue_count": 0,
+  "issues": []
+}

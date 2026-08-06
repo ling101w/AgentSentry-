@@ -1,6 +1,8 @@
 # 玄鉴 文档索引
 
-更新时间：2026-07-03
+更新时间：2026-08-05
+
+评测口径先读 `reports/EVALUATION_METHODOLOGY.md`：历史 840 条均为公开数据映射到 `/command-lab` 的开发回归，不是独立盲测，也不是 AgentDojo/InjecAgent 原生端到端运行。
 
 玄鉴是本参赛作品名称，当前仓库和插件内部仍沿用 `AgentSentry` 作为代码包名。答辩和报告中建议统一使用：
 
@@ -11,6 +13,7 @@
 | 文档 | 用途 |
 |---|---|
 | `reports/START_HERE.md` | 最短入口：先看什么、benchmark 文件在哪、怎么在 `/command-lab` 逐条测试 |
+| `reports/EVALUATION_METHODOLOGY.md` | 评测证据等级、标签隔离、盲测与原生 Benchmark 口径 |
 | `reports/competition_report.md` | 正式安全风险分析与行为监督报告 |
 | `reports/system_functionality.md` | 系统功能、架构、真实数据来源和限制 |
 | `reports/project_name_and_benchmark_summary.md` | 作品命名、公开 benchmark 汇总和核心指标 |
@@ -49,6 +52,15 @@
 - LLM-Judge：当前推荐 `risk-tiered` 调度；full Judge 结果仍保留，用于说明全量语义复核的成本和误拦。
 - 对比 full Judge：高风险漏放保持 0，误拦从 7 条降为 0 条，总耗时从约 135.2 分钟降到约 76.8 分钟。
 - 当前 `8765` 是主展示入口；`8000` 仅作为历史离线实验和辅助入口。
+
+## 2026-08-05 代码更新摘要
+
+- TaskSpec 从“最新一句用户消息白名单”升级为“会话授权状态”，支持补充授权合并、闲聊不清空、普通偏好保留和显式禁止项继承。
+- `outside TaskSpec` 拆分为低风险只读放行、授权不明确审批、未授权高风险阻断三类。
+- 系统巡检、只读系统状态查询、普通记忆偏好和正常 Skill 写入的误拦路径已降低。
+- 外部内容和工具返回新增轻量 IFC 分支记录，用于降低全局污染造成的连坐式误拦。
+- LLM-Judge 接入用户消息、复杂工具调用、记忆写入和溯源扫描四个环节；`risk-tiered` 模式会跳过低风险健康检查和普通读操作。
+- 低风险 shell 只读分类器已在 TaskSpec、检测、System Preflight 和 Judge 调度之间复用，系统健康检查口径保持一致。
 
 ## 保留原则
 

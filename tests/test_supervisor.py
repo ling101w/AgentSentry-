@@ -147,7 +147,7 @@ def test_inlined_untrusted_web_content_to_email_is_denied(store, policy, tools):
     assert email_decision["args"]["body"]["label"]["integrity"] == "untrusted"
 
 
-def test_behavior_sentry_emits_learned_finding(store, policy, tools):
+def test_behavior_sentry_emits_behavioral_finding(store, policy, tools):
     class SuspiciousRecipientLLM:
         def next_action(self, task, history):
             return json.dumps(
@@ -162,7 +162,7 @@ def test_behavior_sentry_emits_learned_finding(store, policy, tools):
     response = supervisor.run(RunRequest(task="Send email to user@example.com.", scripted_llm=False, max_steps=1))
     email_decision = response.decisions[0]
     assert email_decision["decision"] == "deny"
-    assert any(finding["finding_type"] == "learned" for finding in email_decision["findings"])
+    assert any(finding["finding_type"] == "behavioral" for finding in email_decision["findings"])
 
 
 def test_run_blocks_web_target_outside_taskspec(store, policy, tools):

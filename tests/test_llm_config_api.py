@@ -4,6 +4,7 @@ import json
 
 from fastapi.testclient import TestClient
 
+from agentsentry import __version__
 from agentsentry.app import app
 from agentsentry.llm import OpenAICompatibleClient
 from agentsentry.models import Event
@@ -58,6 +59,7 @@ def test_run_stream_returns_incremental_events():
 
 def test_health_and_openclaw_records_api():
     client = TestClient(app)
+    assert app.version == __version__
 
     health = client.get("/api/health")
     assert health.status_code == 200

@@ -149,10 +149,10 @@ class AgentSupervisor:
             step_findings.extend(deterministic_findings)
 
             sentry_score, sentry_reasons = behavior_sentry.score(action, task_spec, history)
-            learned_findings = _learned_findings(sentry_score, sentry_reasons, action.tool) if toggles.sentry else []
-            for finding in learned_findings:
+            behavioral_findings = _behavioral_findings(sentry_score, sentry_reasons, action.tool) if toggles.sentry else []
+            for finding in behavioral_findings:
                 context.record(finding)
-            step_findings.extend(learned_findings)
+            step_findings.extend(behavioral_findings)
             h_score = heuristic_score(step_findings) if toggles.sentry else 0
             policy_decision = engine.decide(action, task_spec, sentry_score=h_score, findings=step_findings)
             policy_decision.reasons.extend(finding.reason for finding in step_findings if finding.finding_type != FindingType.DETERMINISTIC)
@@ -346,14 +346,14 @@ class ExposureTracker:
         return Exposure(source=source, text="", label=label)
 
 
-def _learned_findings(score: int, reasons: list[str], tool: str) -> list[GuardFinding]:
+def _behavioral_findings(score: int, reasons: list[str], tool: str) -> list[GuardFinding]:
     if score < 40:
         return []
     verdict = DetectionVerdict.BLOCK if score >= 70 else DetectionVerdict.REQUIRE_APPROVAL
     return [
         GuardFinding(
             layer="Behavior Sentry",
-            finding_type=FindingType.LEARNED,
+            finding_type=FindingType.BEHAVIORAL,
             verdict=verdict,
             reason="behavior sentry risk model flagged action",
             score=score,
@@ -392,6 +392,10 @@ def _normalize_action(action: ToolAction) -> ToolAction:
 def _dominant_finding_type(findings: list[GuardFinding]) -> str | None:
     if any(finding.finding_type == FindingType.DETERMINISTIC for finding in findings):
         return "deterministic"
+    if any(finding.finding_type == FindingType.SEMANTIC for finding in findings):
+        return "semantic"
+    if any(finding.finding_type == FindingType.BEHAVIORAL for finding in findings):
+        return "behavioral"
     if any(finding.finding_type == FindingType.LEARNED for finding in findings):
         return "learned"
     if any(finding.finding_type == FindingType.HEURISTIC for finding in findings):

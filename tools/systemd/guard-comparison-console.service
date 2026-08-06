@@ -1,0 +1,16 @@
+[Unit]
+Description=AgentSentry and AgentWard plugin comparison console
+After=openclaw-gateway.service
+Wants=openclaw-gateway.service
+
+[Service]
+WorkingDirectory=/home/ubuntu/AgentSentry-
+EnvironmentFile=-/home/ubuntu/.config/agentsentry/openclaw-public-proxy.env
+Environment=GUARD_COMPARE_HOST=0.0.0.0
+Environment=GUARD_COMPARE_PORT=8788
+ExecStart=/home/ubuntu/.openclaw/tools/node/bin/node /home/ubuntu/AgentSentry-/tools/guard-comparison-console.mjs
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

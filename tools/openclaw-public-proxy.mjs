@@ -11,6 +11,7 @@ const targetPort = Number.parseInt(process.env.PUBLIC_PROXY_TARGET_PORT || '1878
 const authUser = process.env.PUBLIC_PROXY_USER || 'admin';
 const authSha256 = process.env.PUBLIC_PROXY_AUTH_SHA256;
 const gatewayConfigPath = process.env.PUBLIC_PROXY_GATEWAY_CONFIG || '/home/ubuntu/.openclaw/openclaw.json';
+const basePath = normalizeBasePath(process.env.PUBLIC_PROXY_BASE_PATH || '');
 
 if (!authSha256) {
   console.error('PUBLIC_PROXY_AUTH_SHA256 is required');
@@ -34,6 +35,33 @@ function pickBindHost() {
 }
 
 const bindHost = pickBindHost();
+
+function normalizeBasePath(value) {
+  const trimmed = String(value || '').trim().replace(/\/+$/, '');
+  if (!trimmed || trimmed === '/') return '';
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
+function stripBasePath(url = '/') {
+  if (!basePath) return url || '/';
+  if (url === basePath) return '/';
+  if (url.startsWith(`${basePath}/`)) return url.slice(basePath.length) || '/';
+  return url || '/';
+}
+
+function redirectBasePathWithSlash(req, res) {
+  if (!basePath) return false;
+  const host = req.headers.host || `127.0.0.1:${listenPort}`;
+  const current = new URL(req.url || '/', `http://${host}`);
+  if (current.pathname !== basePath) return false;
+  current.pathname = `${basePath}/`;
+  res.writeHead(308, {
+    Location: `${current.pathname}${current.search}${current.hash}`,
+    'Cache-Control': 'no-store',
+  });
+  res.end();
+  return true;
+}
 
 function gatewayToken() {
   const direct = process.env.PUBLIC_PROXY_GATEWAY_TOKEN?.trim();
@@ -124,9 +152,10 @@ function redirectWithToken(req, res, token) {
   const host = req.headers.host || `127.0.0.1:${listenPort}`;
   const next = new URL(req.url || '/', `http://${host}`);
   next.hash = new URLSearchParams({ token }).toString();
+  const location = `${next.pathname}${next.search}${next.hash}`;
   res.writeHead(302, {
-    Location: `${next.pathname}${next.search}${next.hash}`,
-    'Set-Cookie': 'openclaw_public_auth=1; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600',
+    Location: location,
+    'Set-Cookie': `openclaw_public_auth=1; Path=${basePath || '/'}; HttpOnly; SameSite=Lax; Max-Age=3600`,
     'Cache-Control': 'no-store',
   });
   res.end();
@@ -198,6 +227,10 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && redirectBasePathWithSlash(req, res)) {
+    return;
+  }
+
   const token = gatewayToken();
   const wantsHtml = String(req.headers.accept || '').includes('text/html');
   if (req.method === 'GET' && wantsHtml && token && !hasBootstrapCookie(req.headers.cookie)) {
@@ -205,12 +238,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  const upstreamPath = stripBasePath(req.url || '/');
   const proxyReq = http.request(
     {
       host: targetHost,
       port: targetPort,
       method: req.method,
-      path: req.url,
+      path: upstreamPath,
       headers: {
         ...stripHopByHopHeaders(req.headers),
         host: `${targetHost}:${targetPort}`,
@@ -253,6 +287,8 @@ server.on('upgrade', (req, socket, head) => {
     return;
   }
 
+  const token = gatewayToken();
+  const upstreamPath = stripBasePath(req.url || '/');
   const upstream = net.connect(targetPort, targetHost, () => {
     const headers = {
       ...req.headers,
@@ -266,10 +302,13 @@ server.on('upgrade', (req, socket, head) => {
     };
     delete headers.authorization;
     delete headers['proxy-authorization'];
+    if (token) {
+      headers.authorization = `Bearer ${token}`;
+    }
 
     upstream.write(
       [
-        `${req.method} ${req.url} HTTP/${req.httpVersion}`,
+        `${req.method} ${upstreamPath} HTTP/${req.httpVersion}`,
         ...Object.entries(headers)
           .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(', ') : value}`),
         '',
@@ -295,5 +334,5 @@ server.on('error', (error) => {
 });
 
 server.listen(listenPort, bindHost, () => {
-  console.log(`OpenClaw public proxy listening on ${bindHost}:${listenPort}, target ${targetHost}:${targetPort}`);
+  console.log(`OpenClaw public proxy listening on ${bindHost}:${listenPort}, target ${targetHost}:${targetPort}, basePath=${basePath || '/'}`);
 });

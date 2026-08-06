@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, Response, Streami
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
+from . import __version__
 from .config import RuntimePaths, ensure_runtime
 from .cases import load_cases
 from .evaluation import run_ablation, run_eval
@@ -60,7 +61,7 @@ def store() -> Store:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="AgentSentry", version="0.1.0")
+    app = FastAPI(title="AgentSentry", version=__version__)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.mount("/static", CachedStaticFiles(directory=STATIC_DIR), name="static")
 

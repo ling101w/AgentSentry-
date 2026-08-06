@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import Counter
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
-OPENCLAW_DASHBOARD = "http://127.0.0.1:8765"
+OPENCLAW_DASHBOARD = os.environ.get("AGENTSENTRY_DASHBOARD", "http://127.0.0.1:8765").rstrip("/")
 
 
 def openclaw_records(limit: int = 500) -> dict[str, Any]:
@@ -55,7 +56,7 @@ def _load_records(limit: int) -> tuple[list[dict[str, Any]], str]:
 
 def _dashboard_json(path: str) -> dict[str, Any]:
     try:
-        with urlopen(f"{OPENCLAW_DASHBOARD}{path}", timeout=1.5) as response:
+        with urlopen(_dashboard_request(path), timeout=1.5) as response:
             value = json.loads(response.read().decode("utf-8"))
         return value if isinstance(value, dict) else {}
     except (OSError, URLError, json.JSONDecodeError):
@@ -89,6 +90,20 @@ def _stats(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _default_records_path() -> Path:
     return Path.home() / ".openclaw" / "agentsentry" / "records.jsonl"
+
+
+def _dashboard_request(path: str) -> Request:
+    request = Request(f"{OPENCLAW_DASHBOARD}{path}")
+    token = os.environ.get("AGENTSENTRY_DASHBOARD_TOKEN", "").strip()
+    if not token:
+        state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR", "").strip() or Path.home() / ".openclaw")
+        try:
+            token = (state_dir / "agentsentry" / "dashboard-session.key").read_text(encoding="utf-8").strip()
+        except OSError:
+            token = ""
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    return request
 
 
 def _redact(record: dict[str, Any]) -> dict[str, Any]:

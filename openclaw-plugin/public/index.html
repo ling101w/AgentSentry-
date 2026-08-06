@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>玄鉴运行记录与风险观测</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=20260711-1" />
   </head>
   <body>
     <header class="topbar">
@@ -40,6 +40,17 @@
     </header>
 
     <main class="page-shell">
+      <section class="defense-stack-panel" aria-label="当前运行防护栈">
+        <div class="defense-stack-heading">
+          <div>
+            <span>当前运行防护栈</span>
+            <strong id="stackReadiness">配置读取中</strong>
+          </div>
+          <span id="stackMode" class="stack-mode">--</span>
+        </div>
+        <div id="securityStack" class="security-stack"></div>
+      </section>
+
       <section class="stats-grid" id="statsGrid" aria-label="记录概览"></section>
 
       <section class="workbench">
@@ -136,6 +147,6 @@
       </section>
     </main>
 
-    <script src="/app.js"></script>
+    <script src="/app.js?v=20260711-1"></script>
   </body>
 </html>

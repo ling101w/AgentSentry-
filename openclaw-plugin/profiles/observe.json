@@ -1,0 +1,25 @@
+{
+  "profile": "observe",
+  "enforcement": { "mode": "observe" },
+  "semantic": {
+    "enabled": false,
+    "mode": "risk-tiered",
+    "judgeToolCalls": true,
+    "judgeMessages": false,
+    "judgeProvenance": false,
+    "judgeMemoryWrites": true
+  },
+  "policy": {
+    "deterministic": true,
+    "taintFeedback": true,
+    "restrictWritesToAllowedRoots": false,
+    "allowedWriteRoots": []
+  },
+  "runtimeIsolation": {
+    "requireKernelObserverForHighRisk": false,
+    "unavailableAction": "require_approval",
+    "auditAfterExecution": true
+  },
+  "responseCover": { "enabled": false, "coverAssistantAfterContamination": true },
+  "notifications": { "enableProactiveNotifications": false, "minSeverity": "danger" }
+}

@@ -1,165 +1,263 @@
 # 玄鉴 / AgentSentry
 
-参赛作品名称：
+> 面向智能体工具调用链的实时行为监督与风险拦截系统
 
-> 玄鉴：面向智能体工具调用链的实时行为监督与风险拦截系统
+[![CI](https://github.com/ling101w/AgentSentry-/actions/workflows/ci.yml/badge.svg)](https://github.com/ling101w/AgentSentry-/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-`AgentSentry` 是当前仓库和 OpenClaw 插件内部沿用的工程代码名。答辩、报告和演示建议统一使用“玄鉴”。
+**玄鉴**是参赛作品名称，`AgentSentry` 是仓库与 OpenClaw 插件沿用的工程名。它嵌入智能体的工具调用生命周期，在文件、网络、邮件、命令、记忆等动作真正执行前回答三个问题：
 
-AgentSentry is a runnable M2 prototype for an LLM-agent behavior firewall:
+1. 用户是否明确授权了这个能力和具体目标？
+2. 当前参数是否实际使用了低可信或敏感数据？
+3. 这个动作是否越过确定性的安全边界？
 
-- OpenAI-compatible JSON-action agent interface.
-- Sandboxed tools: webpage, file read/write, email, API, memory.
-- Deterministic policy gate with taint labels and a YAML DSL.
-- Lightweight behavior sentry for intent drift, suspicious sinks, memory poisoning, and adaptive variants.
-- Four-domain feedback architecture: context provenance, state integrity, intent authorization, tool boundary, and evidence feedback.
-- SQLite event store and a FastAPI-served monitoring dashboard.
-- Built-in benign/attack evaluation suite with ablations.
+系统输出 `allow`、`ask` 或 `deny`。其中 `ask` 表示动作尚未放行，必须经过操作员审批；LLM Semantic Judge 只处理确定性规则无法判断的语义歧义，而且只能收紧、不能放宽确定性裁决。
 
-Current scope: the deterministic layer enforces TaskSpec tool bounds, allowed target URLs, taint-to-sink checks, recipient/path/API allowlists, and fail-closed sink rules. The sentry layer is a lightweight rule/feature baseline that emits heuristic or `learned`-typed findings for residual-risk telemetry; it is not a trained IsolationForest/GNN model. The built-in evaluation suite is deterministic and offline by default; AgentDojo/InjecAgent integration remains adapter/future-work territory.
+## 核心架构
 
-## 推荐入口
-
-- 文档入口：`reports/START_HERE.md`
-- OpenClaw 插件主控制台：`http://127.0.0.1:8765/`
-- 业务测试台和 benchmark 逐条复测：`http://127.0.0.1:8765/command-lab`
-- 安全态势大屏：`http://127.0.0.1:8765/security-screen`
-- OpenClaw Control UI：`http://127.0.0.1:18789/`
-
-`8000` 是早期 FastAPI 离线原型和辅助研究入口；当前比赛展示与真实 OpenClaw 插件链路以 `8765` 为准。
-
-## Quick Start
-
-```powershell
-python -m uvicorn agentsentry.app:app --reload --app-dir src
+```text
+OpenClaw lifecycle hook
+        |
+        v
+normalize action
+        |
+        v
+TaskSpec V2 capability authorization
+        |
+        v
+field-level provenance / taint graph
+        |
+        v
+deterministic enforcement
+        |
+        +------ ambiguous only ------> semantic judge (1-2s budget + cache)
+        |                                  |
+        +----------------------------------+
+        v
+allow / ask / deny
+        |
+        v
+apply effects + async audit telemetry
 ```
 
-Open http://127.0.0.1:8000 and run a scenario from the dashboard.
+玄鉴的生产链由三个概念构成：
 
-The production-style situation screen is available at http://127.0.0.1:8000/security-screen.
-It is backed by `GET /api/security/overview`, which can show the local SQLite experiment store, OpenClaw plugin records, or a combined research view; when the API is unavailable it shows an explicit empty state rather than generated statistics.
+- **Authorization Graph**：把最新用户请求解析为显式 capability set，约束文件路径、网络 origin、HTTP method、邮件收件人、命令和有效期。模型可以建议 capability，但不能授予 capability。
+- **Provenance/Taint Graph**：记录具体 tool-result 字段如何进入后续 tool arguments。只有污染数据真实到达 sink 才会触发数据流阻断，避免“会话里出现过一次污染，后续所有动作都背锅”。
+- **Deterministic Enforcement**：URL origin、SSRF、canonical path、敏感文件、持久化、Memory Guard、工具完整性和高风险 sink 由确定性策略执行，不依赖模型可用性。
 
-## OpenClaw Plugin
+策略评估采用 effects 契约：
 
-AgentSentry can also run inside OpenClaw as a plugin. The plugin records OpenClaw context construction, tool calls, security findings, approval decisions, runtime evidence, and serves a local records dashboard with JSON/CSV export.
+```ts
+const { decision, effects } = evaluate(snapshot, action, config);
+applyEffects(state, effects);
+```
+
+`evaluate()` 在克隆的 snapshot 上计算，不修改调用方会话状态；最终裁决后再统一提交状态和异步审计事件。
+
+## 能防什么
+
+| 攻击面 | 关键防线 |
+|---|---|
+| 间接提示注入 | 外部内容 trust label、字段级 provenance、taint-to-sink 检查、响应覆盖 |
+| Agent 擅自扩大任务 | TaskSpec V2 capability containment、目标与方法约束、ASK 审批 |
+| 敏感文件与目录穿越 | workspace canonical boundary、realpath/symlink 检查、Windows drive/UNC 处理 |
+| URL allowlist 绕过与 SSRF | exact/prefix 规则分离、origin 含端口、DNS 后私网/metadata IP 检查、逐跳重定向验证、流式大小限制 |
+| 记忆投毒 | 独立 256-bit Memory Guard key、HMAC timing-safe 校验、namespace 与来源约束 |
+| 恶意 Skill / 工具劫持 | 增量 provenance scan、Tool Security Manifest、digest pinning、未知工具审批 |
+| 行为漂移 | 按 tool x task-class 的 warm-up、TTL 与滑动窗口基线 |
+| Dashboard 暴露 | loopback 默认绑定、bootstrap token、HttpOnly + SameSite=Strict session、Host/Origin 校验 |
+
+## 90 秒演示
+
+1. 在 OpenClaw 中启用比赛配置：
+
+   ```text
+   /agentsentry profile competition
+   /agentsentry
+   ```
+
+2. 打开 `/agentsentry` 返回的认证 URL。裸 `http://127.0.0.1:8765/` 在全新浏览器中按设计返回 `401`；bootstrap token 写入安全 session cookie 后立即从地址栏移除。
+3. 进入 `/command-lab`，先运行一个普通文件写入或健康检查，证明系统不是一刀切。
+4. 再运行隐藏指令、敏感数据外发或记忆投毒样例，观察动作在执行前进入 `deny` 或 `ask`。
+5. 打开 `/security-screen` 的“因果”视图，查看 `intent -> capability -> data -> action -> sink` 路径和命中的边界。
+6. 回到首页查看 `tool_decision`、`guard_finding`、`alert`、`tool_result`，并导出 JSON/CSV 审计记录。
+
+更完整的演示话术和复现顺序见 [演示与复现实验指南](reports/demo_and_reproduction.md)。
+
+## 快速安装
+
+要求：
+
+- Node.js 24（与 CI 一致）
+- npm
+- OpenClaw `>=2026.3.28`
+- Python 3.13 仅用于离线原型、评测和 Python 测试
+
+### Windows PowerShell
 
 ```powershell
-cd .\openclaw-plugin
-npm run build
+git clone https://github.com/ling101w/AgentSentry-.git
+cd .\AgentSentry-\openclaw-plugin
+npm ci --legacy-peer-deps
+npm run ci
 .\setup.ps1 -Force
 ```
 
-After installing, use `/agentsentry` in OpenClaw. The dashboard defaults to http://127.0.0.1:8765 and JSONL records are stored under `~/.openclaw/agentsentry/records.jsonl`.
+### Linux / macOS
 
-The plugin dashboard includes:
-
-- `/` records console with JSON/CSV export.
-- `/command-lab` business request console that maps adversarial instructions and public benchmark cases to controlled business tools, runs the same policy decision path, executes allowed requests, and writes `tool_decision`, `guard_finding`, `alert`, and `tool_result` records.
-- `/security-screen` situation screen. Its default KPI scope is OpenClaw plugin records, so the top-left total matches `GET /api/stats`. Use `/api/security/overview?source=combined` only for the combined research view.
-
-The plugin defaults to observe-only mode. To actively gate risky tool calls, change `enforcement.mode` in the OpenClaw plugin config to `approval` or `block`. In approval mode, an OpenClaw `allow-always` resolution caches the exact tool name and parameter hash in `~/.openclaw/agentsentry/approval-cache.json`; clear it with `/agentsentry approvals reset`.
-
-The OpenClaw plugin now also has optional semantic workspace provenance scan and response covering:
-
-```text
-/agentsentry config set semantic.enabled true
-/agentsentry config set semantic.judgeProvenance true
-/agentsentry config set responseCover.enabled true
+```bash
+git clone https://github.com/ling101w/AgentSentry-.git
+cd AgentSentry-/openclaw-plugin
+npm ci --legacy-peer-deps
+npm run ci
+bash setup.sh --force
 ```
 
-Useful runtime commands:
+安装完成并重启 OpenClaw Gateway 后：
+
+```text
+/agentsentry profile competition
+/agentsentry status
+```
+
+`/agentsentry status` 会返回认证 Dashboard URL、记录路径、当前 profile、enforcement mode、session 数量与核心防线状态。审计记录默认写入：
+
+```text
+~/.openclaw/agentsentry/records.jsonl
+```
+
+## 安全配置
+
+| Profile | Enforcement | 用途 |
+|---|---|---|
+| `observe` | `observe` | 只记录和告警，用作无阻断基线 |
+| `balanced` | `approval` | 日常使用，高风险动作进入审批 |
+| `competition` | `approval` | 比赛演示，启用 provenance judge、写入 root 和响应覆盖 |
+| `high-security` | `block` | 强约束部署，要求高风险运行面具备内核 observer |
+
+常用命令：
 
 ```text
 /agentsentry status
-/agentsentry config get
-/agentsentry config set enforcement.mode approval
-/agentsentry approvals status
-/agentsentry approvals reset
+/agentsentry profile <observe|balanced|competition|high-security>
+/agentsentry config get [key]
+/agentsentry config set <key> <value>
+/agentsentry config reset
+/agentsentry approvals [status|reset]
 /agentsentry reset
 ```
 
-To use a real OpenAI-compatible endpoint, set:
+Semantic Judge 默认使用独立的环境变量，不复用业务 API Key：
 
 ```powershell
-$env:OPENAI_API_KEY="YOUR_API_KEY"
-$env:OPENAI_BASE_URL="https://api.wushuang233.com/v1"
-$env:OPENAI_MODEL="gpt-5.5"
+$env:AGENTSENTRY_API_KEY="YOUR_JUDGE_KEY"
 ```
 
-The dashboard is configured for the real model path. The scenario selector changes the task template and run metadata.
+```text
+/agentsentry config set semantic.enabled true
+/agentsentry config set semantic.baseUrl https://api.openai.com/v1
+/agentsentry config set semantic.model gpt-4o-mini
+/agentsentry config set semantic.apiKeyEnv AGENTSENTRY_API_KEY
+```
 
-PowerShell example:
+未配置 key、网络不可用或 Judge 超时，不会关闭确定性策略。
+
+## Dashboard
+
+认证后可使用三个主视图：
+
+- `/`：实时记录、裁决详情、JSON/CSV 导出和运行配置。
+- `/command-lab`：受控业务工具与公开攻击样例的逐条复测入口。
+- `/security-screen`：安全态势、四域一环指标、告警时间线和 Live Causal Graph。
+
+Dashboard 默认只允许 loopback。若要绑定 `0.0.0.0`，必须显式启用远程访问并配置认证 token；不要为了容器部署直接暴露未认证端口。
+
+## 验证
+
+OpenClaw 插件：
 
 ```powershell
-$env:OPENAI_API_KEY="YOUR_API_KEY"
-$env:OPENAI_BASE_URL="https://api.openai.com/v1"
-$env:OPENAI_MODEL="gpt-4o-mini"
-python -m uvicorn --app-dir src agentsentry.app:app --host 127.0.0.1 --port 8000
+cd openclaw-plugin
+npm run ci
+npm run sbom
 ```
 
-For compatible providers, either `https://host` or `https://host/v1` works; AgentSentry normalizes the chat-completions URL. The model must return one JSON action per step, for example:
+当前 CI 覆盖 typecheck、ESLint、Vitest coverage、policy/security smoke、property/fuzz 和 AgentDojo bridge self-test。当前分支最近一次本地与 GitHub CI 结果为 31 个测试文件、341 项测试通过。
 
-```json
-{"tool":"call_api","args":{"url":"http://127.0.0.1:8765/api/health"},"reason":"check plugin health"}
-```
-
-## API
-
-- `POST /api/runs` starts a supervised agent run.
-- `GET /api/events` returns recent runs, alerts, decisions, and taint edges.
-- `GET /api/security/overview?source=combined|openclaw|local` returns the real-time situation-screen aggregate for KPIs, topology nodes, alerts, stages, rules, timeline, and source metadata.
-- `GET /api/health` returns service, LLM, runtime path, and OpenClaw availability status.
-- `GET /api/openclaw/records` proxies recent OpenClaw plugin audit records when the plugin dashboard is reachable.
-- `POST /api/eval/run?defense_mode=full` runs the built-in M2 evaluation suite.
-- `GET /api/eval/results` returns saved metric summaries.
-- `GET /api/eval/export.csv` exports evaluation metrics.
-- `GET /api/cases` returns the Chinese security case suite.
-- `GET /api/cases/export.json` exports the case suite.
-- `POST /api/reset` clears local SQLite run records.
-
-## Experiment Runner
+Python 离线原型与评测工具：
 
 ```powershell
-python scripts/run_competition_experiments.py
+python -m pip install -e ".[dev]"
+python -m pytest -q
 ```
 
-Competition materials:
+当前 Python 测试为 123 项。
 
-- Chinese case suite: `cases/agentsentry_cases.yaml`
-- Start here: `reports/START_HERE.md`
-- System functionality document: `reports/system_functionality.md`
-- Reproduction guide and operator guide: `reports/operator_guide.md`
-- Current benchmark cases: `reports/benchmark_risk_tiered/benchmark_cases.risk_tiered.jsonl` and `reports/benchmark_risk_tiered/tool_attack_cases.risk_tiered.jsonl`
-- Current benchmark results: `reports/benchmark_risk_tiered/benchmark_eval_results.risk_tiered.json` and `reports/benchmark_risk_tiered/tool_attack_benchmark_results.risk_tiered.json`
-- OpenClaw UI proof: `python scripts/check_openclaw_ui.py`
-- UI layout proof: `reports/ui-screenshots-8765/per-viewport-check.json`
+## 评测口径
 
-## Tests
+仓库保存了两组公开内容映射后的开发回归：综合攻击回归 520 条、工具攻击专项 320 条。这些结果用于规则回归、误报检查和消融，但必须明确：
+
+- 它们不是独立盲测。
+- 它们不是 AgentDojo/InjecAgent 原生端到端成绩。
+- 历史标签不会进入 detector 输入；新的评测协议将 labels 保留在 evaluator-owned envelope。
+- Native AgentDojo adapter、doctor/plan/contract 已实现，但模型驱动发布结果在完成干净 release run 前保持 `not_run`。
+
+指标、标签隔离和证据等级见 [EVALUATION_METHODOLOGY.md](reports/EVALUATION_METHODOLOGY.md)。
+
+## 能力边界
+
+- eBPF observer 可记录 `execve`、`openat` 等事件；`connect` 当前只记录 syscall 的 pid/comm/fd，不提取或分类目标地址。网络目的地控制来自应用层 URL/命令 preflight 和部署侧 egress allowlist。
+- canonical path 检查发生在 OpenClaw 文件工具打开路径之前，仍存在经典 check/use 时间窗。需要更强隔离时，应让文件工具使用 `openat`、`O_NOFOLLOW` 或检查过的 fd。
+- 行为检测是轻量在线统计基线，不宣称使用 IsolationForest、GNN 或已训练异常检测模型。
+- `src/agentsentry/` 的 FastAPI 服务是早期离线原型和辅助研究接口；比赛主链是 `openclaw-plugin/` 与认证后的 `8765` Dashboard。
+- 公开 benchmark 映射可以证明已知规则回归稳定，不能单独证明未知攻击泛化能力。
+
+## 目录结构
+
+| 路径 | 作用 |
+|---|---|
+| `openclaw-plugin/` | 当前生产主系统：OpenClaw hooks、策略、Dashboard、测试和 profiles |
+| `openclaw-plugin/core/task-spec/` | TaskSpec V2 capability 提取与 containment |
+| `openclaw-plugin/core/taint/` | 字段级 provenance/taint graph |
+| `openclaw-plugin/core/policy/` | action assessment、行为基线和 policy helpers |
+| `openclaw-plugin/core/persistence/` | 异步批量事件写入 |
+| `reports/` | 比赛报告、评测说明、验收证据和文档索引 |
+| `evaluation/` | 标签隔离评测协议与 native adapter |
+| `cases/`、`policies/` | 中文案例集与离线策略材料 |
+| `scripts/` | 评测、验收、发布和 UI 检查脚本 |
+| `src/`、`tests/` | 早期 Python 离线原型及其测试 |
+| `output/` | 可交付发布包 |
+
+完整结构说明见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)。
+
+## 文档入口
+
+| 文档 | 适合谁看 |
+|---|---|
+| [START_HERE.md](reports/START_HERE.md) | 第一次打开仓库，希望快速找到材料 |
+| [competition_report.md](reports/competition_report.md) | 评委、答辩者、安全评审 |
+| [system_functionality.md](reports/system_functionality.md) | 想核对功能与真实数据来源的人 |
+| [technical_design_and_algorithms.md](reports/technical_design_and_algorithms.md) | 想深入 TaskSpec、taint、Memory Guard、Judge 的开发者 |
+| [demo_and_reproduction.md](reports/demo_and_reproduction.md) | 需要复现演示和 benchmark 的操作者 |
+| [openclaw-plugin/README.md](openclaw-plugin/README.md) | 只安装或开发 OpenClaw 插件的人 |
+| [README_RELEASE.md](README_RELEASE.md) | 使用交付 tarball 的部署人员 |
+
+## 发布包
+
+当前兼容包位于：
+
+```text
+output/xuanjian-openclaw-plugin-20260703.tar.gz
+```
+
+文件名为兼容已有交付链接而保留，包内代码来自当前 release commit。重新构建与审计：
 
 ```powershell
-pytest
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_release_archive.ps1
+Get-FileHash -Algorithm SHA256 .\output\xuanjian-openclaw-plugin-20260703.tar.gz
 ```
 
-## Defense Modes
+## License
 
-- `full`: deterministic gate, behavior sentry, and feedback tightening.
-- `no_deterministic`: sentry only.
-- `no_sentry`: deterministic gate only.
-- `no_feedback`: deterministic gate plus sentry without feedback tightening.
-- `none`: no deterministic or sentry defense.
-
-## XuanJian Security Domains
-
-| Domain | Deterministic | Heuristic / Learned |
-|---|---|---|
-| Context Provenance | workspace, external-content, prompt-source, and supply-chain provenance checks | hidden prompt injection, multimodal carrier, and source-risk tagging |
-| State Integrity | protected memory keys, memory passport integrity, source trust, and quarantine | memory outlier consensus and poisoning-risk review |
-| Intent Authorization | TaskSpec bounds, ABAC session context, taint-to-sink trust rules | dynamic intent drift and LLM-Judge semantic review |
-| Tool Boundary | file, email, API, shell, gateway, sensitive path, and eBPF-assisted runtime gates | sandbox egress review and post-execution anomaly feedback |
-| Evidence Feedback | tool result taint preservation, approval cache, runtime audit, and risk-vector feedback | trajectory tightening and operator evidence summaries |
-
-`ask` means "not released"; it is recorded for operator review and does not execute tools.
-
-## Rita-Style Prompt Extraction Scenario
-
-The `rita_prompt_extraction` scenario models a staged prompt-extraction attack: untrusted web content frames hidden system/developer prompt recovery as a harmless audit task, asks for tool declarations and output-format rules, then requests omitted lines as an appendix. AgentSentry records the untrusted source indicators in Context Provenance and blocks the attempted `system_prompt.txt` read at Tool Boundary.
+[Apache License 2.0](LICENSE)

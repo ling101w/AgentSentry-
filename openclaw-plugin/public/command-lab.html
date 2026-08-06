@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>玄鉴业务测试台</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/command-lab.css?v=20260703-3" />
+    <link rel="stylesheet" href="/command-lab.css?v=20260711-1" />
   </head>
   <body>
     <main class="lab-shell">
@@ -50,8 +50,13 @@
               <span id="commandState" class="pill">就绪</span>
             </div>
 
+            <div class="demo-switch" aria-label="答辩演示主线">
+              <button class="active" type="button" data-demo-scenario="external_email_hidden">攻击验证</button>
+              <button type="button" data-demo-scenario="benign">正常放行</button>
+            </div>
+
             <label class="field">
-              攻击类型
+              测试场景
               <select id="scenarioSelect">
                 <option value="external_email_hidden">外部内容注入：隐藏邮件</option>
                 <option value="external_web_hidden">外部内容注入：恶意网页</option>
@@ -98,25 +103,25 @@
             </div>
           </section>
 
-          <section class="panel">
-            <div class="panel-title">
+          <details class="panel library-panel">
+            <summary class="panel-title">
               <div>
                 <span class="kicker">Presets</span>
                 <h2>测试用例模板</h2>
               </div>
               <span class="panel-note">点击即填充</span>
-            </div>
+            </summary>
             <div class="preset-list" id="presetList"></div>
-          </section>
+          </details>
 
-          <section class="panel benchmark-panel">
-            <div class="panel-title">
+          <details class="panel benchmark-panel library-panel">
+            <summary class="panel-title">
               <div>
                 <span class="kicker">Benchmark Cases</span>
                 <h2>公开样例库</h2>
               </div>
               <span id="benchmarkCount" class="panel-note">读取中</span>
-            </div>
+            </summary>
             <div class="benchmark-controls">
               <label class="field mini">
                 样例集
@@ -150,7 +155,7 @@
               <button id="loadBenchmarkBtn" type="button">载入样例</button>
               <button id="runBenchmarkBtn" class="primary" type="button">运行样例</button>
             </div>
-          </section>
+          </details>
 
           <section class="panel">
             <div class="panel-title">
@@ -189,6 +194,7 @@
                 <span id="connectionState" class="pill loading">连接中</span>
               </div>
             </div>
+            <div class="flow-decision-summary" id="flowDecisionSummary"></div>
             <div class="flow-grid" id="flowGrid"></div>
           </section>
 
@@ -218,6 +224,6 @@
       </section>
     </main>
 
-    <script type="module" src="/command-lab.js?v=20260703-3"></script>
+    <script type="module" src="/command-lab.js?v=20260711-1"></script>
   </body>
 </html>

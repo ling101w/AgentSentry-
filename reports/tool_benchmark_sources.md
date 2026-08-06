@@ -4,9 +4,9 @@
 
 本文档记录本轮补充调研到的、可用于玄鉴 实验的公开 benchmark。重点不是传统“提示词注入”，而是工具调用、系统命令、文件访问、MCP 工具投毒、恶意参数、响应篡改、多步恶意 agent 任务、审计轨迹识别等攻击面。
 
-当前实际纳入 `8765` 真实接口评测的来源为：RedTeamCUA、MSB、MCPSecBench、MemoryGraft、AgentDojo、InjecAgent、AgentDefense-Bench、BashArena、AgentHarm、ToolEmu。R-Judge、AgentLAB / Agent-SafetyBench、ToolShield / MT-AgentRisk 等作为方法参考或后续扩展。
+当前纳入 `8765` 本地接口映射回归的来源为：RedTeamCUA、MSB、MCPSecBench、MemoryGraft、AgentDojo、InjecAgent、AgentDefense-Bench、BashArena、AgentHarm、ToolEmu。它们被转换为受控工具调用，不等价于各 Benchmark 原生端到端运行。R-Judge、AgentLAB / Agent-SafetyBench、ToolShield / MT-AgentRisk 等仅作为方法参考。
 
-最新 `risk-tiered` 复测结果：两批共 840 条，攻击/期望保护 711 条，正常/期望放行 129 条，高风险漏放 0，误拦 0，harness error 0。详细留档见 `reports/benchmark_risk_tiered/xuanjian_benchmark_risk_tiered_record.txt`。
+历史 `risk-tiered` 映射回归留档：两批共 840 条，攻击/期望保护 711 条，正常/期望放行 129 条，高风险漏放 0，误拦 0，harness error 0。该结果用于开发回归，不外推未知攻击或生产误判率；详见 `reports/benchmark_risk_tiered/xuanjian_benchmark_risk_tiered_record.txt`。
 
 ## 已下载到本地的来源
 
