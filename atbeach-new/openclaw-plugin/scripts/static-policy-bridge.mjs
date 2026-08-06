@@ -173,10 +173,11 @@ async function beforeTool(session, callId, payload) {
 
   const metadataFindings = session.metadataFindings.get(normalizeToolId(payload.tool_name)) || [];
   const registeredTool = session.toolRegistryByName?.get(normalizeToolId(payload.tool_name)) || null;
+  const toolArgs = evaluatorToolArgs(payload.tool_name, payload.tool_args, registeredTool);
   const context = { toolCallId: callId, workspaceDir: "" };
   const preliminary = detectToolCall(
     payload.tool_name,
-    payload.tool_args,
+    toolArgs,
     session.config,
     session.state,
     metadataFindings,
@@ -195,7 +196,7 @@ async function beforeTool(session, callId, payload) {
   const detection = semanticFindings.length
     ? detectToolCall(
       payload.tool_name,
-      payload.tool_args,
+      toolArgs,
       session.config,
       session.state,
       [...metadataFindings, ...semanticFindings],
@@ -449,7 +450,11 @@ function manifestForRegisteredFunction(descriptor) {
   const manifest = structuredClone(descriptor.manifest);
   manifest.toolId = policyToolIdForRegisteredDescriptor(descriptor);
   manifest.aliases = [...new Set([descriptor.tool_name, ...(manifest.aliases || [])])].sort();
-  if (descriptor.effect === "read_only" && descriptor.data_sensitivity === "public") {
+  const callerScopedPrivateRead = descriptor.effect === "read_only"
+    && descriptor.data_sensitivity === "user_private"
+    && descriptor.credential_fields.length > 0
+    && descriptor.target_fields.length === 0;
+  if ((descriptor.effect === "read_only" && descriptor.data_sensitivity === "public") || callerScopedPrivateRead) {
     manifest.requiresExplicitAuthorization = false;
     manifest.canExfiltrate = false;
     manifest.acceptsSensitiveData = false;
@@ -467,6 +472,16 @@ function policyToolIdForRegisteredDescriptor(descriptor) {
   if (descriptor.effect === "privileged_change" || descriptor.data_sensitivity === "secret") return "registered_privileged_api";
   if (descriptor.effect === "persistent_change") return "registered_persistent_api";
   return "registered_effect_api";
+}
+
+function evaluatorToolArgs(toolName, toolArgs, descriptor) {
+  const args = structuredClone(toolArgs || {});
+  if (!descriptor || !["call_api", "external_api_read"].includes(descriptor.canonical_tool)) return args;
+  if (["url", "uri", "href", "endpoint", "target"].some((key) => args[key] !== undefined)) return args;
+  // ATBench often omits transport endpoints. This represents a reviewed
+  // catalog-bound provider identity, not an arbitrary Internet destination.
+  args.endpoint = `atbench://registered/${encodeURIComponent(toolName)}`;
+  return args;
 }
 
 function uniqueCatalog(catalog) {
