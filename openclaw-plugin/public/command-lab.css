@@ -456,7 +456,7 @@ h2 {
 
 .demo-switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
   margin: 12px 12px 0;
   border: 1px solid var(--line);
@@ -606,6 +606,41 @@ textarea:focus {
   font-weight: 800;
 }
 
+.demo-steps {
+  display: grid;
+  gap: 5px;
+  margin: 4px 0 0;
+  padding-left: 19px;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.demo-steps li::marker {
+  color: var(--primary);
+  font-weight: 900;
+}
+
+.scenario-expected {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.scenario-expected span {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.scenario-expected strong {
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 .panel-note {
   color: var(--faint);
   font-size: 12px;
@@ -753,6 +788,137 @@ textarea:focus {
 .benchmark-actions button {
   flex: 1 1 0;
   min-width: 0;
+}
+
+.demo-ops-panel {
+  overflow: hidden;
+}
+
+.ops-section {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.ops-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ops-title strong {
+  color: var(--strong);
+  font-size: 12px;
+}
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ops-metric,
+.checkpoint-item,
+.trust-matrix article {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--base-900);
+  padding: 8px 9px;
+}
+
+.ops-metric span,
+.checkpoint-item span,
+.trust-matrix span {
+  display: block;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.ops-metric strong,
+.checkpoint-item strong,
+.trust-matrix strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--strong);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ops-metric small,
+.checkpoint-item small,
+.trust-matrix small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.checkpoint-list,
+.trust-matrix {
+  display: grid;
+  gap: 8px;
+}
+
+.checkpoint-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.checkpoint-item button {
+  align-self: center;
+}
+
+.policy-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--base-900);
+  padding: 7px 8px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.toggle-row input {
+  width: auto;
+  min-height: auto;
+}
+
+.field.no-pad {
+  padding: 0;
+}
+
+.mini-textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.ops-empty {
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1280px) {
+  .ops-grid,
+  .policy-toggles {
+    grid-template-columns: 1fr;
+  }
 }
 
 .pill {

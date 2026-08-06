@@ -1,4 +1,5 @@
 import type { PluginConfig } from "../config.ts";
+import { existsSync } from "node:fs";
 import { semanticActionFindings } from "./action-semantics.ts";
 import { toolManifestFindings } from "./tool-manifest.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
@@ -107,7 +108,8 @@ export function detectToolCall(
     : [];
   let action = normalizeAction(toolName, params);
   const manifestFindings = config.policy.deterministic ? toolManifestFindings(toolName, action.tool, params) : [];
-  const deterministicFindings = [...boundaryFindings, ...manifestFindings];
+  const strictSandboxFindings = strictSandboxFindingsFor(action.tool, params, workspaceDir, config);
+  const deterministicFindings = [...boundaryFindings, ...manifestFindings, ...strictSandboxFindings];
   const semanticAction = semanticActionFindings(toolName, params, config);
   if (!config.detection.enabled) {
     const policy = decideAction(action, state, config, deterministicFindings, {
@@ -163,6 +165,7 @@ export function detectToolCall(
     previewChars: config.capture.previewChars,
     requireKernelObserverForHighRisk: config.runtimeIsolation.requireKernelObserverForHighRisk,
     unavailableAction: config.runtimeIsolation.unavailableAction,
+    requireNetworkNamespaceForShell: config.runtimeIsolation.requireNetworkNamespaceForShell,
   });
   findings.push(...preflight.findings);
   risk += Math.min(70, Math.trunc(riskMax(preflight.risk_vector) * 0.7));
@@ -223,6 +226,26 @@ export function detectToolCall(
     summary: policy.findings.length ? policy.findings.map((finding) => finding.reason).join("; ") : "no high-risk signal",
     policy,
   };
+}
+
+function strictSandboxFindingsFor(
+  normalizedTool: string,
+  params: Record<string, unknown>,
+  workspaceDir: string,
+  config: PluginConfig,
+): DetectionFinding[] {
+  if (!config.runtimeIsolation.requireNetworkNamespaceForShell || normalizedTool !== "shell_exec") return [];
+  const command = readCommand(params);
+  if (!command || isLowRiskShellReadCommand(command)) return [];
+  if (workspaceDir && existsSync(workspaceDir)) return [];
+  return [{
+    layer: "Tool Boundary",
+    finding_type: "deterministic",
+    verdict: "block",
+    reason: "strict shell isolation requires an existing workspace boundary before execution",
+    score: 100,
+    evidence: { tool: normalizedTool, workspaceDir: workspaceDir || "[missing]" },
+  }];
 }
 
 function isDocumentationPath(path: string): boolean {

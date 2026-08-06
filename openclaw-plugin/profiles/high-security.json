@@ -15,7 +15,13 @@
     "restrictWritesToAllowedRoots": true,
     "allowedWriteRoots": ["notes", "reports", "output", "src", "tests", "skills"]
   },
-  "runtimeIsolation": { "requireKernelObserverForHighRisk": true, "unavailableAction": "block", "auditAfterExecution": true },
+  "runtimeIsolation": { "requireKernelObserverForHighRisk": true, "unavailableAction": "block", "auditAfterExecution": true, "requireNetworkNamespaceForShell": true },
   "responseCover": { "enabled": true, "coverAssistantAfterContamination": true },
-  "notifications": { "enableProactiveNotifications": true, "minSeverity": "warning" }
+  "notifications": { "enableProactiveNotifications": true, "minSeverity": "warning" },
+  "dynamicSecurity": { "enabled": true, "windowSize": 16, "riskThreshold": 55, "recoverAfterSafeActions": 8, "maxDegradationLevel": 4 },
+  "capabilityTokens": { "enabled": true, "ttlMs": 300000, "maxInvocations": 3 },
+  "rollback": { "enabled": true, "maxSnapshots": 120, "protectedPaths": ["MEMORY.md", "User.md", "Soul.md", "openclaw.json", ".openclaw/openclaw.json"] },
+  "initializationDefense": { "enabled": true, "scanGlobalOpenClaw": true, "maxComponents": 400 },
+  "externalPolicy": { "enabled": true, "requireAuth": true },
+  "multiAgentSecurity": { "enabled": true, "requireIdentity": true, "requireSignedEnvelope": true, "maxEnvelopeTtlMs": 300000 }
 }

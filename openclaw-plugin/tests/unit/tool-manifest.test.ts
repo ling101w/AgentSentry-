@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PluginConfig } from "../../config.ts";
 import { normalizeAction } from "../../core/policy.ts";
 import {
   clearCustomToolManifests,
+  configureToolManifestSigning,
   registerToolManifest,
   toolManifestDigest,
   toolManifestFindings,
+  toolManifestSignature,
   verifyToolManifest,
+  revokeToolManifest,
+  restoreToolManifest,
   type ToolManifestEnvelope,
   type ToolSecurityManifest,
 } from "../../core/tool-manifest.ts";
@@ -51,6 +59,7 @@ describe("Tool Security Manifest", () => {
       ...tampered,
       digest: toolManifestDigest(tampered.manifest, tampered),
     };
+    recomputed.signature = toolManifestSignature(recomputed.manifest, recomputed);
     expect(verifyToolManifest(recomputed)).toBe(true);
     expect(toolManifestFindings("mcp.crm.create_ticket", "mcp.crm.create_ticket", {
       __toolSecurityManifest: recomputed,
@@ -109,6 +118,35 @@ describe("Tool Security Manifest", () => {
       expect(normalizeAction("search_emails", { query: "quarterly" }).tool).toBe("business_read");
     } finally {
       clearCustomToolManifests();
+    }
+  });
+
+  it("blocks a tool immediately after its signed manifest is revoked and permits explicit restoration", () => {
+    const registered = registerToolManifest({ ...CRM_MANIFEST, toolId: "mcp.crm.revocable", aliases: ["crm_revocable"] }, { version: "4" });
+    const revoked = revokeToolManifest("crm_revocable", "供应商发现未声明的数据外发");
+    expect(revoked.digest).toBe(registered.digest);
+    expect(toolManifestFindings("crm_revocable", "crm_revocable", {})).toEqual(expect.arrayContaining([
+      expect.objectContaining({ verdict: "block", reason: "tool_manifest_revoked" }),
+    ]));
+    expect(restoreToolManifest("mcp.crm.revocable")).toBe(true);
+    expect(toolManifestFindings("crm_revocable", "crm_revocable", {})).toEqual([]);
+  });
+
+  it("persists administrator-signed registrations and revocations across registry reload", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "agentsentry-tool-registry-"));
+    try {
+      const config = new PluginConfig();
+      config.storage.stateDir = stateDir;
+      configureToolManifestSigning(config);
+      registerToolManifest({ ...CRM_MANIFEST, toolId: "mcp.crm.persisted", aliases: ["crm_persisted"] }, { version: "1" });
+      revokeToolManifest("crm_persisted", "供应链公告要求暂停使用");
+      configureToolManifestSigning(config);
+      expect(toolManifestFindings("crm_persisted", "crm_persisted", {})).toEqual(expect.arrayContaining([
+        expect.objectContaining({ verdict: "block", reason: "tool_manifest_revoked" }),
+      ]));
+    } finally {
+      clearCustomToolManifests();
+      rmSync(stateDir, { recursive: true, force: true });
     }
   });
 });

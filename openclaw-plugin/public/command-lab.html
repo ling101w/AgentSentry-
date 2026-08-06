@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>玄鉴业务测试台</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/command-lab.css?v=20260711-1" />
+    <link rel="stylesheet" href="/command-lab.css?v=20260806-1" />
   </head>
   <body>
     <main class="lab-shell">
@@ -32,6 +32,7 @@
           <span id="modeStatus" class="mode-status">模式读取中</span>
           <a class="button-link" href="/">返回控制台</a>
           <a class="button-link" href="/security-screen">态势大屏</a>
+          <button id="resetRecordsBtn" class="ghost" type="button">清空记录</button>
           <button id="refreshBtn" type="button">刷新</button>
           <button id="autoBtn" class="active" type="button">实时：开</button>
         </nav>
@@ -51,8 +52,10 @@
             </div>
 
             <div class="demo-switch" aria-label="答辩演示主线">
-              <button class="active" type="button" data-demo-scenario="external_email_hidden">攻击验证</button>
-              <button type="button" data-demo-scenario="benign">正常放行</button>
+              <button class="active" type="button" data-demo-scenario="external_email_hidden">外部注入链</button>
+              <button type="button" data-demo-scenario="multi_agent_taint_chain">跨 Agent 链</button>
+              <button type="button" data-demo-scenario="memory_poison">记忆防护</button>
+              <button type="button" data-demo-scenario="normal_ops_flow">正常业务</button>
             </div>
 
             <label class="field">
@@ -62,10 +65,12 @@
                 <option value="external_web_hidden">外部内容注入：恶意网页</option>
                 <option value="pdf_stego">外部内容注入：PDF 隐写</option>
                 <option value="image_text_injection">外部内容注入：图像文本</option>
+                <option value="multi_agent_taint_chain">跨 Agent 污点链：子 Agent 转发</option>
                 <option value="webhook_replay">持久化：历史回放 Webhook</option>
                 <option value="memory_poison">持久化：长期记忆污染</option>
                 <option value="gateway_hijack">工具劫持：网关 URL 劫持</option>
                 <option value="malicious_skill">工具劫持：恶意第三方 Skill</option>
+                <option value="normal_ops_flow">正常业务：巡检与报告保存</option>
                 <option value="benign">良性健康检查</option>
                 <option value="manual">手动</option>
               </select>
@@ -157,6 +162,51 @@
             </div>
           </details>
 
+          <details class="panel demo-ops-panel library-panel" open>
+            <summary class="panel-title">
+              <div>
+                <span class="kicker">Demo Console</span>
+                <h2>演示控制台</h2>
+              </div>
+              <span id="demoOpsStatus" class="panel-note">读取中</span>
+            </summary>
+            <div class="ops-section">
+              <div class="ops-title">
+                <strong>Bootstrap 统计</strong>
+                <button id="refreshBootstrapBtn" class="ghost small" type="button">刷新</button>
+              </div>
+              <div id="bootstrapStats" class="ops-grid"></div>
+            </div>
+            <div class="ops-section">
+              <div class="ops-title">
+                <strong>Checkpoint 回滚</strong>
+                <button id="refreshCheckpointsBtn" class="ghost small" type="button">刷新</button>
+              </div>
+              <div id="checkpointList" class="checkpoint-list"></div>
+            </div>
+            <div class="ops-section">
+              <div class="ops-title">
+                <strong>图形化策略配置</strong>
+                <button id="savePolicyBtn" class="primary small" type="button">保存</button>
+              </div>
+              <div id="policyToggles" class="policy-toggles"></div>
+              <label class="field mini wide no-pad">
+                允许 API Host
+                <textarea id="allowHostsInput" spellcheck="false" class="mini-textarea" placeholder="127.0.0.1:8765&#10;api.company.com"></textarea>
+              </label>
+              <label class="field mini wide no-pad">
+                允许收件人
+                <textarea id="allowRecipientsInput" spellcheck="false" class="mini-textarea" placeholder="ops@company.com"></textarea>
+              </label>
+            </div>
+            <div class="ops-section">
+              <div class="ops-title">
+                <strong>身份与工具信任等级</strong>
+              </div>
+              <div id="trustMatrix" class="trust-matrix"></div>
+            </div>
+          </details>
+
           <section class="panel">
             <div class="panel-title">
               <div>
@@ -224,6 +274,6 @@
       </section>
     </main>
 
-    <script type="module" src="/command-lab.js?v=20260711-1"></script>
+    <script type="module" src="/command-lab.js?v=20260806-1"></script>
   </body>
 </html>

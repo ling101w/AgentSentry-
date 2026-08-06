@@ -1,4 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import type { PluginConfig } from "../config.ts";
+import { loadOrCreateStateSecret } from "./state-secret.ts";
 import type { DetectionFinding } from "./detect.ts";
 
 export type ToolDataOrigin = "user" | "workspace" | "external_web" | "email" | "third_party_api" | "memory" | "unknown";
@@ -21,19 +26,50 @@ export interface ToolManifestEnvelope {
   endpoint?: string;
   version?: string;
   digest: string;
+  signature: string;
+  issuer?: "builtin" | "local-administrator";
+  registeredAt?: string;
 }
+
+export type ToolManifestRevocation = {
+  toolId: string;
+  digest: string;
+  reason: string;
+  revokedAt: string;
+};
 
 const registry = new Map<string, ToolManifestEnvelope>();
 const aliases = new Map<string, string>();
+const customToolIds = new Set<string>();
+const revocations = new Map<string, ToolManifestRevocation>();
+let manifestSigningSecret: Buffer<ArrayBufferLike> = Buffer.from(
+  process.env.AGENTSENTRY_TOOL_MANIFEST_SECRET || "agentsentry-tool-manifest-development-key",
+  "utf8",
+);
+let configuredConfig: PluginConfig | null = null;
+let loadingPersistedRegistry = false;
 const DATA_ORIGINS = new Set<ToolDataOrigin>(["user", "workspace", "external_web", "email", "third_party_api", "memory", "unknown"]);
 const SIDE_EFFECTS = new Set<ToolSideEffect>(["none", "file_read", "file_write", "network_read", "network_write", "process_exec", "persistent_state"]);
 const TRUST_LEVELS = new Set<ToolSecurityManifest["defaultTrust"]>(["trusted", "workspace", "external", "unknown"]);
 
-for (const manifest of builtinManifests()) registerToolManifest(manifest);
+for (const manifest of builtinManifests()) registerToolManifest(manifest, { issuer: "builtin" });
+
+export function configureToolManifestSigning(config: PluginConfig): void {
+  configuredConfig = config;
+  manifestSigningSecret = loadOrCreateStateSecret(config, "tool-manifest");
+  resetRegistry();
+  loadPersistedRegistry();
+}
 
 export function registerToolManifest(
   manifest: ToolSecurityManifest,
-  metadata: { schema?: unknown; endpoint?: string; version?: string; expectedDigest?: string } = {},
+  metadata: {
+    schema?: unknown;
+    endpoint?: string;
+    version?: string;
+    expectedDigest?: string;
+    issuer?: "builtin" | "local-administrator";
+  } = {},
 ): ToolManifestEnvelope {
   validateManifest(manifest);
   const digest = toolManifestDigest(manifest, metadata);
@@ -54,6 +90,9 @@ export function registerToolManifest(
     endpoint: metadata.endpoint,
     version: metadata.version,
     digest,
+    signature: toolManifestSignature(manifest, { ...metadata, digest }),
+    issuer: metadata.issuer || "local-administrator",
+    registeredAt: new Date().toISOString(),
   };
   registry.set(canonical, envelope);
   for (const [alias, owner] of aliases) {
@@ -61,6 +100,8 @@ export function registerToolManifest(
   }
   aliases.set(canonical, canonical);
   for (const alias of manifest.aliases) aliases.set(normalizeToolId(alias), canonical);
+  if (envelope.issuer !== "builtin") customToolIds.add(canonical);
+  if (!loadingPersistedRegistry && envelope.issuer !== "builtin") persistRegistry();
   return structuredClone(envelope);
 }
 
@@ -68,6 +109,38 @@ export function resolveToolManifest(toolId: string): ToolManifestEnvelope | null
   const canonical = aliases.get(normalizeToolId(toolId)) || normalizeToolId(toolId);
   const envelope = registry.get(canonical);
   return envelope ? structuredClone(envelope) : null;
+}
+
+export function listToolManifests(): ToolManifestEnvelope[] {
+  return [...registry.values()]
+    .map((item) => structuredClone(item))
+    .sort((left, right) => left.manifest.toolId.localeCompare(right.manifest.toolId));
+}
+
+export function listToolManifestRevocations(): ToolManifestRevocation[] {
+  return [...revocations.values()].map((item) => structuredClone(item)).sort((left, right) => right.revokedAt.localeCompare(left.revokedAt));
+}
+
+export function revokeToolManifest(toolId: string, reason: string): ToolManifestRevocation {
+  const resolved = resolveToolManifest(toolId);
+  if (!resolved) throw new Error(`tool_manifest_not_registered:${toolId}`);
+  const canonical = normalizeToolId(resolved.manifest.toolId);
+  const revocation: ToolManifestRevocation = {
+    toolId: canonical,
+    digest: resolved.digest,
+    reason: reason.trim() || "administrator revoked tool trust",
+    revokedAt: new Date().toISOString(),
+  };
+  revocations.set(canonical, revocation);
+  persistRegistry();
+  return structuredClone(revocation);
+}
+
+export function restoreToolManifest(toolId: string): boolean {
+  const canonical = normalizeToolId(resolveToolManifest(toolId)?.manifest.toolId || toolId);
+  const removed = revocations.delete(canonical);
+  if (removed) persistRegistry();
+  return removed;
 }
 
 export function toolManifestDigest(
@@ -85,7 +158,9 @@ export function toolManifestDigest(
 }
 
 export function verifyToolManifest(envelope: ToolManifestEnvelope): boolean {
-  return constantTimeTextEqual(envelope.digest, toolManifestDigest(envelope.manifest, envelope));
+  const digest = toolManifestDigest(envelope.manifest, envelope);
+  if (!constantTimeTextEqual(envelope.digest, digest)) return false;
+  return verifyToolManifestSignature(envelope);
 }
 
 export function toolManifestFindings(toolName: string, normalizedTool: string, params: Record<string, unknown>): DetectionFinding[] {
@@ -103,6 +178,7 @@ export function toolManifestFindings(toolName: string, normalizedTool: string, p
       normalizedTool,
       supplied_digest: supplied.digest,
       computed_digest: toolManifestDigest(supplied.manifest, supplied),
+      signature_present: Boolean(supplied.signature),
     })];
   }
 
@@ -112,6 +188,15 @@ export function toolManifestFindings(toolName: string, normalizedTool: string, p
       toolName,
       normalizedTool,
       inferred_effects: inferUnknownEffects(params),
+    })];
+  }
+
+  const revocation = revocations.get(normalizeToolId(registered.manifest.toolId));
+  if (revocation && revocation.digest === registered.digest) {
+    return [finding("block", "tool_manifest_revoked", {
+      toolName,
+      normalizedTool,
+      revocation: structuredClone(revocation),
     })];
   }
 
@@ -134,9 +219,99 @@ export function toolManifestFindings(toolName: string, normalizedTool: string, p
 }
 
 export function clearCustomToolManifests(): void {
+  resetRegistry();
+  persistRegistry();
+}
+
+function resetRegistry(): void {
   registry.clear();
   aliases.clear();
-  for (const manifest of builtinManifests()) registerToolManifest(manifest);
+  customToolIds.clear();
+  revocations.clear();
+  for (const manifest of builtinManifests()) registerToolManifest(manifest, { issuer: "builtin" });
+}
+
+function persistedRegistryPath(): string {
+  const stateDir = configuredConfig?.storage.stateDir || process.env.OPENCLAW_STATE_DIR?.trim() || join(homedir(), ".openclaw");
+  return join(stateDir, "agentsentry", "tool-manifest-registry.json");
+}
+
+function loadPersistedRegistry(): void {
+  const path = persistedRegistryPath();
+  if (!existsSync(path)) return;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as { manifests?: unknown; revocations?: unknown };
+    loadingPersistedRegistry = true;
+    if (Array.isArray(parsed.manifests)) {
+      for (const raw of parsed.manifests) {
+        const envelope = parsePersistedEnvelope(raw);
+        if (!envelope || !verifyToolManifest(envelope)) continue;
+        registerToolManifest(envelope.manifest, {
+          schema: envelope.schema,
+          endpoint: envelope.endpoint,
+          version: envelope.version,
+          expectedDigest: envelope.digest,
+          issuer: "local-administrator",
+        });
+      }
+    }
+    if (Array.isArray(parsed.revocations)) {
+      for (const raw of parsed.revocations) {
+        const item = parseRevocation(raw);
+        if (item) revocations.set(item.toolId, item);
+      }
+    }
+  } catch {
+    // A malformed local registry is ignored. Built-in manifests remain available.
+  } finally {
+    loadingPersistedRegistry = false;
+  }
+}
+
+function persistRegistry(): void {
+  if (!configuredConfig || loadingPersistedRegistry) return;
+  const path = persistedRegistryPath();
+  const temp = `${path}.${process.pid}.tmp`;
+  const manifests = [...customToolIds]
+    .map((toolId) => registry.get(toolId))
+    .filter((item): item is ToolManifestEnvelope => Boolean(item));
+  const payload = JSON.stringify({ version: 1, manifests, revocations: listToolManifestRevocations() }, null, 2) + "\n";
+  mkdirSync(dirname(path), { recursive: true });
+  try {
+    writeFileSync(temp, payload, { encoding: "utf8", mode: 0o600, flag: "w" });
+    renameSync(temp, path);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
+  }
+}
+
+function parsePersistedEnvelope(value: unknown): ToolManifestEnvelope | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (!item.manifest || typeof item.manifest !== "object" || Array.isArray(item.manifest) || typeof item.digest !== "string" || typeof item.signature !== "string") return null;
+  try {
+    validateManifest(item.manifest as ToolSecurityManifest);
+    return {
+      manifest: item.manifest as ToolSecurityManifest,
+      schema: item.schema,
+      endpoint: typeof item.endpoint === "string" ? item.endpoint : undefined,
+      version: typeof item.version === "string" ? item.version : undefined,
+      digest: item.digest,
+      signature: item.signature,
+      issuer: "local-administrator",
+      registeredAt: typeof item.registeredAt === "string" ? item.registeredAt : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseRevocation(value: unknown): ToolManifestRevocation | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (typeof item.toolId !== "string" || typeof item.digest !== "string" || typeof item.reason !== "string" || typeof item.revokedAt !== "string") return null;
+  return { toolId: normalizeToolId(item.toolId), digest: item.digest, reason: item.reason, revokedAt: item.revokedAt };
 }
 
 function suppliedEnvelope(params: Record<string, unknown>): ToolManifestEnvelope | null {
@@ -153,6 +328,7 @@ function suppliedEnvelope(params: Record<string, unknown>): ToolManifestEnvelope
       endpoint: typeof obj.endpoint === "string" ? obj.endpoint : undefined,
       version: typeof obj.version === "string" ? obj.version : undefined,
       digest: obj.digest,
+      signature: typeof obj.signature === "string" ? obj.signature : "",
     };
   } catch {
     return null;
@@ -212,6 +388,26 @@ function constantTimeTextEqual(left: string, right: string): boolean {
   return mismatch === 0;
 }
 
+export function toolManifestSignature(
+  manifest: ToolSecurityManifest,
+  metadata: { schema?: unknown; endpoint?: string; version?: string; digest?: string } = {},
+): string {
+  const payload = stableSerialize({
+    digest: metadata.digest || toolManifestDigest(manifest, metadata),
+    tool_id: manifest.toolId,
+    endpoint: metadata.endpoint || "",
+    version: metadata.version || "",
+  });
+  return createHmac("sha256", manifestSigningSecret).update(payload, "utf8").digest("base64url");
+}
+
+function verifyToolManifestSignature(envelope: ToolManifestEnvelope): boolean {
+  if (!envelope.signature) return false;
+  const expected = Buffer.from(toolManifestSignature(envelope.manifest, envelope));
+  const supplied = Buffer.from(envelope.signature);
+  return expected.length === supplied.length && timingSafeEqual(expected, supplied);
+}
+
 function normalizeToolId(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -234,6 +430,7 @@ function builtinManifests(): ToolSecurityManifest[] {
     manifest("read_file", ["read", "open"], ["workspace"], ["file_read"], false, false, true, "workspace"),
     manifest("write_file", ["write", "create", "edit", "replace", "patch"], ["user", "workspace"], ["file_write", "persistent_state"], true, false, true, "workspace"),
     manifest("send_email", [], ["user", "workspace", "email"], ["network_write"], true, true, true, "external"),
+    manifest("sessions_send", ["agent.send", "send_to_agent", "handoff_message", "agent_message"], ["unknown"], ["none"], false, false, false, "unknown"),
     manifest("shell_exec", ["exec", "shell", "bash", "run_shell", "terminal"], ["user", "workspace"], ["process_exec", "file_write", "network_write"], true, true, true, "unknown"),
     manifest("memory_read", [], ["memory"], ["none"], false, false, true, "workspace"),
     manifest("memory_write", ["webhook_wake"], ["user", "memory"], ["persistent_state"], true, false, true, "workspace"),

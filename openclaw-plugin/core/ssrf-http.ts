@@ -35,8 +35,9 @@ export async function safeHttpGet(input: URL | string, options: SafeHttpOptions 
   let current = typeof input === "string" ? new URL(input) : new URL(input.toString());
 
   for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
-    validateHttpUrl(current, options.allowedHosts || []);
-    const resolved = await resolvePublicAddress(current.hostname);
+    const allowedHosts = options.allowedHosts || [];
+    validateHttpUrl(current, allowedHosts);
+    const resolved = await resolvePublicAddress(current.hostname, isHostAllowlisted(current, allowedHosts));
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new Error("HTTP request timed out");
     const response = await requestPinned(current, resolved, maxBytes, remainingMs);
@@ -71,14 +72,14 @@ export function isForbiddenIpAddress(address: string): boolean {
   return false;
 }
 
-async function resolvePublicAddress(hostname: string): Promise<ResolvedAddress> {
+async function resolvePublicAddress(hostname: string, allowPrivate = false): Promise<ResolvedAddress> {
   const host = stripIpv6Brackets(hostname);
   const literalFamily = isIP(host);
   const results = literalFamily
     ? [{ address: host, family: literalFamily }]
     : await dnsLookup(host, { all: true, verbatim: true });
   if (!results.length) throw new Error(`DNS returned no addresses for ${host}`);
-  const forbidden = results.find((item) => isForbiddenIpAddress(item.address));
+  const forbidden = allowPrivate ? null : results.find((item) => isForbiddenIpAddress(item.address));
   if (forbidden) throw new Error(`SSRF protection blocked non-public address ${forbidden.address} for ${host}`);
   const selected = results[0];
   if (selected.family !== 4 && selected.family !== 6) throw new Error(`unsupported address family for ${host}`);
@@ -91,9 +92,14 @@ export function validateHttpUrl(url: URL, allowedHosts: string[]): void {
   if (!url.hostname) throw new Error("URL hostname is required");
   if (allowedHosts.length) {
     const hostname = stripIpv6Brackets(url.hostname).toLowerCase();
-    const allowed = allowedHosts.some((item) => normalizeAllowedHost(item) === hostname);
-    if (!allowed) throw new Error(`HTTP host ${hostname} is not allowlisted`);
+    if (!isHostAllowlisted(url, allowedHosts)) throw new Error(`HTTP host ${hostname} is not allowlisted`);
   }
+}
+
+function isHostAllowlisted(url: URL, allowedHosts: string[]): boolean {
+  if (!allowedHosts.length) return false;
+  const hostname = stripIpv6Brackets(url.hostname).toLowerCase();
+  return allowedHosts.some((item) => normalizeAllowedHost(item) === hostname);
 }
 
 function requestPinned(

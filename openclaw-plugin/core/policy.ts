@@ -1,6 +1,14 @@
-import type { PluginConfig } from "../config.ts";
+import { PluginConfig } from "../config.ts";
 import type { SemanticGraph } from "./action-semantics.ts";
+import { agentCommunicationFindings } from "./agent-trust.ts";
 import type { DetectionFinding } from "./detect.ts";
+import {
+  createDynamicSecurityState,
+  dynamicSecurityFindingsFor,
+  dynamicSecuritySnapshot,
+  recordDynamicSecurityEvent,
+  type DynamicSecurityState,
+} from "./dynamic-security.ts";
 import { decisionFromRisk, mergeDecision } from "./judge/decision-merge.ts";
 import { memoryContentHash, normalizeMemoryKey, type PersistentMemoryLabel } from "./memory-ifc.ts";
 import {
@@ -149,6 +157,7 @@ export type PolicyState = {
   ifcBranches: IFCBranch[];
   persistentMemoryLabels: PersistentMemoryLabel[];
   semanticActionGraph: SemanticActionGraphState;
+  dynamicSecurity: DynamicSecurityState;
 };
 
 export type PolicyDecision = {
@@ -177,6 +186,32 @@ export type PolicyEffects = {
 
 export type PolicyEvaluation = { decision: PolicyDecision; effects: PolicyEffects };
 
+export type PolicyStateCheckpoint = {
+  version: 1;
+  created_at: string;
+  currentTask: string;
+  taskSpec: TaskSpec;
+  authorizationState: AuthorizationState;
+  contaminated: boolean;
+  provenanceBlocked: boolean;
+  provenanceFindings: DetectionFinding[];
+  history: PolicyState["history"];
+  toolResultLabels: Array<[string, Label]>;
+  exposures: PolicyState["exposures"];
+  apiCallCounts: Array<[string, number]>;
+  behaviorProfiles: Array<[string, BehaviorProfile]>;
+  runtimeProfiles: Array<[string, RuntimeFeedbackProfile]>;
+  trustLabels: TrustLabel[];
+  aggregateRisk: RiskVector;
+  taintedSources: string[];
+  taintFlows: PolicyState["taintFlows"];
+  dataProvenance: DataProvenance[];
+  ifcBranches: IFCBranch[];
+  persistentMemoryLabels: PersistentMemoryLabel[];
+  semanticActionGraph: SemanticActionGraphState;
+  dynamicSecurity: DynamicSecurityState;
+};
+
 export type PolicyDecisionContext = {
   toolCallId?: string;
   workspaceDir?: string;
@@ -195,6 +230,7 @@ const TOOL_ALIASES: Array<[RegExp, string]> = [
   [/(read|cat|get).*file|filesystem.*read/i, "read_file"],
   [/(write|create|edit).*file|filesystem.*write|apply_patch/i, "write_file"],
   [/(send).*email|mail/i, "send_email"],
+  [/^(sessions_send|agent\.send|send_to_agent|handoff_message|agent_message)$/i, "sessions_send"],
   [/(fetch|request|http|api|curl|wget|browser)/i, "call_api"],
   [/(webhook|hooks?[./_-]?wake|wake_hook)/i, "memory_write"],
   [/(memory|remember).*write|write.*memory/i, "memory_write"],
@@ -232,6 +268,7 @@ export function createPolicyState(): PolicyState {
     ifcBranches: [],
     persistentMemoryLabels: [],
     semanticActionGraph,
+    dynamicSecurity: createDynamicSecurityState(),
   };
 }
 
@@ -398,6 +435,74 @@ export function applyEffects(state: PolicyState, effects: PolicyEffects): void {
   state.apiCallCounts = new Map(effects.apiCallCounts);
   state.dataProvenance = structuredClone(effects.dataProvenance);
   state.taintFlows = structuredClone(effects.taintFlows);
+}
+
+export function checkpointPolicyState(state: PolicyState): PolicyStateCheckpoint {
+  return structuredClone({
+    version: 1,
+    created_at: new Date().toISOString(),
+    currentTask: state.currentTask,
+    taskSpec: state.taskSpec,
+    authorizationState: state.authorizationState,
+    contaminated: state.contaminated,
+    provenanceBlocked: state.provenanceBlocked,
+    provenanceFindings: state.provenanceFindings,
+    history: state.history,
+    toolResultLabels: [...state.toolResultLabels.entries()],
+    exposures: state.exposures,
+    apiCallCounts: [...state.apiCallCounts.entries()],
+    behaviorProfiles: [...state.behaviorProfiles.entries()],
+    runtimeProfiles: [...state.runtimeProfiles.entries()],
+    trustLabels: state.trustLabels,
+    aggregateRisk: state.aggregateRisk,
+    taintedSources: state.taintedSources,
+    taintFlows: state.taintFlows,
+    dataProvenance: state.dataProvenance,
+    ifcBranches: state.ifcBranches,
+    persistentMemoryLabels: state.persistentMemoryLabels,
+    semanticActionGraph: state.semanticActionGraph,
+    dynamicSecurity: state.dynamicSecurity,
+  } satisfies PolicyStateCheckpoint);
+}
+
+export function restorePolicyStateCheckpoint(state: PolicyState, checkpoint: PolicyStateCheckpoint | null | undefined): boolean {
+  if (!checkpoint || checkpoint.version !== 1) return false;
+  state.currentTask = checkpoint.currentTask;
+  state.taskSpec = structuredClone(checkpoint.taskSpec);
+  state.authorizationState = structuredClone(checkpoint.authorizationState);
+  state.contaminated = checkpoint.contaminated;
+  state.provenanceBlocked = checkpoint.provenanceBlocked;
+  state.provenanceFindings = structuredClone(checkpoint.provenanceFindings);
+  state.history = structuredClone(checkpoint.history);
+  state.toolResultLabels = new Map(structuredClone(checkpoint.toolResultLabels));
+  state.exposures = structuredClone(checkpoint.exposures);
+  state.apiCallCounts = new Map(structuredClone(checkpoint.apiCallCounts));
+  state.behaviorProfiles = new Map(structuredClone(checkpoint.behaviorProfiles));
+  state.runtimeProfiles = new Map(structuredClone(checkpoint.runtimeProfiles));
+  state.trustLabels = structuredClone(checkpoint.trustLabels);
+  state.aggregateRisk = structuredClone(checkpoint.aggregateRisk);
+  state.taintedSources = structuredClone(checkpoint.taintedSources);
+  state.taintFlows = structuredClone(checkpoint.taintFlows);
+  state.dataProvenance = structuredClone(checkpoint.dataProvenance);
+  state.ifcBranches = structuredClone(checkpoint.ifcBranches);
+  state.persistentMemoryLabels = structuredClone(checkpoint.persistentMemoryLabels);
+  state.semanticActionGraph = restoreSemanticActionGraphMaps(structuredClone(checkpoint.semanticActionGraph));
+  state.dynamicSecurity = structuredClone(checkpoint.dynamicSecurity);
+  return true;
+}
+
+function restoreSemanticActionGraphMaps(graph: SemanticActionGraphState): SemanticActionGraphState {
+  const pending = graph.pendingCalls instanceof Map
+    ? graph.pendingCalls
+    : new Map(Object.entries(graph.pendingCalls || {}) as Array<[string, string[]]>);
+  const settled = graph.settledCalls instanceof Map
+    ? graph.settledCalls
+    : new Map(Object.entries(graph.settledCalls || {}) as Array<[string, string]>);
+  return {
+    ...graph,
+    pendingCalls: pending,
+    settledCalls: settled,
+  };
 }
 
 function evaluateMutable(
@@ -570,6 +675,14 @@ function evaluateMutable(
     violations.push(reason);
   }
 
+  const agentFindings = config.multiAgentSecurity.enabled
+    ? agentCommunicationFindings(action, config)
+    : [];
+  findings.push(...agentFindings);
+  for (const finding of agentFindings) {
+    if (finding.verdict === "block") violations.push(finding.reason);
+  }
+
   if (riskScoringEnabled) {
     const trajectoryFindings = trajectoryFindingsFor(action, state, config);
     findings.push(...trajectoryFindings);
@@ -585,6 +698,9 @@ function evaluateMutable(
 
     const taskSpecFindings = taskSpecBoundaryFindings(action, state, config);
     findings.push(...taskSpecFindings);
+
+    const dynamicFindings = dynamicSecurityFindingsFor(action, assessment, state.dynamicSecurity, config);
+    findings.push(...dynamicFindings);
   }
 
   const actionRisk = riskVectorFromFindings(findings);
@@ -654,7 +770,7 @@ export function updateAfterMessage(state: PolicyState, findings: DetectionFindin
   mergeFindingTrust(state, normalized.findings);
 }
 
-export function updateAfterDecision(state: PolicyState, decision: PolicyDecision): void {
+export function updateAfterDecision(state: PolicyState, decision: PolicyDecision, config: PluginConfig = new PluginConfig()): void {
   if (!isPolicyDecisionForUpdate(decision)) {
     state.history.push({ tool: "unknown_tool", decision: "deny", risk_score: 100 });
     if (state.history.length > 80) state.history = state.history.slice(-80);
@@ -680,6 +796,14 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
   if (decision.decision === "allow") updateBehaviorProfile(state, decision.action);
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, decision.risk_vector);
   mergeFindingTrust(state, decision.findings);
+  state.dynamicSecurity = recordDynamicSecurityEvent(
+    state.dynamicSecurity,
+    decision.decision,
+    decision.risk_score,
+    decision.findings,
+    config,
+    decision.action.tool,
+  );
 }
 
 export function updateAfterRuntimeFindings(state: PolicyState, toolName: string, findings: DetectionFinding[]): void {
@@ -1128,6 +1252,7 @@ export function policyTrustSnapshot(state: PolicyState): Record<string, unknown>
     provenance: state.dataProvenance.slice(-20),
     semantic_action_graph: semanticActionGraphSnapshot(state.semanticActionGraph),
     runtime_feedback: Array.from(state.runtimeProfiles.values()).slice(-10),
+    dynamic_security: dynamicSecuritySnapshot(state.dynamicSecurity),
     lowest_trust: lowest
       ? {
         source: lowest.source,

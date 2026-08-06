@@ -61,6 +61,8 @@ describe("security profiles", () => {
       enforcement: { mode: "block", approvalTimeoutMs: 2222 },
       notifications: { enableProactiveNotifications: true, minSeverity: "warning", maxMessageChars: 444 },
       responseCover: { enabled: true, coverAssistantAfterContamination: false, message: "covered" },
+      initializationDefense: { enabled: false, scanGlobalOpenClaw: false, maxComponents: 99 },
+      externalPolicy: { enabled: false, requireAuth: false },
     });
 
     expect(config.dashboard).toEqual({ enabled: false, host: "0.0.0.0", port: 9999, allowRemote: false, authToken: "" });
@@ -68,9 +70,16 @@ describe("security profiles", () => {
     expect(config.detection.askThreshold).toBe(70);
     expect(config.semantic).toMatchObject({ enabled: true, mode: "full", baseUrl: "https://judge.example/v1", judgeMessages: true });
     expect(config.policy.allowlistedRecipients).toEqual(["a@example.com"]);
-    expect(config.runtimeIsolation).toEqual({ requireKernelObserverForHighRisk: true, unavailableAction: "block", auditAfterExecution: false });
+    expect(config.runtimeIsolation).toEqual({
+      requireKernelObserverForHighRisk: true,
+      unavailableAction: "block",
+      auditAfterExecution: false,
+      requireNetworkNamespaceForShell: false,
+    });
     expect(config.enforcement.mode).toBe("block");
     expect(config.responseCover.message).toBe("covered");
+    expect(config.initializationDefense).toEqual({ enabled: false, scanGlobalOpenClaw: false, maxComponents: 99 });
+    expect(config.externalPolicy).toEqual({ enabled: false, requireAuth: false });
   });
 
   it("ignores malformed values and supports all named postures", () => {

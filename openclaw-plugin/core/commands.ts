@@ -29,6 +29,8 @@ const WRITABLE_PREFIXES = [
   "enforcement.",
   "notifications.",
   "responseCover.",
+  "initializationDefense.",
+  "externalPolicy.",
 ];
 
 const WRITABLE_ENUM_VALUES: Readonly<Record<string, readonly string[]>> = {

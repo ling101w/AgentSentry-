@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { PluginConfig } from "../../config.ts";
 import {
   auditRuntimeEventBatch,
   auditRuntimeEventsSince,
@@ -8,6 +9,8 @@ import {
   systemPreflight,
   type SystemMonitorStatus,
 } from "../../core/system-monitor.ts";
+import { detectToolCall } from "../../core/detect.ts";
+import { createPolicyState } from "../../core/policy.ts";
 
 afterEach(() => clearSystemMonitorStatusCache());
 
@@ -171,6 +174,32 @@ describe("system monitor pre-execution policy", () => {
     if (hardSurface.status.ebpf !== "attached") {
       expect(findingWithReason(hardSurface, "kernel eBPF observer")).toMatchObject({ verdict: "block" });
     }
+  });
+
+  it("does not allow a strict shell action to fall back to host networking", () => {
+    const result = systemPreflight(
+      "shell_exec",
+      { command: "printf 'report' > reports/status.txt" },
+      { requireNetworkNamespaceForShell: true },
+    );
+    const finding = findingWithReason(result, "strict network namespace isolation");
+    if (finding) expect(finding).toMatchObject({ verdict: "block" });
+  });
+
+  it("requires an actual workspace boundary before strict shell isolation can execute", () => {
+    const config = new PluginConfig();
+    config.runtimeIsolation.requireNetworkNamespaceForShell = true;
+    const result = detectToolCall(
+      "exec",
+      { command: "printf 'report' > reports/status.txt" },
+      config,
+      createPolicyState(),
+      [],
+      { workspaceDir: "/path/that-does-not-exist" },
+    );
+    expect(result.policy.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ verdict: "block", reason: expect.stringContaining("existing workspace boundary") }),
+    ]));
   });
 });
 

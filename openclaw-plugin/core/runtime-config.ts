@@ -126,6 +126,9 @@ function setAtPath(obj: unknown, path: string, value: unknown): boolean {
 }
 
 function normalizeValue(path: string, existing: unknown, next: unknown): unknown | typeof INVALID_VALUE {
+  if (path === "multiAgentSecurity.agents") {
+    return isAgentIdentityList(next) ? structuredClone(next) : INVALID_VALUE;
+  }
   if (Array.isArray(existing)) {
     if (!Array.isArray(next) || next.some((item) => typeof item !== "string" || !item.trim())) return INVALID_VALUE;
     return Array.from(new Set(next.map((item) => (item as string).trim())));
@@ -144,4 +147,21 @@ function normalizeValue(path: string, existing: unknown, next: unknown): unknown
     return normalized;
   }
   return INVALID_VALUE;
+}
+
+function isAgentIdentityList(value: unknown): value is Array<Record<string, unknown>> {
+  if (!Array.isArray(value) || !value.length || value.length > 128) return false;
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const record = item as Record<string, unknown>;
+    const fields = ["id", "label", "tenant", "namespace"];
+    if (fields.some((key) => typeof record[key] !== "string" || !(record[key] as string).trim())) return false;
+    if (!["owner", "trusted_agent", "delegated_agent", "external_agent"].includes(String(record.level))) return false;
+    if (["mayDelegate", "mayAuthorizeSensitiveTools", "mayReceiveUntrustedData"].some((key) => typeof record[key] !== "boolean")) return false;
+    const id = (record.id as string).trim();
+    if (ids.has(id)) return false;
+    ids.add(id);
+  }
+  return true;
 }

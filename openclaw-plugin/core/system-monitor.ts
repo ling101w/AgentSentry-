@@ -121,6 +121,7 @@ export function systemPreflight(
     previewChars?: number;
     requireKernelObserverForHighRisk?: boolean;
     unavailableAction?: RuntimeIsolationUnavailableAction;
+    requireNetworkNamespaceForShell?: boolean;
   } = {},
 ): SystemPreflightResult {
   const previewChars = options.previewChars ?? 1200;
@@ -225,6 +226,7 @@ export function systemPreflight(
     monitor,
     requireKernelObserver: Boolean(options.requireKernelObserverForHighRisk),
     unavailableAction: options.unavailableAction || "require_approval",
+    requireNetworkNamespaceForShell: Boolean(options.requireNetworkNamespaceForShell),
     previewChars,
   }));
 
@@ -246,9 +248,9 @@ function kernelRuntimeGateFindings(input: {
   monitor: SystemMonitorStatus;
   requireKernelObserver: boolean;
   unavailableAction: RuntimeIsolationUnavailableAction;
+  requireNetworkNamespaceForShell: boolean;
   previewChars: number;
 }): DetectionFinding[] {
-  if (!input.requireKernelObserver) return [];
   const externalUrls = input.urls.filter((url) => isExternalUrl(url));
   const highRiskShell = Boolean(input.command && /shell|command|exec|terminal|powershell|cmd/.test(input.normalized) && !isLowRiskShellReadCommand(input.command));
   const riskyFileMutation = /write|delete|remove|move|chmod|chown/.test(input.normalized)
@@ -260,7 +262,22 @@ function kernelRuntimeGateFindings(input: {
     input.persistencePaths.length ? "persistence_surface" : "",
     riskyFileMutation ? "file_mutation" : "",
   ].filter(Boolean);
-  if (!guardedSurfaces.length) return [];
+  const findings: DetectionFinding[] = [];
+  if (input.requireNetworkNamespaceForShell && highRiskShell && !networkNamespaceAvailable()) {
+    findings.push(finding(
+      "Tool Boundary",
+      "deterministic",
+      "block",
+      "strict network namespace isolation is required for this shell action but unavailable",
+      100,
+      {
+        toolName: clampText(input.toolName, input.previewChars),
+        command: clampText(input.command, input.previewChars),
+        runtime_gate: { required: true, control: "network_namespace", unavailable_action: "block" },
+      },
+    ));
+  }
+  if (!input.requireKernelObserver || !guardedSurfaces.length) return findings;
 
   const evidence = {
     toolName: clampText(input.toolName, input.previewChars),
@@ -277,19 +294,21 @@ function kernelRuntimeGateFindings(input: {
   };
 
   if (input.monitor.ebpf === "attached") {
-    return [finding("Tool Boundary", "deterministic", "pass", "kernel eBPF observer attached for high-risk runtime surface", 0, evidence)];
+    findings.push(finding("Tool Boundary", "deterministic", "pass", "kernel eBPF observer attached for high-risk runtime surface", 0, evidence));
+    return findings;
   }
 
   const hardSurface = highRiskShell || input.sensitivePaths.length > 0 || input.persistencePaths.length > 0 || riskyFileMutation;
   const verdict: DetectionFinding["verdict"] = input.unavailableAction === "block" || hardSurface ? "block" : "require_approval";
-  return [finding(
+  findings.push(finding(
     "Tool Boundary",
     "deterministic",
     verdict,
     "kernel eBPF observer is required before high-risk runtime surface can execute",
     verdict === "block" ? 95 : 45,
     evidence,
-  )];
+  ));
+  return findings;
 }
 
 export function clearSystemMonitorStatusCache(): void {
@@ -834,6 +853,16 @@ function canAccess(path: string): boolean {
   try {
     const testPath = commandPath("test", ["/usr/bin/test", "/bin/test"]) || "test";
     return existsSync(path) && spawnSync(testPath, ["-r", path], { stdio: "ignore" }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function networkNamespaceAvailable(): boolean {
+  const unshare = commandPath("unshare", ["/usr/bin/unshare", "/bin/unshare"]);
+  if (!unshare) return false;
+  try {
+    return spawnSync(unshare, ["-n", "--", "true"], { stdio: "ignore", timeout: 800 }).status === 0;
   } catch {
     return false;
   }

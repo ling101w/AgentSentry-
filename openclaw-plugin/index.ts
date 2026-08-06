@@ -6,6 +6,7 @@ import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
 import { handleAgentSentryCommand } from "./core/commands.ts";
 import { detectMessageContent, detectToolCall, serializeToolParams } from "./core/detect.ts";
 import { annotateUserInputForRisk } from "./core/input-annotation.ts";
+import { scanInitializationSurface } from "./core/init-defense.ts";
 import {
   buildPersistentMemoryLabel,
   loadPersistentMemoryLabels,
@@ -25,18 +26,22 @@ import {
 } from "./core/plugin-helpers.ts";
 import {
   createPolicyState,
+  checkpointPolicyState,
   hydratePersistentMemoryLabels,
   policyTrustSnapshot,
   resultFindings,
+  restorePolicyStateCheckpoint,
   updateActionGraphEnforcement,
   updateAfterDecision,
   updateAfterMessage,
   updateAfterRuntimeFindings,
   updateTaskSpec,
   type PolicyState,
+  type PolicyStateCheckpoint,
 } from "./core/policy.ts";
 import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
+import { RollbackManager, type OperationCheckpoint, type RollbackSnapshot } from "./core/rollback.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
 import {
   semanticJudgeAmbiguousAction,
@@ -49,6 +54,14 @@ import { SessionRegistry } from "./core/session-registry.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
 import { refineTaskSpecWithLLM } from "./core/task-spec/index.ts";
+import { configureToolManifestSigning } from "./core/tool-manifest.ts";
+import { configureAgentTrust, sealAgentMessageParameters } from "./core/agent-trust.ts";
+import {
+  commitSandboxWorkspace,
+  createShellSandboxTransaction,
+  discardSandboxWorkspace,
+  type SandboxTransaction,
+} from "./core/sandbox.ts";
 
 type SessionState = {
   runId: string;
@@ -61,7 +74,17 @@ type SessionState = {
   coverNextAssistantResponse: boolean;
   lastAccessedAt: number;
   policyState: PolicyState;
-  runtimeCheckpoints: Map<string, { checkpoint: EbpfLogCheckpoint | null; toolName: string; params: Record<string, unknown> }>;
+  runtimeCheckpoints: Map<string, {
+    checkpoint: EbpfLogCheckpoint | null;
+    toolName: string;
+    params: Record<string, unknown>;
+    operationKey?: string;
+    operationCheckpoint?: OperationCheckpoint | null;
+    policyCheckpoint?: PolicyStateCheckpoint | null;
+    rollbackSnapshots?: RollbackSnapshot[];
+    sandbox?: SandboxTransaction | null;
+  }>;
+  lastFoundationDigest?: string;
 };
 
 function sessionCanEvict(state: SessionState): boolean {
@@ -76,6 +99,7 @@ const plugin = {
   config: null as PluginConfig | null,
   store: null as RecordStore | null,
   approvalCache: null as ApprovalCache | null,
+  rollback: null as RollbackManager | null,
   dashboard: null as DashboardServer | null,
   startupConfig: null as PluginConfig | null,
   sessions: new SessionRegistry<SessionState>({ canEvict: sessionCanEvict }),
@@ -86,6 +110,9 @@ const plugin = {
     plugin.config = loadRuntimeConfig(baseConfig);
     plugin.store = new RecordStore(plugin.config);
     plugin.approvalCache = new ApprovalCache(plugin.config);
+    plugin.rollback = new RollbackManager(plugin.config);
+    configureToolManifestSigning(plugin.config);
+    configureAgentTrust(plugin.config);
     plugin.sessions = new SessionRegistry<SessionState>({
       idleTtlMs: plugin.config.storage.sessionIdleTtlMs,
       maxSessions: plugin.config.storage.maxSessions,
@@ -100,7 +127,12 @@ const plugin = {
           getConfig: () => plugin.config!,
           setConfig: (nextConfig) => {
             plugin.config = nextConfig;
+            plugin.approvalCache = new ApprovalCache(nextConfig);
+            plugin.rollback = new RollbackManager(nextConfig);
+            configureToolManifestSigning(nextConfig);
+            configureAgentTrust(nextConfig);
           },
+          getRollback: () => plugin.rollback,
         });
         recordRuntime("AgentSentry dashboard started", plugin.dashboard.url, { url: plugin.dashboard.url });
       },
@@ -267,6 +299,32 @@ const plugin = {
             sendProactiveNotification(ctx, "danger", "Provenance scan found blocking risk", provenance.findings.map((finding) => finding.reason).join("; "));
           }
         }
+      }
+      const foundation = scanInitializationSurface(workspaceDir, plugin.config!);
+      const foundationDigest = digestForFoundationScan(foundation);
+      if (foundationDigest !== state.lastFoundationDigest) {
+        state.lastFoundationDigest = foundationDigest;
+        if (foundation.findings.some((finding) => finding.verdict === "block")) state.policyState.provenanceBlocked = true;
+        for (const finding of foundation.findings) addFinding(state, finding, { workspaceDir, foundation_scan: true });
+        const severity: RecordSeverity = foundation.blocked ? "danger" : foundation.findings.length ? "warning" : "success";
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "foundation_scan",
+          layer: "Foundation Integrity",
+          severity,
+          title: foundation.blocked ? "初始化防线发现高危组件" : "初始化防线完成组件盘点",
+          summary: `${foundation.components.length} components; ${foundation.findings.length} findings`,
+          payload: {
+            roots: foundation.roots,
+            scanned_at: foundation.scanned_at,
+            blocked: foundation.blocked,
+            component_count: foundation.components.length,
+            components: foundation.components.slice(0, 80),
+            omitted_components: Math.max(0, foundation.components.length - 80),
+            findings: foundation.findings,
+          },
+        });
       }
       plugin.store!.add({
         run_id: state.runId,
@@ -467,7 +525,10 @@ const plugin = {
     api.on("before_tool_call", async (event, ctx) => {
       const state = getSession(ctx);
       state.toolCount += 1;
-      const params = (event?.params || {}) as Record<string, unknown>;
+      const rawParams = (event?.params || {}) as Record<string, unknown>;
+      const params = event.toolName === "sessions_send"
+        ? sealAgentMessageParameters(rawParams, plugin.config!)
+        : rawParams;
       const operationKey = computeOperationKey(event.toolName, params, {
         profile: plugin.config!.profile,
         policy: plugin.config!.policy,
@@ -517,9 +578,17 @@ const plugin = {
         : plugin.config!.enforcement.mode === "block" && effectiveDecision === "deny"
           ? "blocked"
           : "executing";
-      updateAfterDecision(state.policyState, effectivePolicy);
+      updateAfterDecision(state.policyState, effectivePolicy, plugin.config!);
       persistAllowedMemoryLabel(state, effectivePolicy.action.tool, params, effectiveDecision);
       updateActionGraphEnforcement(state.policyState, effectivePolicy, graphStatus);
+      const sandbox = effectiveDecision !== "deny"
+        ? createShellSandboxTransaction(
+          plugin.config!,
+          detectionContext.workspaceDir,
+          firstToolString(effectivePolicy.action.args, ["command", "cmd", "script", "input"]),
+        )
+        : null;
+      const executionParams = sandbox ? paramsWithSandboxCommand(params, sandbox.wrappedCommand) : params;
       const payload = {
         toolName: event.toolName,
         normalized_tool: result.policy.action.tool,
@@ -546,15 +615,35 @@ const plugin = {
         risk_vector: result.policy.risk_vector,
         trust: policyTrustSnapshot(state.policyState),
         system_monitor: systemMonitorStatus(),
+        sandbox: sandbox ? {
+          enabled: true,
+          type: "workspace-shadow-commit",
+          temp_dir: sandbox.tempDir,
+          network_isolation: sandbox.useBestEffortNetworkIsolation ? "best-effort-unshare" : "host-network-fallback",
+        } : null,
         findings: result.findings,
       };
+      const operationCheckpoint = effectiveDecision === "allow"
+        ? plugin.rollback!.checkpointOperation({
+          action: effectivePolicy.action,
+          workspaceDir: detectionContext.workspaceDir,
+          operationKey,
+          sessionState: checkpointPolicyState(state.policyState) as unknown as Record<string, unknown>,
+        })
+        : null;
+      const rollbackSnapshots = operationCheckpoint?.file_snapshots || [];
 
       if (plugin.config!.runtimeIsolation.auditAfterExecution && effectiveDecision === "allow") {
         const checkpointKey = runtimeCheckpointKey(event.toolCallId || "", event.toolName);
         state.runtimeCheckpoints.set(checkpointKey, {
           checkpoint: ebpfLogCheckpoint(),
           toolName: event.toolName,
-          params,
+          params: executionParams,
+          operationKey,
+          operationCheckpoint,
+          policyCheckpoint: checkpointPolicyState(state.policyState),
+          rollbackSnapshots,
+          sandbox,
         });
         trimRuntimeCheckpoints(state);
       }
@@ -646,8 +735,9 @@ const plugin = {
             approval_description: description,
           },
         });
-        return {
-          requireApproval: {
+	        return {
+	          ...(sandbox ? { params: executionParams } : {}),
+	          requireApproval: {
             title: `AgentSentry: ${event.toolName}`,
             description,
             severity: "warning",
@@ -657,6 +747,29 @@ const plugin = {
               const cacheEligible = result.decision === "ask" && !result.policy.deterministic_block;
               if (decision === "allow-always" && cacheEligible) plugin.approvalCache!.add(operationKey, event.toolName);
               const approved = decision.startsWith("allow");
+              const approvedOperationCheckpoint = approved
+                ? plugin.rollback!.checkpointOperation({
+                  action: result.policy.action,
+                  workspaceDir: detectionContext.workspaceDir,
+                  operationKey,
+                  sessionState: checkpointPolicyState(state.policyState) as unknown as Record<string, unknown>,
+                })
+                : null;
+              const approvedRollbackSnapshots = approvedOperationCheckpoint?.file_snapshots || [];
+              if (approved && plugin.config!.runtimeIsolation.auditAfterExecution) {
+                const checkpointKey = runtimeCheckpointKey(event.toolCallId || "", event.toolName);
+	                state.runtimeCheckpoints.set(checkpointKey, {
+	                  checkpoint: ebpfLogCheckpoint(),
+	                  toolName: event.toolName,
+	                  params: executionParams,
+	                  operationKey,
+                    operationCheckpoint: approvedOperationCheckpoint,
+                    policyCheckpoint: checkpointPolicyState(state.policyState),
+	                  rollbackSnapshots: approvedRollbackSnapshots,
+	                  sandbox,
+	                });
+                trimRuntimeCheckpoints(state);
+              }
               updateActionGraphEnforcement(
                 state.policyState,
                 { ...result.policy, decision: approved ? "allow" : "deny" },
@@ -680,6 +793,7 @@ const plugin = {
                   operation_key: operationKey,
                   cache_size: plugin.approvalCache!.size(),
                   cache_path: plugin.approvalCache!.path,
+                  rollback_checkpoint_count: approvedRollbackSnapshots.length,
                   risk_score: result.risk_score,
                   summary: result.summary,
                 },
@@ -687,8 +801,9 @@ const plugin = {
             },
           },
         };
-      }
-    });
+	      }
+      if (sandbox || params !== rawParams) return { params: executionParams };
+	    });
 
     api.on("after_tool_call", (event, ctx) => {
       const state = getSession(ctx);
@@ -713,7 +828,36 @@ const plugin = {
         : null;
       const runtimeFindings = runtimeAudit?.findings || [];
       const allFindings = [...findings, ...runtimeFindings];
+      const unsafeRuntimeOutcome = Boolean(event?.error) || runtimeFindings.some((finding) =>
+        finding.verdict === "block" || finding.score >= 90
+      );
+      const policyRollback = unsafeRuntimeOutcome && runtimeCheckpoint?.policyCheckpoint
+        ? restorePolicyStateCheckpoint(state.policyState, runtimeCheckpoint.policyCheckpoint)
+        : false;
       updateAfterRuntimeFindings(state.policyState, event?.toolName || "", runtimeFindings);
+      const runtimeRollback = runtimeCheckpoint?.operationKey && unsafeRuntimeOutcome
+        ? plugin.rollback!.restoreOperation(runtimeCheckpoint.operationKey)
+        : null;
+      const sandboxOutcome = runtimeCheckpoint?.sandbox
+        ? (() => {
+          const unsafe = Boolean(event?.error) || runtimeFindings.length > 0;
+          if (unsafe) {
+            discardSandboxWorkspace(runtimeCheckpoint.sandbox!);
+            return {
+              action: "discarded",
+              reason: event?.error ? "tool execution failed" : "runtime audit produced findings",
+              temp_dir: runtimeCheckpoint.sandbox!.tempDir,
+            };
+          }
+          const committed = commitSandboxWorkspace(runtimeCheckpoint.sandbox!);
+          discardSandboxWorkspace(runtimeCheckpoint.sandbox!);
+          return {
+            action: committed.committed ? "committed" : "commit_failed",
+            reason: committed.reason || "",
+            temp_dir: runtimeCheckpoint.sandbox!.tempDir,
+          };
+        })()
+        : null;
       const severity: RecordSeverity = event?.error ? "danger" : "success";
       plugin.store!.add({
         run_id: state.runId,
@@ -745,11 +889,18 @@ const plugin = {
               created_at: runtimeAudit.checkpoint.created_at,
             } : null,
           } : null,
+          rollback: runtimeRollback ? {
+            restored_count: runtimeRollback.restored.length,
+            errors: runtimeRollback.errors,
+            checkpoint_count: runtimeCheckpoint?.rollbackSnapshots?.length || 0,
+            operation_checkpoint_id: runtimeCheckpoint?.operationCheckpoint?.id || runtimeRollback.checkpoint?.id || "",
+            policy_state_restored: policyRollback,
+          } : null,
+          sandbox: sandboxOutcome,
           findings: allFindings,
         },
       });
 
-      updateAfterRuntimeFindings(state.policyState, event?.toolName || "", runtimeFindings);
       updateAfterMessage(state.policyState, allFindings);
       for (const finding of allFindings) {
         addFinding(state, finding, { toolCallId: event?.toolCallId || "" });
@@ -765,6 +916,7 @@ const plugin = {
           toolName: event?.toolName || "",
           toolCallId: event?.toolCallId || "",
           runtime_audit: runtimeAudit,
+          rollback: runtimeRollback,
           findings: runtimeFindings,
         });
         sendProactiveNotification(ctx, "warning", "eBPF runtime audit finding", runtimeFindings.map((finding) => finding.reason).join("; "));
@@ -826,6 +978,36 @@ const plugin = {
         }
       }
       return "";
+    }
+
+    function paramsWithSandboxCommand(params: Record<string, unknown>, command: string): Record<string, unknown> {
+      const out = { ...params };
+      for (const key of ["command", "cmd", "script", "input"]) {
+        if (typeof out[key] === "string" && out[key].trim()) {
+          out[key] = command;
+          return out;
+        }
+      }
+      out.command = command;
+      return out;
+    }
+
+    function digestForFoundationScan(scan: ReturnType<typeof scanInitializationSurface>): string {
+      return createHash("sha256").update(JSON.stringify({
+        roots: scan.roots,
+        components: scan.components.map((component) => ({
+          id: component.id,
+          sha256: component.sha256,
+          trust: component.trust,
+          risk: component.risk,
+        })),
+        findings: scan.findings.map((finding) => ({
+          layer: finding.layer,
+          verdict: finding.verdict,
+          reason: finding.reason,
+          score: finding.score,
+        })),
+      })).digest("hex");
     }
 
     function persistAllowedMemoryLabel(

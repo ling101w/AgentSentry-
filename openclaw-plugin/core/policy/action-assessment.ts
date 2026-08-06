@@ -164,6 +164,10 @@ export function isOpenClawMemoryDocumentPath(path: string): boolean {
 export function sourceForToolResult(toolName: string, result: unknown): TrustSource {
   const lower = toolName.toLowerCase();
   const tokens = toolNameTokens(toolName);
+  if (lower === "sessions_send" || /agent[._-]?message|handoff|send_to_agent/.test(lower)) {
+    const source = extractAgentMessageSource(result);
+    return source.includes("external") ? "external_web" : "unknown";
+  }
   if (lower === "call_api" || tokens.some((token) => NETWORK_TOOL_TOKENS.has(token))) {
     const url = extractResultUrl(result);
     return url && isLocalHost(hostFromUrl(url)) ? "tool_result" : "external_web";
@@ -171,6 +175,15 @@ export function sourceForToolResult(toolName: string, result: unknown): TrustSou
   if (/read_file|filesystem.*read/.test(lower)) return "workspace";
   if (/memory.*read/.test(lower)) return "memory";
   return sourceFromTool(toolName);
+}
+
+function extractAgentMessageSource(result: unknown): string {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return "";
+  const output = "output" in result && result.output && typeof result.output === "object" && !Array.isArray(result.output)
+    ? result.output as Record<string, unknown>
+    : result as Record<string, unknown>;
+  const source = output.source;
+  return typeof source === "string" ? source.toLowerCase() : "";
 }
 
 function isSensitivePathWithAssets(path: string, sensitiveAssets: string[]): boolean {

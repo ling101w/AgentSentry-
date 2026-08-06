@@ -427,6 +427,7 @@ export function createRiskVector(partial: Partial<RiskVector> = {}): RiskVector 
 
 export function sourceFromTool(toolName: string): TrustSource {
   const lower = toolName.toLowerCase();
+  if (/sessions?_send|agent[._-]?message|handoff|send_to_agent/.test(lower)) return "unknown";
   if (/web|browser|url|fetch|http|api|request|curl|wget/.test(lower)) return "external_web";
   if (/mail|email/.test(lower)) return "email_html";
   if (/pdf/.test(lower)) return "pdf_text";

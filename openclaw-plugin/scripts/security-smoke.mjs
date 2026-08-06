@@ -97,7 +97,7 @@ async function testSsrfAddressChecks() {
   assert.equal(isForbiddenIpAddress("8.8.8.8"), false);
   assert.equal(isForbiddenIpAddress("2606:4700:4700::1111"), false);
   await assert.rejects(() => safeHttpGet("http://169.254.169.254/latest/meta-data/"), /SSRF protection blocked/);
-  await assert.rejects(() => safeHttpGet("http://127.0.0.1/", { allowedHosts: ["127.0.0.1"] }), /SSRF protection blocked/);
+  await assert.rejects(() => safeHttpGet("http://127.0.0.1/"), /SSRF protection blocked/);
   await assert.rejects(() => safeHttpGet("https://example.com/", { allowedHosts: ["api.example.com"] }), /not allowlisted/);
 }
 
