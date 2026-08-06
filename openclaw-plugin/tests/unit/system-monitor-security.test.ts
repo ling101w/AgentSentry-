@@ -259,6 +259,20 @@ describe("eBPF runtime event audit", () => {
     expect(lowRiskShell.findings.some((finding) => finding.reason.includes("unexpected process execution"))).toBe(true);
   });
 
+  it("flags an unexpected socket connection from a non-network tool", () => {
+    const audit = auditRuntimeEventBatch([
+      { event: "connect", comm: "node", pid: process.pid, destination: "198.51.100.42:443" },
+    ], "read_file", { path: "README.md" }, attachedMonitor());
+
+    expect(audit.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        verdict: "require_approval",
+        reason: expect.stringContaining("unexpected socket connection"),
+      }),
+    ]));
+    expect(audit.interestingEvents).toHaveLength(1);
+  });
+
   it("returns a disabled, empty audit without an attached checkpoint", () => {
     const audit = auditRuntimeEventsSince(null, "read_file", { path: "README.md" });
     expect(audit).toMatchObject({

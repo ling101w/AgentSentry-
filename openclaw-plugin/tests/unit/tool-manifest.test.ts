@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PluginConfig } from "../../config.ts";
@@ -7,6 +7,7 @@ import { normalizeAction } from "../../core/policy.ts";
 import {
   clearCustomToolManifests,
   configureToolManifestSigning,
+  listToolManifestRevocations,
   registerToolManifest,
   toolManifestDigest,
   toolManifestFindings,
@@ -144,6 +145,45 @@ describe("Tool Security Manifest", () => {
       expect(toolManifestFindings("crm_persisted", "crm_persisted", {})).toEqual(expect.arrayContaining([
         expect.objectContaining({ verdict: "block", reason: "tool_manifest_revoked" }),
       ]));
+    } finally {
+      clearCustomToolManifests();
+      rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed administrator manifests and describes inferred effects for unknown tools", () => {
+    expect(() => registerToolManifest(null as unknown as ToolSecurityManifest)).toThrow("tool manifest must be an object");
+    expect(() => registerToolManifest({ ...CRM_MANIFEST, toolId: "" })).toThrow("requires toolId");
+    expect(() => registerToolManifest({ ...CRM_MANIFEST, toolId: "mcp.crm.bad-alias", aliases: [""] })).toThrow("aliases must be non-empty");
+    expect(() => registerToolManifest({ ...CRM_MANIFEST, toolId: "mcp.crm.bad-origin", dataOrigins: ["unknown-origin" as never] })).toThrow("invalid data origin");
+    expect(() => registerToolManifest({ ...CRM_MANIFEST, toolId: "mcp.crm.bad-effect", sideEffects: ["unknown-effect" as never] })).toThrow("invalid side effect");
+    expect(() => registerToolManifest({ ...CRM_MANIFEST, toolId: "mcp.crm.bad-flags", canExfiltrate: "yes" as never })).toThrow("flags must be boolean");
+    expect(() => revokeToolManifest("mcp.missing", "不存在")).toThrow("tool_manifest_not_registered");
+
+    const findings = toolManifestFindings("mcp.unregistered.runner", "mcp.unregistered.runner", {
+      command: "status",
+      path: "/srv/report.txt",
+      content: "completed",
+    });
+    expect(findings[0].evidence.inferred_effects).toEqual(expect.arrayContaining(["process_exec", "file_write"]));
+  });
+
+  it("keeps revocation records inspectable and ignores a malformed persisted registry", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "agentsentry-tool-registry-invalid-"));
+    try {
+      const config = new PluginConfig();
+      config.storage.stateDir = stateDir;
+      const registryDir = join(stateDir, "agentsentry");
+      mkdirSync(registryDir, { recursive: true });
+      writeFileSync(join(registryDir, "tool-manifest-registry.json"), "{not-json", "utf8");
+      configureToolManifestSigning(config);
+      expect(toolManifestFindings("send_email", "send_email", {})).toEqual([]);
+
+      registerToolManifest({ ...CRM_MANIFEST, toolId: "mcp.crm.sort-one", aliases: ["crm_sort_one"] });
+      registerToolManifest({ ...CRM_MANIFEST, toolId: "mcp.crm.sort-two", aliases: ["crm_sort_two"] });
+      revokeToolManifest("crm_sort_one", "第一条");
+      revokeToolManifest("crm_sort_two", "第二条");
+      expect(listToolManifestRevocations()).toHaveLength(2);
     } finally {
       clearCustomToolManifests();
       rmSync(stateDir, { recursive: true, force: true });

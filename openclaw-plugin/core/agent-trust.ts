@@ -106,8 +106,8 @@ export function verifyAgentMessageEnvelope(
   const envelope = parseEnvelope(value);
   if (!envelope) return { valid: false, reason: "agent message envelope is missing or malformed" };
   if (envelope.version !== 1 || envelope.issuer !== "xuanjian-agent-transport") return { valid: false, reason: "agent message envelope has an unsupported issuer or version" };
-  if (!constantTimeEqual(envelope.signature, envelopeSignature(envelope))) return { valid: false, reason: "agent message envelope signature is invalid" };
   if (!Number.isFinite(Date.parse(envelope.issuedAt)) || !Number.isFinite(Date.parse(envelope.expiresAt))) return { valid: false, reason: "agent message envelope timestamps are invalid" };
+  if (!constantTimeEqual(envelope.signature, envelopeSignature(envelope as AgentMessageEnvelope))) return { valid: false, reason: "agent message envelope signature is invalid" };
   const maxExpiry = Date.parse(envelope.issuedAt) + config.multiAgentSecurity.maxEnvelopeTtlMs;
   if (Date.parse(envelope.expiresAt) < now || Date.parse(envelope.expiresAt) > maxExpiry) return { valid: false, reason: "agent message envelope is expired or exceeds the configured lifetime" };
   if (envelope.from !== input.from.id || envelope.to !== input.to.id) return { valid: false, reason: "agent message envelope identity binding does not match the tool call" };
@@ -209,13 +209,15 @@ function canonicalEnvelope(envelope: Omit<AgentMessageEnvelope, "signature"> | A
   });
 }
 
-function parseEnvelope(value: unknown): AgentMessageEnvelope | null {
+type ParsedAgentMessageEnvelope = Omit<AgentMessageEnvelope, "version"> & { version: number };
+
+function parseEnvelope(value: unknown): ParsedAgentMessageEnvelope | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>;
   const required = ["issuer", "from", "to", "tenant", "sourceNamespace", "targetNamespace", "contentSha256", "issuedAt", "expiresAt", "signature"];
-  if (item.version !== 1 || required.some((key) => typeof item[key] !== "string" || !(item[key] as string).trim())) return null;
+  if (typeof item.version !== "number" || required.some((key) => typeof item[key] !== "string" || !(item[key] as string).trim())) return null;
   return {
-    version: 1,
+    version: item.version,
     issuer: item.issuer as string,
     from: item.from as string,
     to: item.to as string,
