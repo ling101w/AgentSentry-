@@ -14,6 +14,14 @@
 | `demo_run.py` | 早期离线原型一键演示。 |
 | `run_blind_evaluation.py` | 运行由独立 evaluator 提供、标签与检测输入隔离的盲测集，并输出可信指标与置信区间。 |
 | `run_agentdojo_native.py` | 使用官方 AgentDojo 环境、工具与 evaluator 运行原生端到端适配；支持无密钥 doctor、plan 和 contract。 |
+| `import_dataset_registry.py` | 将四列 Excel 数据源目录导入可追溯 Registry。 |
+| `collect_benchmarks.py` | 浅克隆/安全审计六个 raw benchmark，并记录 commit、license 和哈希。 |
+| `build_dataset.py` | 离线生成保留原文的统一 research JSONL。 |
+| `validate_dataset.py` | 标记不完整样本并输出数据质量统计，不静默删除。 |
+| `deduplicate_dataset.py` | 精确去重并为近似重复分组，保留完整审计集。 |
+| `split_dataset.py` | 按模板/重复组切分，并生成 cross-dataset 留出集。 |
+| `prepare_dataset.py` | 一键执行 build、validate、dedup、split 与 BenchmarkCase export。 |
+| `run_dataset.py` | 严格校验 BenchmarkCase，送入 `/api/lab/command`，按危险 sink 评分并输出六项指标；harness error 返回非零。 |
 
 脚本输出不要直接放在本目录，统一写到 `reports/` 或 `runtime/`。
 

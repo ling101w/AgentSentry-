@@ -1,0 +1,78 @@
+{
+  "generated_at": "2026-08-07T08:12:34.295269Z",
+  "schema_version": "agentsentry.raw_manifest.v1",
+  "sources": [
+    {
+      "commit": "a05b8bd04629e19a9a06bf04f8e0c5b53549d16c",
+      "dataset": "RedTeamCUA",
+      "directory": "RedTeamCUA",
+      "downloaded_at": "2026-08-07T08:01:06.618785Z",
+      "license": "Apache-2.0",
+      "raw_format": "json",
+      "sha256": "c8c376228e0a416013ec4b444206fef698970b8ab00c2563d50a50a8246e3632",
+      "status": "audited",
+      "tree_sha256": "c8c376228e0a416013ec4b444206fef698970b8ab00c2563d50a50a8246e3632",
+      "url": "https://github.com/OSU-NLP-Group/RedTeamCUA.git"
+    },
+    {
+      "commit": "c1d6a70171e4d2c44c87a2ae909d13df00c6aa8d",
+      "dataset": "MSB",
+      "directory": "MSB",
+      "downloaded_at": "2026-08-07T08:01:06.618785Z",
+      "license": "MIT",
+      "raw_format": "jsonl",
+      "sha256": "77a7b65b00da579a0eba76f1c50cbecb105d3439706c4f0fa9f4e33c1e8df392",
+      "status": "audited",
+      "tree_sha256": "77a7b65b00da579a0eba76f1c50cbecb105d3439706c4f0fa9f4e33c1e8df392",
+      "url": "https://github.com/dongsenzhang/MSB.git"
+    },
+    {
+      "commit": "7612c5a3e811dcf01f64e4f2bb324591a2feaaf4",
+      "dataset": "MCPSecBench",
+      "directory": "MCPSecBench",
+      "downloaded_at": "2026-08-07T08:01:06.618785Z",
+      "license": "MIT",
+      "raw_format": "json",
+      "sha256": "4b4aa008270d5f9c15252743a35a1f6f555e23549b797901b13afac14ce6b0f3",
+      "status": "audited",
+      "tree_sha256": "4b4aa008270d5f9c15252743a35a1f6f555e23549b797901b13afac14ce6b0f3",
+      "url": "https://github.com/AIS2Lab/MCPSecBench.git"
+    },
+    {
+      "commit": "e694d20d805290b69d441c003cff2af4b6b3816e",
+      "dataset": "MemoryGraft",
+      "directory": "Agent-Memory-Poisoning",
+      "downloaded_at": "2026-08-07T08:01:06.618785Z",
+      "license": "MIT",
+      "raw_format": "json",
+      "sha256": "3de6ac614e29e47b16a2e225c5de3cbcb17c70bc8f4ac38882156a00235fbde9",
+      "status": "audited",
+      "tree_sha256": "3de6ac614e29e47b16a2e225c5de3cbcb17c70bc8f4ac38882156a00235fbde9",
+      "url": "https://github.com/Jacobhhy/Agent-Memory-Poisoning.git"
+    },
+    {
+      "commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60",
+      "dataset": "AgentDojo",
+      "directory": "AgentDojo",
+      "downloaded_at": "2026-08-07T08:01:06.618785Z",
+      "license": "MIT",
+      "raw_format": "python",
+      "sha256": "7c2151d817a253292d7c724fd5ce1bd510044f32f713cfb54109b7ff21e97a62",
+      "status": "audited",
+      "tree_sha256": "7c2151d817a253292d7c724fd5ce1bd510044f32f713cfb54109b7ff21e97a62",
+      "url": "https://github.com/ethz-spylab/agentdojo.git"
+    },
+    {
+      "commit": "f19c9f2c79a41046eb13c03c51a24c567a8ffa07",
+      "dataset": "InjecAgent",
+      "directory": "InjecAgent",
+      "downloaded_at": "2026-08-07T08:01:06.618785Z",
+      "license": "NOASSERTION",
+      "raw_format": "json",
+      "sha256": "90090fec67b67f0174fdd329e73c29f0592ca07a7c0f4b69a9247e09c6fdd033",
+      "status": "audited",
+      "tree_sha256": "90090fec67b67f0174fdd329e73c29f0592ca07a7c0f4b69a9247e09c6fdd033",
+      "url": "https://github.com/uiuc-kang-lab/InjecAgent.git"
+    }
+  ]
+}

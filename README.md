@@ -224,6 +224,7 @@ python -m pytest -q
 | `openclaw-plugin/core/persistence/` | 异步批量事件写入 |
 | `reports/` | 比赛报告、评测说明、验收证据和文档索引 |
 | `evaluation/` | 标签隔离评测协议与 native adapter |
+| `dataset/` | 数据源 Registry、六源 raw manifest、统一清洗与分组切分说明 |
 | `cases/`、`policies/` | 中文案例集与离线策略材料 |
 | `scripts/` | 评测、验收、发布和 UI 检查脚本 |
 | `src/`、`tests/` | 早期 Python 离线原型及其测试 |
@@ -240,6 +241,7 @@ python -m pytest -q
 | [system_functionality.md](reports/system_functionality.md) | 想核对功能与真实数据来源的人 |
 | [technical_design_and_algorithms.md](reports/technical_design_and_algorithms.md) | 想深入 TaskSpec、taint、Memory Guard、Judge 的开发者 |
 | [demo_and_reproduction.md](reports/demo_and_reproduction.md) | 需要复现演示和 benchmark 的操作者 |
+| [dataset/README.md](dataset/README.md) | 需要收集、清洗、切分并运行安全数据集的人 |
 | [openclaw-plugin/README.md](openclaw-plugin/README.md) | 只安装或开发 OpenClaw 插件的人 |
 | [README_RELEASE.md](README_RELEASE.md) | 使用交付 tarball 的部署人员 |
 

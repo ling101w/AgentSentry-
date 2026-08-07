@@ -20,6 +20,10 @@ dev = [
 native-agentdojo = [
     "agentdojo==0.1.35",
 ]
+dataset = [
+    "jsonschema>=4.23",
+    "openpyxl>=3.1",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

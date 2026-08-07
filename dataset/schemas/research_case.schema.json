@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentsentry.local/schemas/research_case.schema.json",
+  "title": "AgentSentry Research Case",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "source",
+    "labels",
+    "content",
+    "agentsentry",
+    "provenance",
+    "raw",
+    "quality"
+  ],
+  "properties": {
+    "schema_version": {"const": "agentsentry.research_case.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object",
+      "required": ["dataset", "original_id", "source_ref", "version", "license", "raw_path", "raw_sha256"],
+      "properties": {
+        "dataset": {"type": "string", "minLength": 1},
+        "original_id": {"type": "string"},
+        "source_ref": {"type": "string", "minLength": 1},
+        "version": {"type": "string"},
+        "license": {"type": "string"},
+        "raw_path": {"type": "string"},
+        "raw_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "labels": {
+      "type": "object",
+      "required": ["attack", "threat_primary", "threat_secondary", "attack_type"],
+      "properties": {
+        "attack": {"type": "boolean"},
+        "threat_primary": {"enum": ["T1", "T2", "T3", "T4", "T5", "T6"]},
+        "threat_secondary": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["T1", "T2", "T3", "T4", "T5", "T6"]}
+        },
+        "attack_type": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "content": {
+      "type": "object",
+      "required": ["user_instruction", "attacker_instruction", "tool_response", "tool_name", "trajectory"],
+      "properties": {
+        "user_instruction": {"type": "string"},
+        "attacker_instruction": {"type": "string"},
+        "tool_response": {"type": "string"},
+        "tool_name": {"type": "string"},
+        "trajectory": {"type": "array"}
+      },
+      "additionalProperties": false
+    },
+    "agentsentry": {
+      "type": "object",
+      "required": ["scenario", "command", "expectation", "tool", "target", "reset_session", "client_id", "notes"],
+      "properties": {
+        "scenario": {"type": "string", "minLength": 1},
+        "command": {"type": "string", "minLength": 1},
+        "expectation": {"enum": ["allow", "protected"]},
+        "tool": {"type": "string"},
+        "target": {"type": "string"},
+        "reset_session": {"type": "boolean"},
+        "client_id": {"type": "string", "minLength": 1},
+        "notes": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["adapter", "template_id"],
+      "properties": {
+        "adapter": {"type": "string", "minLength": 1},
+        "template_id": {"type": "string"},
+        "mapping_synthetic_wrapper": {"type": "boolean"},
+        "transforms": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "raw": {"type": "object"},
+    "quality": {
+      "type": "object",
+      "required": [
+        "status",
+        "reasons",
+        "warnings",
+        "hash_input_version",
+        "content_sha256",
+        "duplicate_exact",
+        "duplicate_of",
+        "duplicate_group"
+      ],
+      "properties": {
+        "status": {"enum": ["unchecked", "valid", "invalid"]},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "hash_input_version": {"type": "string"},
+        "content_sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
+        "duplicate_exact": {"type": "boolean"},
+        "duplicate_of": {"type": "string"},
+        "duplicate_group": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

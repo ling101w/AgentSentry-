@@ -16,6 +16,7 @@
 | `cases/` | 中文安全案例集，用于离线原型和报告引用。 |
 | `policies/` | YAML 策略配置，定义工具、路径、外部 sink 和污点约束。 |
 | `third_party/benchmarks/` | 下载的公开 benchmark 原始仓库。只作为样例来源，不直接作为玄鉴运行时依赖。 |
+| `dataset/` | 数据源登记、raw manifest、统一研究格式、清洗审计、分组切分和执行格式。大产物本地生成。 |
 | `tools/` | OpenClaw 公网代理、PromptBeat 适配、eBPF observer 等运维/集成工具。 |
 | `runtime/` | 本地运行态目录。数据库、日志、outbox 和 sandbox 都是可再生成内容，不作为交付材料。 |
 | `openclaw-workspace/` | OpenClaw 本地实验工作区，包含用于测试的 Skills、攻击样本和工作区状态。 |

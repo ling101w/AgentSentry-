@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.pytest-tmp-*/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -47,6 +48,7 @@ runtime/agentdojo/
 
 # Evaluation fixtures are versioned; the real independent holdout stays sealed.
 !evaluation/**/*.jsonl
+!dataset/manifest/*.jsonl
 evaluation/blind/blind_holdout*.jsonl
 !evaluation/blind/blind_holdout.example.jsonl
 evaluation/native/*.private.jsonl
