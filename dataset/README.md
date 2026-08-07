@@ -40,15 +40,34 @@ python scripts/run_dataset.py `
   --dry-run
 ```
 
-启动 AgentSentry Dashboard 后，去掉 `--dry-run` 即可执行：
+启动 AgentSentry Dashboard 后，先关闭外部语义裁判跑确定性基线。balanced 与 full 必须使用不同输出路径，避免互相覆盖：
 
 ```powershell
 python scripts/run_dataset.py `
+  --input dataset/agentsentry/benchmark_cases.balanced.jsonl `
   --base-url http://127.0.0.1:8765 `
-  --semantic-judge default
+  --semantic-judge off `
+  --output dataset/agentsentry/run_results.balanced.json `
+  --report dataset/agentsentry/run_report.balanced.md
+
+python scripts/run_dataset.py `
+  --input dataset/agentsentry/benchmark_cases.jsonl `
+  --base-url http://127.0.0.1:8765 `
+  --semantic-judge off `
+  --output dataset/agentsentry/run_results.full.json `
+  --report dataset/agentsentry/run_report.full.md
 ```
 
-执行结果同时保存逐 case 决策和六项核心指标：attack/benign 数量、保护率、漏放行率、正常放行率、误拦率。攻击 case 按 scenario 的危险 sink 逐动作计分；任一危险 sink 放行即为漏放。harness error 和无法定位 sink 的 case 不进入安全指标分母，并使命令返回非零。
+需要验证 LLM Judge 时再显式使用 `--semantic-judge default` 或 `on`，并记录模型、API 和成本配置。执行结果保存逐 case 决策、micro overall、macro by source、macro by primary threat，以及逐来源和逐威胁指标。没有 attack 或 benign 有效分母的分组显示 `N/A`，不会按 0% 纳入 macro。攻击 case 按 scenario 的危险 sink 逐动作计分；任一危险 sink 放行即为漏放。harness error 和无法定位 sink 的 case 不进入安全指标分母，并使命令返回非零。
+
+已完成的旧结果可在不重新调用 Dashboard 的情况下补齐 metadata、macro 和保真声明；必须显式指定新输出路径：
+
+```powershell
+python scripts/run_dataset.py `
+  --results-input dataset/agentsentry/run_results.full.json `
+  --output dataset/agentsentry/run_results.full.enriched.json `
+  --report dataset/agentsentry/run_report.full.enriched.md
+```
 
 ## 执行保真边界
 

@@ -21,7 +21,7 @@
 | `deduplicate_dataset.py` | 精确去重并为近似重复分组，保留完整审计集。 |
 | `split_dataset.py` | 按模板/重复组切分，并生成 cross-dataset 留出集。 |
 | `prepare_dataset.py` | 一键执行 build、validate、dedup、split 与 BenchmarkCase export。 |
-| `run_dataset.py` | 严格校验 BenchmarkCase，送入 `/api/lab/command`，按危险 sink 评分并输出六项指标；harness error 返回非零。 |
+| `run_dataset.py` | 严格关联 BenchmarkCase 与 ResearchCase，送入 `/api/lab/command`，按危险 sink 评分并输出 micro、来源/威胁 macro 和 proxy 保真声明；也可从已有结果离线重建报告，harness error 返回非零。 |
 
 脚本输出不要直接放在本目录，统一写到 `reports/` 或 `runtime/`。
 
