@@ -81,7 +81,15 @@ reports/blind_evaluation/*.private.json
 reports/native_agentdojo/*.private.*
 reports/plugin_comparison/*.json
 reports/plugin_comparison/*.txt
+reports/plugin_comparison/custom_*/
+reports/e2e_plugin_comparison/
 openclaw-plugin/sbom.cdx.json
+atbeach-new/runtime/
+atbench/runtime/
+atbench/reports/atbench_smoke_diagnosis/
+atbench/third_party/benchmarks/
+ATBench-*.zip
+atbench_p0_metric_semantics_refined.zip
 
 # Output keeps the README and compressed deliverables, not expanded build trees.
 output/*

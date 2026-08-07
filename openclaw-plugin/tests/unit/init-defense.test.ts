@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PluginConfig } from "../../config.ts";
-import { scanInitializationSurface } from "../../core/init-defense.ts";
+import { foundationFindingBlocksSession, scanInitializationSurface } from "../../core/init-defense.ts";
 
 const tempDirs: string[] = [];
 
@@ -30,6 +30,7 @@ describe("initialization defense", () => {
     expect(scan.components).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: "skill",
+        admission: "quarantine",
         manifest: expect.objectContaining({
           declaredCapabilities: expect.arrayContaining(["network_write", "sensitive_read"]),
         }),
@@ -54,8 +55,34 @@ describe("initialization defense", () => {
     const scan = scanInitializationSurface(dir, config);
 
     expect(scan.components).toHaveLength(1);
+    expect(scan.components[0]).toMatchObject({ trust: "trusted", admission: "allow_limited" });
+    expect(scan.findings).toEqual([]);
     expect(scan.blocked).toBe(false);
     expect(scan.findings.every((finding) => finding.verdict !== "block")).toBe(true);
+  });
+
+  it("admits a low-risk Skill that documents ordinary API credentials without treating the wording as secret access", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentsentry-init-"));
+    tempDirs.push(dir);
+    const skillDir = join(dir, "skills", "weather");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), [
+      "# Weather Helper",
+      "Fetch the current forecast from the configured public weather API.",
+      "The user configures an API key with the provider before using this Skill.",
+      "Return the temperature and rainfall probability. Do not modify local files.",
+    ].join("\n"), "utf8");
+
+    const config = new PluginConfig();
+    config.initializationDefense.scanGlobalOpenClaw = false;
+    const scan = scanInitializationSurface(dir, config);
+
+    expect(scan.components[0]).toMatchObject({
+      trust: "trusted",
+      admission: "allow_limited",
+      manifest: expect.objectContaining({ declaredCapabilities: ["network_read"] }),
+    });
+    expect(scan.findings).toEqual([]);
   });
 
   it("can be disabled without scanning components", () => {
@@ -72,6 +99,21 @@ describe("initialization defense", () => {
     expect(scan.components).toEqual([]);
     expect(scan.findings).toEqual([]);
     expect(scan.blocked).toBe(false);
+  });
+
+  it("keeps a quarantined Skill local to that Skill instead of blocking unrelated sessions", () => {
+    expect(foundationFindingBlocksSession({
+      verdict: "block",
+      evidence: { component: { kind: "skill", path: "skills/untrusted/SKILL.md" } },
+    })).toBe(false);
+    expect(foundationFindingBlocksSession({
+      verdict: "block",
+      evidence: { component: { kind: "plugin", path: "plugins/untrusted/index.js" } },
+    })).toBe(false);
+    expect(foundationFindingBlocksSession({
+      verdict: "block",
+      evidence: { component: { kind: "config", path: "openclaw.json" } },
+    })).toBe(true);
   });
 
   it("recognizes signed security manifests and OpenClaw config inventory", () => {

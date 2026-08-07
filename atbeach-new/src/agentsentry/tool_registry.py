@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 REGISTRY_SCHEMA_VERSION = "agentsentry.atbench_tool_registry.v1"
-REGISTRY_GENERATOR_VERSION = "1.0.0"
+REGISTRY_GENERATOR_VERSION = "1.1.0"
 REGISTRY_SOURCE_POLICY = "catalog_only_no_labels_results_or_trajectory_outcomes"
 ONBOARDING_MODES = frozenset({"registered", "zero_shot"})
 
@@ -297,6 +297,16 @@ def classify_observed_tool(
         and (payload_fields or operation in {"send", "create", "update", "delete", "admin"})
     )
     accepts_sensitive = bool(credential_fields or sensitivity in {"secret", "user_private"} or payload_fields)
+    caller_bound_read = (
+        effect == "read_only"
+        and sensitivity == "user_private"
+        and not can_exfiltrate
+        and not payload_fields
+        # A read-only tool without a subject selector can only address the
+        # authenticated/session caller. Authentication may be explicit in the
+        # schema or supplied by the provider session.
+        and (bool(credential_fields) or not target_fields)
+    )
     requires_authorization = (
         effect in {"persistent_change", "privileged_change"}
         or sensitivity in {"secret", "user_private"}
@@ -314,6 +324,23 @@ def classify_observed_tool(
         "canExfiltrate": can_exfiltrate,
         "requiresExplicitAuthorization": requires_authorization,
         "defaultTrust": _default_trust_for(canonical_tool),
+        # These declarations are derived only from the tool catalog. They
+        # describe an authentication-bound read, never a permission to access
+        # arbitrary accounts or to transmit user data.
+        "accessScope": "caller_bound" if caller_bound_read else (
+            "explicit_target" if target_fields else "unknown"
+        ),
+        "sensitiveInputHandling": "authentication_only" if caller_bound_read and credential_fields else (
+            "business_payload" if payload_fields else "none"
+        ),
+        "credentialFields": credential_fields,
+        "targetFields": target_fields,
+        # Catalog text cannot reliably establish a data subject or business
+        # purpose. Reviewed registries may replace these explicit unknowns.
+        "subjectFields": [],
+        "dataSubjects": ["unknown"],
+        "purposeBinding": "unknown",
+        "dataClassification": sensitivity,
     }
     return {
         "tool_name": name,
@@ -728,6 +755,14 @@ def _validate_manifest(raw: Any, index: int) -> dict[str, Any]:
         "canExfiltrate",
         "requiresExplicitAuthorization",
         "defaultTrust",
+        "accessScope",
+        "sensitiveInputHandling",
+        "credentialFields",
+        "targetFields",
+        "subjectFields",
+        "dataSubjects",
+        "purposeBinding",
+        "dataClassification",
     }
     if set(raw) != expected:
         raise ToolRegistryError(f"tools[{index}].manifest fields mismatch")
@@ -739,6 +774,19 @@ def _validate_manifest(raw: Any, index: int) -> dict[str, Any]:
     for field in ("acceptsSensitiveData", "canExfiltrate", "requiresExplicitAuthorization"):
         if not isinstance(raw.get(field), bool):
             raise ToolRegistryError(f"tools[{index}].manifest.{field} must be boolean")
+    if raw.get("accessScope") not in {"caller_bound", "explicit_target", "unscoped", "unknown"}:
+        raise ToolRegistryError(f"tools[{index}].manifest.accessScope is invalid")
+    if raw.get("sensitiveInputHandling") not in {"none", "authentication_only", "business_payload", "unknown"}:
+        raise ToolRegistryError(f"tools[{index}].manifest.sensitiveInputHandling is invalid")
+    for field in ("credentialFields", "targetFields", "subjectFields"):
+        if not isinstance(raw.get(field), list) or not all(isinstance(item, str) and item for item in raw[field]):
+            raise ToolRegistryError(f"tools[{index}].manifest.{field} must be an array of strings")
+    if raw.get("dataClassification") not in {"public", "internal", "user_private", "secret", "unknown"}:
+        raise ToolRegistryError(f"tools[{index}].manifest.dataClassification is invalid")
+    if not isinstance(raw.get("dataSubjects"), list) or not raw["dataSubjects"] or any(item not in {"caller", "named_subject", "third_party", "unknown"} for item in raw["dataSubjects"]):
+        raise ToolRegistryError(f"tools[{index}].manifest.dataSubjects is invalid")
+    if raw.get("purposeBinding") not in {"task_bound", "operator_defined", "unknown"}:
+        raise ToolRegistryError(f"tools[{index}].manifest.purposeBinding is invalid")
     return {
         "toolId": _required_text(raw.get("toolId"), f"tools[{index}].manifest.toolId"),
         "aliases": list(raw["aliases"]),
@@ -748,6 +796,14 @@ def _validate_manifest(raw: Any, index: int) -> dict[str, Any]:
         "canExfiltrate": bool(raw["canExfiltrate"]),
         "requiresExplicitAuthorization": bool(raw["requiresExplicitAuthorization"]),
         "defaultTrust": _required_text(raw.get("defaultTrust"), f"tools[{index}].manifest.defaultTrust"),
+        "accessScope": str(raw["accessScope"]),
+        "sensitiveInputHandling": str(raw["sensitiveInputHandling"]),
+        "credentialFields": list(raw["credentialFields"]),
+        "targetFields": list(raw["targetFields"]),
+        "subjectFields": list(raw["subjectFields"]),
+        "dataSubjects": list(raw["dataSubjects"]),
+        "purposeBinding": str(raw["purposeBinding"]),
+        "dataClassification": str(raw["dataClassification"]),
     }
 
 

@@ -44,6 +44,23 @@ describe("Tool Security Manifest", () => {
     expect(verifyToolManifest(envelope)).toBe(true);
   });
 
+  it("includes subject and purpose declarations in the signed contract", () => {
+    const manifest: ToolSecurityManifest = {
+      ...CRM_MANIFEST,
+      toolId: "mcp.crm.subject-bound",
+      aliases: [],
+      dataClassification: "user_private" as const,
+      dataSubjects: ["named_subject", "third_party"],
+      purposeBinding: "task_bound" as const,
+    };
+    const registered = registerToolManifest(manifest, { version: "1" });
+    expect(verifyToolManifest(registered)).toBe(true);
+    expect(registered.manifest).toMatchObject({
+      dataSubjects: ["named_subject", "third_party"],
+      purposeBinding: "task_bound",
+    });
+  });
+
   it("fails closed on a changed digest-pinned manifest", () => {
     const envelope = registerToolManifest(CRM_MANIFEST, { version: "1" });
     const tampered: ToolManifestEnvelope = {

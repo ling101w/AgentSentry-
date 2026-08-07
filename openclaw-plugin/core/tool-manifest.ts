@@ -8,6 +8,11 @@ import type { DetectionFinding } from "./detect.ts";
 
 export type ToolDataOrigin = "user" | "workspace" | "external_web" | "email" | "third_party_api" | "memory" | "unknown";
 export type ToolSideEffect = "none" | "file_read" | "file_write" | "network_read" | "network_write" | "process_exec" | "persistent_state";
+export type ToolAccessScope = "caller_bound" | "explicit_target" | "unscoped" | "unknown";
+export type SensitiveInputHandling = "none" | "authentication_only" | "business_payload" | "unknown";
+export type ToolDataClassification = "public" | "internal" | "user_private" | "secret" | "unknown";
+export type ToolDataSubject = "caller" | "named_subject" | "third_party" | "unknown";
+export type ToolPurposeBinding = "task_bound" | "operator_defined" | "unknown";
 
 export interface ToolSecurityManifest {
   toolId: string;
@@ -18,6 +23,29 @@ export interface ToolSecurityManifest {
   canExfiltrate: boolean;
   requiresExplicitAuthorization: boolean;
   defaultTrust: "trusted" | "workspace" | "external" | "unknown";
+  /**
+   * Optional because existing administrator manifests remain valid. New
+   * onboarding paths should declare both fields before receiving implicit
+   * read permission.
+   */
+  accessScope?: ToolAccessScope;
+  sensitiveInputHandling?: SensitiveInputHandling;
+  credentialFields?: string[];
+  targetFields?: string[];
+  /** Fields that identify the person, account, device, or record being read. */
+  subjectFields?: string[];
+  dataClassification?: ToolDataClassification;
+  /**
+   * Declares whose data a tool normally exposes. This is metadata supplied at
+   * onboarding, never inferred from a tool name or a prompt.
+   */
+  dataSubjects?: ToolDataSubject[];
+  /**
+   * States whether an operation is normally meaningful only inside a user
+   * task. It lets the policy distinguish a task-scoped lookup from a generic
+   * account or identity operation.
+   */
+  purposeBinding?: ToolPurposeBinding;
 }
 
 export interface ToolManifestEnvelope {
@@ -51,6 +79,11 @@ let loadingPersistedRegistry = false;
 const DATA_ORIGINS = new Set<ToolDataOrigin>(["user", "workspace", "external_web", "email", "third_party_api", "memory", "unknown"]);
 const SIDE_EFFECTS = new Set<ToolSideEffect>(["none", "file_read", "file_write", "network_read", "network_write", "process_exec", "persistent_state"]);
 const TRUST_LEVELS = new Set<ToolSecurityManifest["defaultTrust"]>(["trusted", "workspace", "external", "unknown"]);
+const ACCESS_SCOPES = new Set<ToolAccessScope>(["caller_bound", "explicit_target", "unscoped", "unknown"]);
+const SENSITIVE_INPUT_HANDLING = new Set<SensitiveInputHandling>(["none", "authentication_only", "business_payload", "unknown"]);
+const DATA_CLASSIFICATIONS = new Set<ToolDataClassification>(["public", "internal", "user_private", "secret", "unknown"]);
+const DATA_SUBJECTS = new Set<ToolDataSubject>(["caller", "named_subject", "third_party", "unknown"]);
+const PURPOSE_BINDINGS = new Set<ToolPurposeBinding>(["task_bound", "operator_defined", "unknown"]);
 
 for (const manifest of builtinManifests()) registerToolManifest(manifest, { issuer: "builtin" });
 
@@ -359,6 +392,26 @@ function validateManifest(manifest: ToolSecurityManifest): void {
     throw new TypeError("tool manifest security flags must be boolean");
   }
   if (!TRUST_LEVELS.has(manifest.defaultTrust)) throw new TypeError("tool manifest contains an invalid default trust level");
+  if (manifest.accessScope !== undefined && !ACCESS_SCOPES.has(manifest.accessScope)) {
+    throw new TypeError("tool manifest contains an invalid access scope");
+  }
+  if (manifest.sensitiveInputHandling !== undefined && !SENSITIVE_INPUT_HANDLING.has(manifest.sensitiveInputHandling)) {
+    throw new TypeError("tool manifest contains an invalid sensitive input handling declaration");
+  }
+  for (const fieldList of [manifest.credentialFields, manifest.targetFields, manifest.subjectFields]) {
+    if (fieldList !== undefined && (!Array.isArray(fieldList) || fieldList.some((field) => typeof field !== "string" || !field.trim()))) {
+      throw new TypeError("tool manifest field declarations must be non-empty strings");
+    }
+  }
+  if (manifest.dataClassification !== undefined && !DATA_CLASSIFICATIONS.has(manifest.dataClassification)) {
+    throw new TypeError("tool manifest contains an invalid data classification");
+  }
+  if (manifest.dataSubjects !== undefined && (!Array.isArray(manifest.dataSubjects) || !manifest.dataSubjects.length || manifest.dataSubjects.some((subject) => !DATA_SUBJECTS.has(subject)))) {
+    throw new TypeError("tool manifest contains an invalid data subject declaration");
+  }
+  if (manifest.purposeBinding !== undefined && !PURPOSE_BINDINGS.has(manifest.purposeBinding)) {
+    throw new TypeError("tool manifest contains an invalid purpose binding");
+  }
 }
 
 function inferUnknownEffects(params: Record<string, unknown>): ToolSideEffect[] {

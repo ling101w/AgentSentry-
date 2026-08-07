@@ -450,6 +450,232 @@ describe("workflow frequency policy", () => {
   });
 });
 
+describe("manifest-bound read authorization", () => {
+  it("asks when a private third-party lookup lacks the contract-declared subject", () => {
+    const config = new PluginConfig();
+    const state = createPolicyState();
+    clearCustomToolManifests();
+    registerToolManifest({
+      toolId: "mcp.identity.verify",
+      aliases: ["verifyIdentity"],
+      dataOrigins: ["third_party_api"],
+      sideEffects: ["network_read"],
+      acceptsSensitiveData: false,
+      canExfiltrate: false,
+      requiresExplicitAuthorization: true,
+      defaultTrust: "external",
+      accessScope: "explicit_target",
+      sensitiveInputHandling: "none",
+      dataClassification: "user_private",
+      dataSubjects: ["third_party"],
+      purposeBinding: "task_bound",
+      targetFields: ["subjectId"],
+    });
+    updateTaskSpec(state, [{ role: "user", content: "核验已提交门禁申请的承包商身份。" }], config);
+
+    const missingSubject = decideAction({ tool: "verifyIdentity", originalTool: "verifyIdentity", args: {}, reason: "" }, state, config, []);
+    expect(missingSubject.decision).toBe("ask");
+    expect(missingSubject.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: "私密第三方数据查询未提供工具契约声明的主体标识，需要确认查询对象" }),
+    ]));
+
+    const boundSubject = decideAction({ tool: "verifyIdentity", originalTool: "verifyIdentity", args: { subjectId: "contractor-104" }, reason: "" }, state, config, []);
+    expect(boundSubject.findings.some((item) => item.reason.includes("未提供工具契约声明的主体标识"))).toBe(false);
+    clearCustomToolManifests();
+  });
+
+  it("allows a caller-bound read that carries only its declared authentication field", () => {
+    const config = new PluginConfig();
+    const state = createPolicyState();
+    clearCustomToolManifests();
+    registerToolManifest({
+      toolId: "mcp.account.current",
+      aliases: ["getCurrentAccount"],
+      dataOrigins: ["third_party_api"],
+      sideEffects: ["network_read"],
+      acceptsSensitiveData: true,
+      canExfiltrate: false,
+      requiresExplicitAuthorization: true,
+      defaultTrust: "external",
+      accessScope: "caller_bound",
+      sensitiveInputHandling: "authentication_only",
+      credentialFields: ["accessToken"],
+      targetFields: [],
+      dataClassification: "user_private",
+    });
+
+    const decision = decideAction(normalizeAction("getCurrentAccount", { accessToken: "access_token_for_current_user" }), state, config, []);
+    expect(decision.decision).toBe("allow");
+    expect(decision.risk_score).toBeLessThan(config.detection.askThreshold);
+  });
+
+  it("keeps an explicit network target inside the current task scope", () => {
+    const config = new PluginConfig();
+    const state = createPolicyState();
+    clearCustomToolManifests();
+    registerToolManifest({
+      toolId: "mcp.document.extract",
+      aliases: ["extractDocument"],
+      dataOrigins: ["third_party_api"],
+      sideEffects: ["network_read"],
+      acceptsSensitiveData: false,
+      canExfiltrate: false,
+      requiresExplicitAuthorization: true,
+      defaultTrust: "external",
+      accessScope: "explicit_target",
+      sensitiveInputHandling: "none",
+      credentialFields: [],
+      targetFields: ["url"],
+      dataClassification: "user_private",
+    });
+    updateTaskSpec(state, [{ role: "user", content: "Read https://docs.example.com/report.pdf and summarize it." }], config);
+
+    const allowed = decideAction(normalizeAction("extractDocument", { url: "https://docs.example.com/report.pdf" }), state, config, []);
+    const differentTarget = decideAction(normalizeAction("extractDocument", { url: "https://other.example.com/report.pdf" }), state, config, []);
+    expect(allowed.decision).toBe("allow");
+    expect(differentTarget.decision).not.toBe("allow");
+  });
+
+  it("allows a registered public lookup when the user names the research task but not the provider URL", () => {
+    const config = new PluginConfig();
+    const state = createPolicyState();
+    clearCustomToolManifests();
+    registerToolManifest({
+      toolId: "mcp.public.article.lookup",
+      aliases: ["getHtmlContent"],
+      dataOrigins: ["third_party_api"],
+      sideEffects: ["network_read"],
+      acceptsSensitiveData: false,
+      canExfiltrate: false,
+      requiresExplicitAuthorization: true,
+      defaultTrust: "external",
+      accessScope: "explicit_target",
+      sensitiveInputHandling: "none",
+      credentialFields: [],
+      targetFields: ["url"],
+      dataClassification: "public",
+    });
+    updateTaskSpec(state, [{
+      role: "user",
+      content: "请查阅这篇新闻，核验来源并整理公开信息。",
+    }], config);
+
+    const decision = decideAction(
+      normalizeAction("getHtmlContent", { url: "https://news.example/article" }),
+      state,
+      config,
+      [],
+    );
+    expect(state.taskSpec.task).toContain("请查阅这篇新闻");
+    expect(decision.decision).toBe("allow");
+  });
+
+  it("requires review before aggregating a second independently sourced private read", () => {
+    const config = new PluginConfig();
+    const state = createPolicyState();
+    clearCustomToolManifests();
+    for (const [toolId, alias] of [["mcp.profile.read", "getProfile"], ["mcp.device.read", "getDevices"]] as const) {
+      registerToolManifest({
+        toolId,
+        aliases: [alias],
+        dataOrigins: ["third_party_api"],
+        sideEffects: ["network_read"],
+        acceptsSensitiveData: true,
+        canExfiltrate: false,
+        requiresExplicitAuthorization: true,
+        defaultTrust: "external",
+        accessScope: "caller_bound",
+        sensitiveInputHandling: "authentication_only",
+        credentialFields: ["accessToken"],
+        targetFields: [],
+        dataClassification: "user_private",
+      });
+    }
+
+    const first = decideAction(normalizeAction("getProfile", { accessToken: "current-user-token" }), state, config, []);
+    expect(first.decision).toBe("allow");
+    labelToolResult("profile-read", { name: "Ada" }, state, config, "getProfile");
+    expect(state.dataProvenance).toEqual(expect.arrayContaining([
+      expect.objectContaining({ confidentiality: "internal", transformations: expect.arrayContaining(["manifest:user_private"]) }),
+    ]));
+    expect(state.ifcBranches).toEqual(expect.arrayContaining([
+      expect.objectContaining({ confidentiality: "user-private", status: "isolated" }),
+    ]));
+
+    const second = decideAction(normalizeAction("getDevices", { accessToken: "current-user-token" }), state, config, []);
+    expect(second.decision).toBe("ask");
+    expect(second.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        layer: "Data Aggregation",
+        reason: "连续读取已形成敏感数据聚合，需要确认当前读取是否仍符合最小必要范围",
+      }),
+    ]));
+  });
+});
+
+describe("subject-aware sensitive read aggregation", () => {
+  function registerSubjectRead(toolId: string, alias: string): void {
+    registerToolManifest({
+      toolId,
+      aliases: [alias],
+      dataOrigins: ["third_party_api"],
+      sideEffects: ["network_read"],
+      acceptsSensitiveData: true,
+      canExfiltrate: false,
+      requiresExplicitAuthorization: true,
+      defaultTrust: "external",
+      accessScope: "explicit_target",
+      sensitiveInputHandling: "none",
+      dataClassification: "user_private",
+      dataSubjects: ["third_party"],
+      purposeBinding: "task_bound",
+      targetFields: ["subjectId"],
+      subjectFields: ["subjectId"],
+    });
+  }
+
+  it("keeps necessary reads for one declared subject inside the same task scope", () => {
+    const config = new PluginConfig();
+    const state = createPolicyState();
+    clearCustomToolManifests();
+    registerSubjectRead("mcp.identity.profile", "getSubjectProfile");
+    registerSubjectRead("mcp.identity.badges", "getSubjectBadges");
+    updateTaskSpec(state, [{ role: "user", content: "核验指定承包商的门禁资格。" }], config);
+
+    const firstArgs = { subjectId: "contractor-104" };
+    const first = decideAction(normalizeAction("getSubjectProfile", firstArgs), state, config, []);
+    expect(first.decision).toBe("allow");
+    updateAfterDecision(state, first);
+    labelToolResult("subject-profile", { status: "verified" }, state, config, "getSubjectProfile", firstArgs);
+
+    const second = decideAction(normalizeAction("getSubjectBadges", { subjectId: "contractor-104" }), state, config, []);
+    expect(second.findings.some((item) => item.layer === "Data Aggregation")).toBe(false);
+    expect(second.decision).toBe("allow");
+    clearCustomToolManifests();
+  });
+
+  it("asks before a private lookup expands from one declared subject to another", () => {
+    const config = new PluginConfig();
+    const state = createPolicyState();
+    clearCustomToolManifests();
+    registerSubjectRead("mcp.identity.profile", "getSubjectProfile");
+    registerSubjectRead("mcp.identity.badges", "getSubjectBadges");
+    updateTaskSpec(state, [{ role: "user", content: "核验指定承包商的门禁资格。" }], config);
+
+    const firstArgs = { subjectId: "contractor-104" };
+    const first = decideAction(normalizeAction("getSubjectProfile", firstArgs), state, config, []);
+    updateAfterDecision(state, first);
+    labelToolResult("subject-profile", { status: "verified" }, state, config, "getSubjectProfile", firstArgs);
+
+    const second = decideAction(normalizeAction("getSubjectBadges", { subjectId: "contractor-205" }), state, config, []);
+    expect(second.decision).toBe("ask");
+    expect(second.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ layer: "Data Aggregation" }),
+    ]));
+    clearCustomToolManifests();
+  });
+});
+
 describe("finding validation, dedupe, and verdict ordering", () => {
   it("deduplicates identical incoming findings while preserving the most severe verdict", () => {
     const config = new PluginConfig();

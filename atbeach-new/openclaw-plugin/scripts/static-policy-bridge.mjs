@@ -18,6 +18,7 @@ import {
 import {
   clearSemanticActionCache,
   semanticJudgeAmbiguousAction,
+  semanticJudgeToolCall,
 } from "../dist/core/semantic.js";
 import {
   clearCustomToolManifests,
@@ -101,6 +102,7 @@ async function handleRequest(request) {
     resetGlobalState();
     const config = applySecurityProfile(new PluginConfig(), profile);
     config.semantic.enabled = Boolean(config.semantic.enabled && semanticJudgeEnabled);
+    applyStaticSemanticOverrides(config);
     // Trusted simulated manifests are registered before TaskSpec extraction and
     // before any policy decision.  This mirrors normal OpenClaw startup, where
     // installed tools already have reviewed capability metadata.
@@ -183,26 +185,47 @@ async function beforeTool(session, callId, payload) {
     metadataFindings,
     context,
   );
-  const semanticJudgeEligible = preliminary.policy.deterministic_disposition === "ambiguous"
-    && session.config.semantic.enabled
-    && session.config.semantic.judgeToolCalls
-    && session.config.semantic.mode !== "off";
-  const semanticFindings = await semanticJudgeAmbiguousAction({
-    action: preliminary.policy.action,
-    taskSpec: preliminary.policy.task_spec,
-    policyState: session.state,
-    preliminary: preliminary.policy,
-  }, session.config);
-  const detection = semanticFindings.length
+  const semanticToolFindings = await semanticJudgeToolCall(
+    payload.tool_name,
+    toolArgs,
+    session.state.currentTask,
+    session.config,
+    {
+      policyState: session.state,
+      relatedFindings: preliminary.policy.findings,
+    },
+  );
+  const provisional = semanticToolFindings.length
     ? detectToolCall(
       payload.tool_name,
       toolArgs,
       session.config,
       session.state,
-      [...metadataFindings, ...semanticFindings],
+      [...metadataFindings, ...semanticToolFindings],
       context,
     )
     : preliminary;
+  const semanticJudgeEligible = provisional.policy.deterministic_disposition === "ambiguous"
+    && session.config.semantic.enabled
+    && session.config.semantic.judgeToolCalls
+    && session.config.semantic.mode !== "off";
+  const semanticFindings = await semanticJudgeAmbiguousAction({
+    action: provisional.policy.action,
+    taskSpec: provisional.policy.task_spec,
+    policyState: session.state,
+    preliminary: provisional.policy,
+  }, session.config);
+  const allSemanticFindings = [...semanticToolFindings, ...semanticFindings];
+  const detection = allSemanticFindings.length
+    ? detectToolCall(
+      payload.tool_name,
+      toolArgs,
+      session.config,
+      session.state,
+      [...metadataFindings, ...allSemanticFindings],
+      context,
+    )
+    : provisional;
   updateAfterDecision(session.state, detection.policy);
   updateActionGraphEnforcement(
     session.state,
@@ -229,9 +252,9 @@ async function beforeTool(session, callId, payload) {
     summary: detection.summary,
     findings: detection.findings,
     semantic_judge_eligible: semanticJudgeEligible,
-    semantic_judge_result_received: semanticFindings.length > 0,
-    semantic_judge_called: semanticFindings.length > 0,
-    semantic_gate: { disposition: preliminary.policy.deterministic_disposition },
+    semantic_judge_result_received: allSemanticFindings.length > 0,
+    semantic_judge_called: allSemanticFindings.length > 0,
+    semantic_gate: { disposition: provisional.policy.deterministic_disposition },
     contaminated: session.state.contaminated,
     trust: policyTrustSnapshot(session.state),
     diagnosis: {
@@ -264,6 +287,7 @@ function afterTool(session, callId, payload) {
     session.state,
     session.config,
     pending.normalizedTool,
+    { toolArgs: payload.tool_args },
   );
   updateAfterMessage(session.state, findings);
   return {
@@ -351,7 +375,6 @@ function registerCatalog(catalog, state, config, registryState = null) {
 }
 
 function registerTrustedToolRegistry(registry, catalog) {
-  const groups = new Map();
   const toolRegistryByName = new Map();
   const catalogByBinding = new Map(
     uniqueCatalog(catalog).map((tool) => [
@@ -370,72 +393,40 @@ function registerTrustedToolRegistry(registry, catalog) {
       policy_canonical_tool: policyManifest.toolId,
     });
 
-    const canonical = policyManifest.toolId;
-    const current = groups.get(canonical);
-    const group = current || {
-      manifest: policyManifest,
-      aliases: new Set(),
-      schemas: [],
-    };
-    if (current) {
-      group.manifest.dataOrigins = [...new Set([
-        ...group.manifest.dataOrigins,
-        ...descriptor.manifest.dataOrigins,
-      ])].sort();
-      const effects = new Set([
-        ...group.manifest.sideEffects,
-        ...descriptor.manifest.sideEffects,
-      ]);
-      if (effects.size > 1) effects.delete("none");
-      group.manifest.sideEffects = [...effects].sort();
-      group.manifest.acceptsSensitiveData = Boolean(
-        group.manifest.acceptsSensitiveData || descriptor.manifest.acceptsSensitiveData
-      );
-      group.manifest.canExfiltrate = Boolean(
-        group.manifest.canExfiltrate || descriptor.manifest.canExfiltrate
-      );
-      group.manifest.requiresExplicitAuthorization = Boolean(
-        group.manifest.requiresExplicitAuthorization || descriptor.manifest.requiresExplicitAuthorization
-      );
-      group.manifest.defaultTrust = moreRestrictiveTrust(
-        group.manifest.defaultTrust,
-        descriptor.manifest.defaultTrust,
-      );
-    }
-    for (const alias of [descriptor.tool_name, ...(descriptor.manifest.aliases || [])]) {
-      if (normalizeToolId(alias) !== normalizeToolId(canonical)) group.aliases.add(alias);
-    }
-    group.schemas.push({
-      name: observed.name,
-      description: observed.description,
-      parameters: observed.parameters,
-      _source: observed._source,
-      catalog_fingerprint: descriptor.catalog_fingerprint,
-      classification: {
-        operation: descriptor.operation,
-        resource_type: descriptor.resource_type,
-        effect: descriptor.effect,
-        data_sensitivity: descriptor.data_sensitivity,
-        confidence: descriptor.confidence,
-      },
-    });
-    groups.set(canonical, group);
   }
 
+  // Each observed tool owns an independent contract. Grouping unrelated
+  // catalog entries into a generic "sensitive read" manifest caused one
+  // restrictive tool to elevate every other tool in that category.
   const manifestDigests = [];
-  for (const [canonical, group] of [...groups.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+  for (const descriptor of [...registry.tools].sort((left, right) => left.tool_name.localeCompare(right.tool_name))) {
+    const observed = catalogByBinding.get(`${normalizeRegistryToolName(descriptor.tool_name)}:${descriptor.catalog_fingerprint}`);
+    const policyManifest = manifestForRegisteredFunction(descriptor);
     const registered = registerToolManifest(
-      { ...group.manifest, toolId: canonical, aliases: [...group.aliases].sort() },
+      policyManifest,
       {
         version: `${BRIDGE_VERSION}:registered`,
         schema: {
           source: "ATBench evaluator frozen tool registry",
           registry_sha256: registry.registry_sha256,
-          tools: group.schemas,
+          tools: [{
+            name: observed.name,
+            description: observed.description,
+            parameters: observed.parameters,
+            _source: observed._source,
+            catalog_fingerprint: descriptor.catalog_fingerprint,
+            classification: {
+              operation: descriptor.operation,
+              resource_type: descriptor.resource_type,
+              effect: descriptor.effect,
+              data_sensitivity: descriptor.data_sensitivity,
+              confidence: descriptor.confidence,
+            },
+          }],
         },
       },
     );
-    manifestDigests.push({ tool_id: canonical, digest: registered.digest });
+    manifestDigests.push({ tool_id: policyManifest.toolId, digest: registered.digest });
   }
 
   return {
@@ -449,39 +440,38 @@ function registerTrustedToolRegistry(registry, catalog) {
 function manifestForRegisteredFunction(descriptor) {
   const manifest = structuredClone(descriptor.manifest);
   manifest.toolId = policyToolIdForRegisteredDescriptor(descriptor);
-  manifest.aliases = [...new Set([descriptor.tool_name, ...(manifest.aliases || [])])].sort();
-  const callerScopedPrivateRead = descriptor.effect === "read_only"
-    && descriptor.data_sensitivity === "user_private"
-    && descriptor.credential_fields.length > 0
-    && descriptor.target_fields.length === 0;
-  if ((descriptor.effect === "read_only" && descriptor.data_sensitivity === "public") || callerScopedPrivateRead) {
+  const requestedAliases = [descriptor.tool_name, ...(manifest.aliases || [])];
+  manifest.aliases = requestedAliases
+    .filter((alias) => {
+      const existing = resolveToolManifest(alias);
+      return !existing || normalizeToolId(existing.manifest.toolId) === normalizeToolId(manifest.toolId);
+    })
+    .filter((alias, index, aliases) => aliases.findIndex((item) => normalizeToolId(item) === normalizeToolId(alias)) === index)
+    .sort();
+  const callerScopedPrivateRead = manifest.accessScope === "caller_bound"
+    && manifest.sensitiveInputHandling === "authentication_only";
+  if (descriptor.effect === "read_only" && descriptor.data_sensitivity === "public") {
     manifest.requiresExplicitAuthorization = false;
     manifest.canExfiltrate = false;
     manifest.acceptsSensitiveData = false;
     manifest.sideEffects = ["network_read"];
   }
+  if (callerScopedPrivateRead) manifest.requiresExplicitAuthorization = true;
   return manifest;
 }
 
 function policyToolIdForRegisteredDescriptor(descriptor) {
-  if (["shell_exec", "send_email", "read_file", "write_file", "memory_read", "memory_write"].includes(descriptor.canonical_tool)) {
-    return descriptor.canonical_tool;
-  }
-  if (descriptor.effect === "read_only" && descriptor.data_sensitivity === "public") return "external_api_read";
-  if (descriptor.effect === "read_only") return "registered_sensitive_read_api";
-  if (descriptor.effect === "privileged_change" || descriptor.data_sensitivity === "secret") return "registered_privileged_api";
-  if (descriptor.effect === "persistent_change") return "registered_persistent_api";
-  return "registered_effect_api";
+  return `registered.${normalizeRegistryToolName(descriptor.tool_name)}.${descriptor.catalog_fingerprint.slice(0, 12)}`;
 }
 
 function evaluatorToolArgs(toolName, toolArgs, descriptor) {
-  const args = structuredClone(toolArgs || {});
-  if (!descriptor || !["call_api", "external_api_read"].includes(descriptor.canonical_tool)) return args;
-  if (["url", "uri", "href", "endpoint", "target"].some((key) => args[key] !== undefined)) return args;
-  // ATBench often omits transport endpoints. This represents a reviewed
-  // catalog-bound provider identity, not an arbitrary Internet destination.
-  args.endpoint = `atbench://registered/${encodeURIComponent(toolName)}`;
-  return args;
+  // A registered contract binds the provider identity during onboarding.
+  // Do not invent an endpoint parameter: policy must inspect exactly the
+  // arguments the agent supplied, and a synthetic parameter can turn a
+  // caller-bound read into an apparent cross-target request.
+  void toolName;
+  void descriptor;
+  return structuredClone(toolArgs || {});
 }
 
 function uniqueCatalog(catalog) {
@@ -531,6 +521,14 @@ function manifestFor(canonical) {
       canExfiltrate: false,
       requiresExplicitAuthorization: false,
       defaultTrust: "external",
+      accessScope: "explicit_target",
+      sensitiveInputHandling: "none",
+      credentialFields: [],
+      targetFields: [],
+      subjectFields: [],
+      dataSubjects: ["unknown"],
+      purposeBinding: "unknown",
+      dataClassification: "public",
     };
   }
   throw new Error(`missing security manifest for inferred tool class: ${canonical}`);
@@ -647,7 +645,7 @@ function validateToolRegistryDescriptor(raw, index) {
 
 function validateRegistryManifest(raw, index) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error(`tool_registry.tools[${index}].manifest must be an object`);
-  const expected = new Set(["toolId", "aliases", "dataOrigins", "sideEffects", "acceptsSensitiveData", "canExfiltrate", "requiresExplicitAuthorization", "defaultTrust"]);
+  const expected = new Set(["toolId", "aliases", "dataOrigins", "sideEffects", "acceptsSensitiveData", "canExfiltrate", "requiresExplicitAuthorization", "defaultTrust", "accessScope", "sensitiveInputHandling", "credentialFields", "targetFields", "subjectFields", "dataSubjects", "purposeBinding", "dataClassification"]);
   if (Object.keys(raw).some((key) => !expected.has(key)) || [...expected].some((key) => !(key in raw))) throw new Error(`tool_registry.tools[${index}].manifest fields mismatch`);
   if (!Array.isArray(raw.aliases) || raw.aliases.some((item) => typeof item !== "string" || !item.trim())) throw new Error(`tool_registry.tools[${index}].manifest.aliases invalid`);
   if (!Array.isArray(raw.dataOrigins) || !raw.dataOrigins.length || raw.dataOrigins.some((item) => typeof item !== "string")) throw new Error(`tool_registry.tools[${index}].manifest.dataOrigins invalid`);
@@ -655,6 +653,14 @@ function validateRegistryManifest(raw, index) {
   for (const field of ["acceptsSensitiveData", "canExfiltrate", "requiresExplicitAuthorization"]) {
     if (typeof raw[field] !== "boolean") throw new Error(`tool_registry.tools[${index}].manifest.${field} must be boolean`);
   }
+  if (!["caller_bound", "explicit_target", "unscoped", "unknown"].includes(raw.accessScope)) throw new Error(`tool_registry.tools[${index}].manifest.accessScope invalid`);
+  if (!["none", "authentication_only", "business_payload", "unknown"].includes(raw.sensitiveInputHandling)) throw new Error(`tool_registry.tools[${index}].manifest.sensitiveInputHandling invalid`);
+  for (const field of ["credentialFields", "targetFields", "subjectFields"]) {
+    if (!Array.isArray(raw[field]) || raw[field].some((item) => typeof item !== "string" || !item.trim())) throw new Error(`tool_registry.tools[${index}].manifest.${field} invalid`);
+  }
+  if (!["public", "internal", "user_private", "secret", "unknown"].includes(raw.dataClassification)) throw new Error(`tool_registry.tools[${index}].manifest.dataClassification invalid`);
+  if (!Array.isArray(raw.dataSubjects) || !raw.dataSubjects.length || raw.dataSubjects.some((item) => !["caller", "named_subject", "third_party", "unknown"].includes(item))) throw new Error(`tool_registry.tools[${index}].manifest.dataSubjects invalid`);
+  if (!["task_bound", "operator_defined", "unknown"].includes(raw.purposeBinding)) throw new Error(`tool_registry.tools[${index}].manifest.purposeBinding invalid`);
   return {
     toolId: requiredText(raw.toolId, `tool_registry.tools[${index}].manifest.toolId`),
     aliases: [...raw.aliases],
@@ -664,6 +670,14 @@ function validateRegistryManifest(raw, index) {
     canExfiltrate: raw.canExfiltrate,
     requiresExplicitAuthorization: raw.requiresExplicitAuthorization,
     defaultTrust: requiredText(raw.defaultTrust, `tool_registry.tools[${index}].manifest.defaultTrust`),
+    accessScope: raw.accessScope,
+    sensitiveInputHandling: raw.sensitiveInputHandling,
+    credentialFields: [...raw.credentialFields],
+    targetFields: [...raw.targetFields],
+    subjectFields: [...raw.subjectFields],
+    dataSubjects: [...raw.dataSubjects],
+    purposeBinding: raw.purposeBinding,
+    dataClassification: raw.dataClassification,
   };
 }
 
@@ -759,6 +773,19 @@ function bridgeMetadata() {
     detector_input_fields: DETECTOR_FIELDS,
     setup_context_fields: ["tool_catalog", "tool_registry"],
   };
+}
+
+function applyStaticSemanticOverrides(config) {
+  const baseUrl = process.env.AGENTSENTRY_STATIC_JUDGE_BASE_URL || process.env.AGENTSENTRY_SEMANTIC_BASE_URL;
+  const model = process.env.AGENTSENTRY_STATIC_JUDGE_MODEL || process.env.AGENTSENTRY_SEMANTIC_MODEL;
+  const apiKeyEnv = process.env.AGENTSENTRY_STATIC_JUDGE_API_KEY_ENV || process.env.AGENTSENTRY_SEMANTIC_API_KEY_ENV;
+  const timeoutMs = process.env.AGENTSENTRY_STATIC_JUDGE_TIMEOUT_MS || process.env.AGENTSENTRY_SEMANTIC_TIMEOUT_MS;
+  if (baseUrl) config.semantic.baseUrl = baseUrl;
+  if (model) config.semantic.model = model;
+  if (apiKeyEnv) config.semantic.apiKeyEnv = apiKeyEnv;
+  if (timeoutMs && Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0) {
+    config.semantic.timeoutMs = Math.trunc(Number(timeoutMs));
+  }
 }
 
 function taskSpecSnapshot(taskSpec) {
@@ -911,6 +938,14 @@ async function runSelfTest() {
       canExfiltrate: false,
       requiresExplicitAuthorization: false,
       defaultTrust: "external",
+      accessScope: "explicit_target",
+      sensitiveInputHandling: "none",
+      credentialFields: [],
+      targetFields: ["location"],
+      subjectFields: [],
+      dataSubjects: ["unknown"],
+      purposeBinding: "unknown",
+      dataClassification: "public",
     },
   };
   const registeredCommitment = {
@@ -943,7 +978,7 @@ async function runSelfTest() {
       tool_args: { location: "Paris, France" },
     },
   });
-  assert.equal(registeredRead.normalized_tool, "external_api_read");
+  assert.equal(registeredRead.normalized_tool, policyToolIdForRegisteredDescriptor(registeredDescriptor));
   assert.equal(registeredRead.decision, "allow");
   await handleRequest({ op: "end", session_id: registeredSession });
 

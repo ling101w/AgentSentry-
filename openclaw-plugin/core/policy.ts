@@ -29,6 +29,7 @@ import { clampText, safeStringify as redactSafeStringify } from "./redact.ts";
 import { targetAllowed } from "./security/url.ts";
 import { canonicalizePath, matchAllowedWritePath, matchWorkspaceReadPath } from "./path-security.ts";
 import { isAbsolute, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import {
   activateSemanticIntent,
   beginSemanticAction,
@@ -61,7 +62,7 @@ import {
   type CapabilityAuthorization,
   type TaskSpec,
 } from "./task-spec/index.ts";
-import { resolveToolManifest } from "./tool-manifest.ts";
+import { resolveToolManifest, type ToolSecurityManifest } from "./tool-manifest.ts";
 import {
   addRisk,
   analyzeTrustContent,
@@ -96,6 +97,8 @@ export type Label = {
   trust_label?: TrustLabel;
   risk_vector?: RiskVector;
   tags?: string[];
+  /** Opaque, session-local correlation values for the data subject. */
+  subject_scopes?: string[];
   taint_profile?: TaintProfile;
   provenance_ids?: string[];
 };
@@ -120,6 +123,7 @@ export type IFCBranch = {
   lifetime: "turn" | "session" | "memory" | "expired";
   createdAt: string;
   provenanceIds: string[];
+  subjectScopes?: string[];
   risk: number;
   confidence: number;
 };
@@ -286,7 +290,14 @@ export function updateTaskSpec(state: PolicyState, messages: unknown, config: Pl
   const update = updateAuthorizationState(state.authorizationState, task, config.policy.sensitiveAssets);
   state.authorizationState = update.state;
   state.currentTask = update.state.lastMessage;
-  state.taskSpec = update.state.taskSpec;
+  // Keep the authoritative request available even when the structured
+  // extractor cannot derive a concrete capability from natural language.
+  // An empty TaskSpec must not turn a registered public read into an
+  // unknown-capability approval.  The read result remains untrusted and is
+  // still checked before every sensitive sink.
+  state.taskSpec = update.state.taskSpec.task
+    ? update.state.taskSpec
+    : { ...update.state.taskSpec, task };
   if (update.changed && !["chatter", "confirmation", "data_only"].includes(update.kind)) {
     activateSemanticIntent(state.semanticActionGraph, state.taskSpec);
   }
@@ -534,8 +545,16 @@ function evaluateMutable(
   let risk = riskScoringEnabled ? baseToolRisk(action.tool) : 0;
 
   const taskSpec = state.taskSpec;
-  const assessment = assessAction(action, config);
-  const capabilityAuthorization = authorizeCapability(taskSpec, action, { taskMode: taskSpec.task_mode });
+  const assessment = assessPolicyAction(action, config);
+  const extractedAuthorization = authorizeCapability(taskSpec, action, { taskMode: taskSpec.task_mode });
+  // Capability contracts can prove that a call is a caller-bound, read-only
+  // query. Treat that as a scoped authorization so downstream risk, graph and
+  // dynamic-security stages do not repeatedly reinterpret an already proven
+  // safe read as an unknown high-impact action.
+  const implicitManifestRead = !extractedAuthorization.authorized && manifestAllowsImplicitRead(action, taskSpec);
+  const capabilityAuthorization: CapabilityAuthorization = implicitManifestRead
+    ? { action: "allow", authorized: true, reason: "manifest_bound_read" }
+    : extractedAuthorization;
   let actionGraphNodeId = "";
   try {
     const graphAttempt = beginSemanticAction(state.semanticActionGraph, {
@@ -590,7 +609,7 @@ function evaluateMutable(
     }));
     violations.push("semantic action graph evaluation failed");
   }
-  if (!capabilityAuthorization.authorized && !manifestAllowsUnscopedRead(action) && !allowsImplicitLowRiskRead(action, assessment, capabilityAuthorization.reason)) {
+  if (!capabilityAuthorization.authorized && !allowsImplicitLowRiskRead(action, assessment, capabilityAuthorization.reason)) {
     const verdict = capabilityAuthorization.action === "deny" ? "block" : "require_approval";
     const reason = capabilityAuthorizationReason(capabilityAuthorization.reason, action.tool);
     findings.push(finding("Intent Authorization", "deterministic", verdict, reason, verdict === "block" ? 100 : 45, {
@@ -637,7 +656,8 @@ function evaluateMutable(
     if (memoryFinding.verdict === "block") violations.push(memoryFinding.reason);
   }
 
-  const outsideTaskSpec = taskSpec.forbidden_tools.includes(action.tool) || !taskSpec.allowed_tools.includes(action.tool);
+  const outsideTaskSpec = !implicitManifestRead
+    && (taskSpec.forbidden_tools.includes(action.tool) || !taskSpec.allowed_tools.includes(action.tool));
   if (config.policy.deterministic && outsideTaskSpec && shouldHardBlockTaskMismatch(action, assessment, state)) {
     const reason = authorizationBoundaryReason(action, assessment, "deny");
     violations.push(reason);
@@ -698,6 +718,9 @@ function evaluateMutable(
 
     const taskSpecFindings = taskSpecBoundaryFindings(action, state, config);
     findings.push(...taskSpecFindings);
+
+    const manifestPurposeFindings = manifestPurposeBoundaryFindings(action, state);
+    findings.push(...manifestPurposeFindings);
 
     const dynamicFindings = dynamicSecurityFindingsFor(action, assessment, state.dynamicSecurity, config);
     findings.push(...dynamicFindings);
@@ -921,7 +944,14 @@ function enforcementBypassFinding(lifecycle: ToolResultLifecycle, toolName: stri
   );
 }
 
-export function labelToolResult(toolCallId: string, result: unknown, state: PolicyState, config: PluginConfig, toolName = ""): Label {
+export function labelToolResult(
+  toolCallId: string,
+  result: unknown,
+  state: PolicyState,
+  config: PluginConfig,
+  toolName = "",
+  toolArgs: Record<string, unknown> = {},
+): Label {
   const lifecycle = inspectToolResultLifecycle(state, toolCallId, toolName, "succeeded");
   if (lifecycle.disposition === "duplicate_terminal") {
     return state.toolResultLabels.get(toolCallId) || {
@@ -972,6 +1002,15 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
   const memoryLowTrust = persistentMemoryMatches.some((item) => item.integrity === "untrusted-external" || item.confidentiality === "tenant-secret" || riskMax(item.risk_vector) >= 50);
   const provenanceUntrusted = !toolName || ["external_web", "email_html", "pdf_text", "image_metadata", "webhook", "unknown"].includes(source);
   const maliciousTaint = Boolean(incompleteReason) || memoryLowTrust || analysis.label.tainted || hasInjectionSignal(text) || riskMax(analysis.risk_vector) >= 50;
+  const manifest = resolveToolManifest(toolName);
+  const manifestClassification = manifest?.manifest.dataClassification || "unknown";
+  const subjectScopes = manifest ? subjectScopesForAction(manifest.manifest, {
+    tool: toolName,
+    originalTool: toolName,
+    args: toolArgs,
+    reason: "tool result label",
+  }) : [];
+  fieldProvenance = elevateManifestConfidentiality(fieldProvenance, manifestClassification);
   const label: Label = {
     source: toolCallId ? `tool:${toolCallId}` : "tool:unknown",
     integrity: "untrusted",
@@ -982,9 +1021,15 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
     trust_label: analysis.label,
     risk_vector: analysis.risk_vector,
     tags: unique([...analysis.tags, ...persistentMemoryMatches.flatMap((item) => item.tags), ...(memoryLowTrust ? ["persistent_memory_low_trust"] : []), ...(incompleteReason ? ["analysis_incomplete"] : [])]),
+    subject_scopes: subjectScopes,
     taint_profile: taintProfileFromLabel(analysis.label) || undefined,
     provenance_ids: fieldProvenance.map((field) => field.id),
   };
+  if (manifestClassification === "secret") label.confidentiality = "secret";
+  if (manifestClassification === "user_private" && label.confidentiality === "public") label.confidentiality = "internal";
+  if (manifestClassification === "user_private" || manifestClassification === "secret") {
+    label.tags = unique([...(label.tags || []), `manifest:${manifestClassification}`]);
+  }
   if (provenanceUntrusted || maliciousTaint || analysis.label.confidentiality !== "public") {
     const branchStatus: IFCBranch["status"] = provenanceUntrusted || maliciousTaint || analysis.label.confidentiality !== "public"
       ? "isolated"
@@ -997,6 +1042,7 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
       confidentiality: ifcConfidentiality(analysis.label.confidentiality),
       purpose: state.taskSpec.capabilities.map((item) => `${item.resourceType}:${item.action}`).join("+") || "unscoped",
       summary: `${source}; ${branchStatus}; ${analysis.label.integrity}/${analysis.label.confidentiality}; ${analysis.tags.slice(0, 4).join(",")}`,
+      subjectScopes,
       lifetime: source === "memory" ? "memory" : "turn",
       createdAt: new Date().toISOString(),
       provenanceIds: fieldProvenance.map((field) => field.id),
@@ -1004,7 +1050,28 @@ export function labelToolResult(toolCallId: string, result: unknown, state: Poli
       confidence: Math.max(0, Math.min(1, (Math.max(riskMax(analysis.risk_vector), ...persistentMemoryMatches.map((item) => riskMax(item.risk_vector))) || 0) / 100)),
     });
   }
-  if (!provenanceUntrusted && !maliciousTaint && analysis.label.confidentiality === "public") {
+  if ((manifestClassification === "user_private" || manifestClassification === "secret")
+    && analysis.label.confidentiality === "public") {
+    rememberIFCBranch(state, {
+      id: `ifc:manifest:${toolCallId || toolName || "tool"}:${Date.now()}:${state.ifcBranches.length}`,
+      source,
+      status: "isolated",
+      integrity: provenanceUntrusted ? "untrusted-external" : "system-trusted",
+      confidentiality: manifestClassification === "secret" ? "tenant-secret" : "user-private",
+      purpose: state.taskSpec.capabilities.map((item) => `${item.resourceType}:${item.action}`).join("+") || "unscoped",
+      summary: `tool manifest classification: ${manifestClassification}`,
+      subjectScopes,
+      lifetime: source === "memory" ? "memory" : "turn",
+      createdAt: new Date().toISOString(),
+      provenanceIds: fieldProvenance.map((field) => field.id),
+      risk: manifestClassification === "secret" ? 70 : 35,
+      confidence: 1,
+    });
+  }
+  if (!provenanceUntrusted
+    && !maliciousTaint
+    && analysis.label.confidentiality === "public"
+    && (manifestClassification === "public" || manifestClassification === "unknown")) {
     promoteIFCBranches(state, source, fieldProvenance.flatMap((field) => [field.id, ...field.parentIds]));
   }
   if (maliciousTaint || analysis.label.confidentiality === "secret") {
@@ -1061,7 +1128,7 @@ export function resultFindings(
   state: PolicyState,
   config: PluginConfig,
   toolName = "",
-  options: { error?: unknown } = {},
+  options: { error?: unknown; toolArgs?: Record<string, unknown> } = {},
 ): DetectionFinding[] {
   const failed = options.error !== undefined && options.error !== null && Boolean(String(options.error).trim());
   const lifecycle = inspectToolResultLifecycle(state, toolCallId, toolName, failed ? "failed" : "succeeded");
@@ -1071,13 +1138,13 @@ export function resultFindings(
     return [];
   }
   if (!config.detection.enabled) {
-    labelToolResult(toolCallId, result, state, config, toolName);
+    labelToolResult(toolCallId, result, state, config, toolName, options.toolArgs);
     return lifecycle.disposition === "executed_after_block"
       ? [enforcementBypassFinding(lifecycle, toolName)]
       : [];
   }
   const { analysis } = analyzePolicyResult(toolCallId, result, config, toolName);
-  const label = labelToolResult(toolCallId, result, state, config, toolName);
+  const label = labelToolResult(toolCallId, result, state, config, toolName, options.toolArgs);
   const findings = [...analysis.findings];
   if (lifecycle.disposition === "executed_after_block") {
     findings.unshift(enforcementBypassFinding(lifecycle, toolName));
@@ -1285,6 +1352,9 @@ export function deriveTaskSpec(task: string, sensitiveAssets: string[]): TaskSpe
 }
 
 function capabilityAuthorizationReason(reason: string, tool: string): string {
+  if (reason === "unknown_tool_capability" && (resolveToolManifest(tool) || resolveToolManifest(normalizeToolName(tool)))) {
+    return `已注册工具 ${tool} 的能力已完成基线登记，但当前任务没有覆盖它的目标或副作用范围，需要确认`;
+  }
   const messages: Record<string, string> = {
     explicit_user_denial: `用户明确禁止 ${tool} 动作`,
     missing_explicit_authorization: `${tool} 缺少明确授权，属于授权不明确`,
@@ -1515,6 +1585,7 @@ function trajectoryFindingsFor(action: AgentSentryAction, state: PolicyState, co
     ));
   }
   const assessment = assessAction(action, config);
+  findings.push(...sensitiveReadAggregationFindings(action, state));
   const blockedTaint = config.policy.taintFeedback ? taintFlowForAction(action, assessment, state) : null;
   if (blockedTaint) {
     findings.push(finding("Evidence Feedback", "heuristic", "require_approval", "taint profile tightens this high-risk sink", 20, {
@@ -1534,6 +1605,87 @@ function trajectoryFindingsFor(action: AgentSentryAction, state: PolicyState, co
     }));
   }
   return findings;
+}
+
+function sensitiveReadAggregationFindings(action: AgentSentryAction, state: PolicyState): DetectionFinding[] {
+  const envelope = resolveToolManifest(action.originalTool) || resolveToolManifest(action.tool);
+  if (!envelope || !isReadOnlyManifest(envelope.manifest)) return [];
+  const currentClassification = envelope.manifest.dataClassification;
+  if (currentClassification !== "user_private" && currentClassification !== "secret") return [];
+
+  const prior = [...state.toolResultLabels.values()]
+    .filter((label) => (label.tags || []).some((tag) => tag === "manifest:user_private" || tag === "manifest:secret"));
+  const currentScopes = subjectScopesForAction(envelope.manifest, action);
+  if (sameSubjectScope(currentScopes, prior)) return [];
+  const sourceCount = new Set(prior.map((label) => label.source)).size;
+  if (!sourceCount) return [];
+
+  return [finding(
+    "Data Aggregation",
+    "deterministic",
+    "require_approval",
+    "连续读取已形成敏感数据聚合，需要确认当前读取是否仍符合最小必要范围",
+    currentClassification === "secret" || sourceCount >= 2 ? 45 : 30,
+    {
+      basis: "cross_tool_sensitive_read_aggregation",
+      current_classification: currentClassification,
+      prior_sensitive_source_count: sourceCount,
+      prior_classifications: unique(prior.flatMap((label) => (label.tags || [])
+        .filter((tag) => tag.startsWith("manifest:"))
+        .map((tag) => tag.slice("manifest:".length)))),
+      current_subject_scope_count: currentScopes.length,
+      prior_subject_scope_count: unique(prior.flatMap((label) => label.subject_scopes || [])).length,
+    },
+  )];
+}
+
+function subjectScopesForAction(manifest: ToolSecurityManifest, action: AgentSentryAction): string[] {
+  if (manifest.dataSubjects?.length === 1 && manifest.dataSubjects[0] === "caller") return ["caller"];
+  const values = (manifest.subjectFields || []).flatMap((field) => readValuesAtField(action.args[field]));
+  return unique(values.map((value) => createHash("sha256")
+    .update(`agentsentry-subject-v1\u0000${value.normalize("NFKC").trim()}`, "utf8")
+    .digest("base64url")
+    .slice(0, 24)));
+}
+
+function sameSubjectScope(currentScopes: string[], prior: Label[]): boolean {
+  if (!currentScopes.length || !prior.length) return false;
+  const priorScopes = prior.map((label) => label.subject_scopes || []);
+  if (priorScopes.some((scopes) => !scopes.length)) return false;
+  return priorScopes.every((scopes) => scopes.some((scope) => currentScopes.includes(scope)));
+}
+
+function isReadOnlyManifest(manifest: ToolSecurityManifest): boolean {
+  return manifest.sideEffects.length > 0
+    && manifest.sideEffects.every((effect) => effect === "none" || effect === "file_read" || effect === "network_read")
+    && !manifest.canExfiltrate;
+}
+
+function elevateManifestConfidentiality(
+  fields: ReturnType<typeof extractFieldProvenance>,
+  classification: ToolSecurityManifest["dataClassification"] | "unknown",
+): ReturnType<typeof extractFieldProvenance> {
+  if (classification !== "user_private" && classification !== "secret") return fields;
+  const confidentiality = classification === "secret" ? "secret" : "internal";
+  return fields.map((field) => {
+    if (labelConfidentialityRank(field.confidentiality) >= labelConfidentialityRank(confidentiality)) return field;
+    return {
+      ...field,
+      confidentiality,
+      transformations: unique([...field.transformations, `manifest:${classification}`]),
+      trustLabel: { ...field.trustLabel, confidentiality },
+      semanticClaims: field.semanticClaims.map((claim) => ({
+        ...claim,
+        confidentiality: labelConfidentialityRank(claim.confidentiality) >= labelConfidentialityRank(confidentiality)
+          ? claim.confidentiality
+          : confidentiality,
+      })),
+    };
+  });
+}
+
+function labelConfidentialityRank(value: "public" | "internal" | "secret"): number {
+  return value === "secret" ? 3 : value === "internal" ? 2 : 1;
 }
 
 function toolFrequencyKey(action: AgentSentryAction): string {
@@ -1737,6 +1889,76 @@ function taskSpecBoundaryFindings(action: AgentSentryAction, state: PolicyState,
         denied_tools: taskSpec.denied_tools.slice(0, 8),
         forbidden_tools: taskSpec.forbidden_tools.slice(0, 8),
       },
+    },
+  )];
+}
+
+/**
+ * Enforces the part of a signed tool contract that cannot be inferred from a
+ * prompt: a private lookup about another person must name a subject and be
+ * attached to an active user task. It deliberately produces approval rather
+ * than denial. A legitimate investigation can continue after its scope is
+ * made explicit; an unscoped dossier-building workflow cannot silently grow.
+ */
+function manifestPurposeBoundaryFindings(action: AgentSentryAction, state: PolicyState): DetectionFinding[] {
+  const envelope = resolveToolManifest(action.originalTool) || resolveToolManifest(action.tool);
+  if (!envelope) return [];
+  const manifest = envelope.manifest;
+  const privateData = manifest.dataClassification === "user_private" || manifest.dataClassification === "secret";
+  const thirdPartyData = manifest.dataSubjects?.some((subject) => subject === "named_subject" || subject === "third_party");
+  if (!privateData || !thirdPartyData || manifest.purposeBinding !== "task_bound") return [];
+
+  const mode = state.taskSpec.task_mode || "unknown";
+  if (!state.taskSpec.task.trim() || mode === "chatter" || mode === "data_only") {
+    return [finding(
+      "Intent Authorization",
+      "deterministic",
+      "require_approval",
+      "私密第三方数据查询缺少可执行的用户任务范围，需要说明业务目的和数据主体",
+      40,
+      {
+        tool: action.tool,
+        tool_id: manifest.toolId,
+        data_classification: manifest.dataClassification,
+        data_subjects: manifest.dataSubjects,
+        purpose_binding: manifest.purposeBinding,
+        task_mode: mode,
+      },
+    )];
+  }
+
+  const targetFields = manifest.targetFields || [];
+  if (!targetFields.length) {
+    return [finding(
+      "Tool Manifest",
+      "deterministic",
+      "require_approval",
+      "私密第三方数据工具缺少主体绑定字段声明，无法验证本次查询对象是否属于当前任务",
+      35,
+      {
+        tool: action.tool,
+        tool_id: manifest.toolId,
+        data_classification: manifest.dataClassification,
+        data_subjects: manifest.dataSubjects,
+        missing_contract_field: "targetFields",
+      },
+    )];
+  }
+
+  const subjectValues = targetFields.flatMap((field) => readValuesAtField(action.args[field]));
+  if (subjectValues.length) return [];
+  return [finding(
+    "Intent Authorization",
+    "deterministic",
+    "require_approval",
+    "私密第三方数据查询未提供工具契约声明的主体标识，需要确认查询对象",
+    35,
+    {
+      tool: action.tool,
+      tool_id: manifest.toolId,
+      target_fields: targetFields,
+      data_classification: manifest.dataClassification,
+      data_subjects: manifest.dataSubjects,
     },
   )];
 }
@@ -1954,12 +2176,17 @@ function isRuntimeAuditFinding(item: DetectionFinding): boolean {
 
 function taintRisk(action: AgentSentryAction, state: PolicyState, config: PluginConfig): number {
   let risk = 0;
-  const assessment = assessAction(action, config);
+  const assessment = assessPolicyAction(action, config);
   const argsText = safeStringify(action.args).toLowerCase();
   const blockedTaint = config.policy.taintFeedback ? taintFlowForAction(action, assessment, state) : null;
-  if (action.tool !== "memory_write" && config.policy.sensitiveAssets.some((asset) => asset && argsText.includes(asset.toLowerCase()))) risk += 45;
+  if (!isManifestBoundReadRequestForAction(action) && action.tool !== "memory_write" && config.policy.sensitiveAssets.some((asset) => asset && argsText.includes(asset.toLowerCase()))) risk += 45;
   if (blockedTaint) risk += Math.min(45, Math.max(20, Math.trunc(blockedTaint.confidence / 2)));
   return Math.min(risk, 80);
+}
+
+function isManifestBoundReadRequestForAction(action: AgentSentryAction): boolean {
+  const envelope = resolveToolManifest(action.originalTool) || resolveToolManifest(action.tool);
+  return Boolean(envelope && isManifestBoundReadRequest(action, envelope.manifest));
 }
 
 function provenanceRiskForAction(action: AgentSentryAction, state: PolicyState): Record<string, unknown> | null {
@@ -2258,13 +2485,88 @@ function normalizeArgs(tool: string, params: Record<string, unknown>): Record<st
   return args;
 }
 
-function manifestAllowsUnscopedRead(action: AgentSentryAction): boolean {
+function manifestAllowsImplicitRead(action: AgentSentryAction, taskSpec: TaskSpec): boolean {
   const envelope = resolveToolManifest(action.originalTool) || resolveToolManifest(action.tool);
   if (!envelope) return false;
   const manifest = envelope.manifest;
-  return !manifest.requiresExplicitAuthorization
+  const readOnly = manifest.sideEffects.every((effect) => effect === "none" || effect === "file_read" || effect === "network_read");
+  if (!readOnly || manifest.canExfiltrate) return false;
+  const targetInScope = manifestTargetIsInsideTaskScope(action, manifest, taskSpec);
+  const publicReadWithoutConcreteTarget = manifest.dataClassification === "public"
+    && manifest.accessScope === "explicit_target"
+    && manifest.sensitiveInputHandling === "none"
+    && Boolean(taskSpec.task?.trim())
+    && !taskSpec.denied_tools.includes(action.tool);
+  // A user request such as "verify this article" can authorize a public
+  // lookup without naming the provider's exact endpoint. The response is
+  // still an untrusted ingress and cannot authorize a later sink.
+  if (!targetInScope && !publicReadWithoutConcreteTarget) return false;
+  if (targetInScope) return true;
+  if (!manifest.requiresExplicitAuthorization) return true;
+
+  // An onboarded non-secret read produces data for the current task and has
+  // no execution, persistence or egress capability. Its result remains
+  // labeled and is checked again before any later sink. This prevents a
+  // missing natural-language tool name from turning ordinary research or
+  // account inspection into repeated approval prompts.
+  if (manifest.dataClassification === "public"
+    && manifest.sensitiveInputHandling !== "business_payload"
+    && ["caller_bound", "explicit_target", "unscoped"].includes(manifest.accessScope || "unknown")) {
+    return true;
+  }
+
+  // A caller-bound query can use an authentication credential to retrieve the
+  // current caller's own data. It cannot name another subject, carry a
+  // business payload, write state, or send data away. The contract is signed
+  // at onboarding and therefore does not rely on the tool name.
+  return manifest.accessScope === "caller_bound"
+    && manifest.sensitiveInputHandling === "authentication_only"
     && !manifest.canExfiltrate
-    && manifest.sideEffects.every((effect) => effect === "none" || effect === "file_read" || effect === "network_read");
+    && readOnly
+    && isManifestBoundReadRequest(action, manifest);
+}
+
+function manifestTargetIsInsideTaskScope(action: AgentSentryAction, manifest: ToolSecurityManifest, taskSpec: TaskSpec): boolean {
+  const targetFields = manifest.targetFields || [];
+  if (!targetFields.length) return true;
+  const values = targetFields.flatMap((field) => readValuesAtField(action.args[field]));
+  const networkTargets = values.filter((value) => /^https?:\/\//i.test(value));
+  if (!networkTargets.length) return true;
+  return networkTargets.every((target) => targetAllowed(target, taskSpec.allowed_targets));
+}
+
+function readValuesAtField(value: unknown): string[] {
+  if (typeof value === "string" && value.trim()) return [value.trim()];
+  if (Array.isArray(value)) return value.flatMap(readValuesAtField);
+  return [];
+}
+
+function assessPolicyAction(action: AgentSentryAction, config: PluginConfig): ActionAssessment {
+  const assessment = assessAction(action, config);
+  const envelope = resolveToolManifest(action.originalTool) || resolveToolManifest(action.tool);
+  if (!envelope || !isManifestBoundReadRequest(action, envelope.manifest)) return assessment;
+
+  // Authentication material passed only to the verified provider must not be
+  // treated as an attempted exfiltration. Payload, write, execution and
+  // cross-subject fields fail isManifestBoundReadRequest and retain the
+  // regular high-risk assessment.
+  return {
+    ...assessment,
+    highRisk: assessment.persistence || assessment.systemMutation || assessment.dangerousCommand,
+    sensitive: false,
+    reasons: assessment.reasons.filter((reason) => reason !== "arguments reference sensitive asset"),
+  };
+}
+
+function isManifestBoundReadRequest(action: AgentSentryAction, manifest: ToolSecurityManifest): boolean {
+  if (manifest.accessScope !== "caller_bound" || manifest.sensitiveInputHandling !== "authentication_only") return false;
+  if (manifest.canExfiltrate || manifest.sideEffects.some((effect) => !["none", "file_read", "network_read"].includes(effect))) return false;
+  const credentials = new Set((manifest.credentialFields || []).map((field) => field.toLowerCase()));
+  const targets = new Set((manifest.targetFields || []).map((field) => field.toLowerCase()));
+  if (!credentials.size) return false;
+  const keys = Object.keys(action.args).filter((key) => !key.startsWith("__"));
+  if (!keys.length || !keys.some((key) => credentials.has(key.toLowerCase()))) return false;
+  return keys.every((key) => credentials.has(key.toLowerCase()) || targets.has(key.toLowerCase()));
 }
 
 function readStringValues(args: Record<string, unknown>, keys: string[]): string[] {

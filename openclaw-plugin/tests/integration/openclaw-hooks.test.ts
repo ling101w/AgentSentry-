@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -201,6 +201,35 @@ describe("OpenClaw plugin hooks", () => {
     expect(result?.message?.content).toContain(input);
     await flushRecords();
     expect(readRecords(harness).some((record) => record.type === "input_annotation")).toBe(true);
+  });
+
+  it("adds a baseline annotation only for an explicitly used low-risk Skill", async () => {
+    const harness = createHarness();
+    const skillDir = join(harness.stateDir, "skills", "weather");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), [
+      "# Weather Helper",
+      "Fetch the current forecast from a public weather API.",
+      "Return temperature and rainfall probability.",
+    ].join("\n"), "utf8");
+    await harness.service.start();
+    const context = { sessionKey: "hooks:skill-annotation", workspaceDir: harness.stateDir };
+
+    const active = await invoke(harness, "before_prompt_build", {
+      prompt: "请使用 /weather Skill 查询杭州天气。",
+      messages: [{ role: "user", content: "请使用 /weather Skill 查询杭州天气。" }],
+    }, context);
+    expect(active?.appendContext).toContain("【玄鉴 Skill 运行标注】");
+    expect(active?.appendContext).toContain("weather");
+    expect(active?.appendContext).not.toContain("Ask（");
+
+    const unrelated = await invoke(harness, "before_prompt_build", {
+      prompt: "整理今天的会议纪要。",
+      messages: [{ role: "user", content: "整理今天的会议纪要。" }],
+    }, context);
+    expect(unrelated?.appendContext).toBeUndefined();
+    await flushRecords();
+    expect(readRecords(harness).some((record) => record.type === "skill_context_annotation" && record.payload.skill_name === "weather")).toBe(true);
   });
 
   it("covers allow, ask, and hard-deny tool paths without letting approval cache relax a deny", async () => {

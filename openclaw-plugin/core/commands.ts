@@ -140,7 +140,7 @@ export function formatStatus(config: PluginConfig, runtime: CommandRuntime): str
     `Taint feedback: ${config.policy.taintFeedback ? "enabled" : "disabled"}`,
     `Workspace provenance scan: ${config.provenanceScan.enabled ? "enabled" : "disabled"}`,
     `Detection: ${config.detection.enabled ? "enabled" : "disabled"}`,
-    `Semantic judge: ${config.semantic.enabled ? `${config.semantic.model} via ${config.semantic.apiKeyEnv} (ambiguous actions only, ${Math.min(2000, Math.max(500, config.semantic.timeoutMs))}ms budget)` : "disabled"}`,
+    `Semantic judge: ${config.semantic.enabled ? `${config.semantic.model} via ${config.semantic.apiKeyEnv} (${config.semantic.mode} mode, ${Math.min(10000, Math.max(500, config.semantic.timeoutMs))}ms budget)` : "disabled"}`,
     `Notifications: ${config.notifications.enableProactiveNotifications ? config.notifications.minSeverity : "disabled"}`,
     `Response cover: ${config.responseCover.enabled ? "enabled" : "disabled"}`,
     "Commands:",

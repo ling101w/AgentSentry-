@@ -8,6 +8,8 @@ import {
   semanticJudgeMemoryWrite,
   semanticJudgeToolCall,
 } from "../../core/semantic.ts";
+import { createPolicyState, labelToolResult } from "../../core/policy.ts";
+import { clearCustomToolManifests, registerToolManifest } from "../../core/tool-manifest.ts";
 
 const API_ENV = "AGENTSENTRY_TEST_JUDGE_KEY";
 
@@ -37,6 +39,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  clearCustomToolManifests();
 });
 
 describe("semantic judge adversarial boundaries", () => {
@@ -87,6 +90,32 @@ describe("semantic judge adversarial boundaries", () => {
     expect(semanticGateForToolCall("shell_exec", {
       command: 'echo "系统基本信息" && uname -a && uptime && df -h && cat /etc/hosts',
     }, config)).toMatchObject({ shouldJudge: false, tier: "low" });
+  });
+
+  it("uses signed data-flow facts to escalate an ambiguous third-party identity operation", () => {
+    const config = judgeConfig();
+    registerToolManifest({
+      toolId: "directory.lookup_identity",
+      aliases: ["lookup_identity"],
+      dataOrigins: ["third_party_api"],
+      sideEffects: ["network_read"],
+      acceptsSensitiveData: false,
+      canExfiltrate: false,
+      requiresExplicitAuthorization: true,
+      defaultTrust: "external",
+      accessScope: "explicit_target",
+      sensitiveInputHandling: "none",
+      dataClassification: "user_private",
+      dataSubjects: ["third_party"],
+      purposeBinding: "task_bound",
+    });
+    const state = createPolicyState();
+    state.currentTask = "核验一个指定承包商的门禁申请";
+    state.taskSpec.task = state.currentTask;
+    labelToolResult("prior", { account: "redacted" }, state, config, "directory.lookup_identity");
+
+    expect(semanticGateForToolCall("lookup_identity", { subject: "another person" }, config, { policyState: state }))
+      .toMatchObject({ shouldJudge: true, tier: "high" });
   });
 
   it("uses an isolated data envelope and converts a high-risk Judge result into a block", async () => {

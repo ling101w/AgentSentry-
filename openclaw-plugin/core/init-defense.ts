@@ -8,6 +8,7 @@ import { clampText } from "./redact.ts";
 import { analyzeTrustContent, finding, riskMax } from "./trust.ts";
 
 export type FoundationComponentKind = "skill" | "plugin" | "config" | "memory" | "workspace";
+export type FoundationAdmission = "allow_limited" | "review" | "quarantine";
 
 export type FoundationComponent = {
   id: string;
@@ -24,6 +25,8 @@ export type FoundationComponent = {
   };
   risk: number;
   trust: "trusted" | "review" | "blocked";
+  admission: FoundationAdmission;
+  admissionReason: string;
 };
 
 export type InitializationScanResult = {
@@ -33,6 +36,19 @@ export type InitializationScanResult = {
   blocked: boolean;
   scanned_at: string;
 };
+
+/**
+ * A quarantined executable component is handled at its own load/call boundary.
+ * Only compromised state that can directly alter the active context blocks a
+ * whole session before a tool is selected.
+ */
+export function foundationFindingBlocksSession(finding: Pick<DetectionFinding, "verdict" | "evidence">): boolean {
+  if (finding.verdict !== "block") return false;
+  const component = finding.evidence.component;
+  if (!component || typeof component !== "object" || Array.isArray(component)) return true;
+  const kind = String((component as Record<string, unknown>).kind || "");
+  return kind === "config" || kind === "memory" || kind === "workspace";
+}
 
 const COMPONENT_FILES = new Set([
   "skill.md",
@@ -133,11 +149,8 @@ function inspectComponent(root: string, filePath: string, config: PluginConfig):
     const manifestPath = nearestManifest(filePath);
     const signed = manifestPath ? manifestHasSecuritySignature(manifestPath) : false;
     const risk = Math.max(riskMax(analysis.risk_vector), explicitCapabilitiesRisk(explicitCapabilities, kind));
-    const trust = analysis.findings.some((item) => item.verdict === "block") || risk >= 85
-      ? "blocked"
-      : risk >= 45 || !manifestPath && (kind === "skill" || kind === "plugin")
-        ? "review"
-        : "trusted";
+    const admission = admissionForComponent({ kind, risk, manifestPath, signed, capabilities: explicitCapabilities, analysis });
+    const trust = admission.admission === "quarantine" ? "blocked" : admission.admission === "review" ? "review" : "trusted";
     return {
       id: componentId(root, filePath, raw),
       kind,
@@ -153,6 +166,8 @@ function inspectComponent(root: string, filePath: string, config: PluginConfig):
       },
       risk,
       trust,
+      admission: admission.admission,
+      admissionReason: admission.reason,
     };
   } catch {
     return null;
@@ -171,16 +186,18 @@ function componentFindings(component: FoundationComponent, config: PluginConfig)
       manifest: component.manifest,
       trust: component.trust,
       risk: component.risk,
+      admission: component.admission,
+      admission_reason: component.admissionReason,
     },
   };
-  if ((component.kind === "skill" || component.kind === "plugin") && !component.manifest.present) {
+  if ((component.kind === "skill" || component.kind === "plugin") && !component.manifest.present && component.admission !== "allow_limited") {
     findings.push(finding("Foundation Integrity", "deterministic", "require_approval", "初始化防线发现组件缺少安全清单，需要人工确认能力边界", 45, evidence));
   }
   if ((component.kind === "skill" || component.kind === "plugin") && component.manifest.present && !component.manifest.signed) {
     findings.push(finding("Foundation Integrity", "heuristic", "require_approval", "初始化防线发现组件清单未携带玄鉴签名，按第三方组件处理", 35, evidence));
   }
-  if (component.risk >= 85 || component.trust === "blocked") {
-    findings.push(finding("Foundation Integrity", "deterministic", "block", "初始化防线发现高危组件行为，禁止直接装载或执行", 100, evidence));
+  if (component.admission === "quarantine") {
+    findings.push(finding("Foundation Integrity", "deterministic", "block", "初始化防线发现高危组件行为，已加入隔离清单，禁止直接装载或执行", 100, evidence));
   } else if (component.risk >= 45) {
     findings.push(finding("Foundation Integrity", "heuristic", "require_approval", "初始化防线发现组件存在敏感能力或高影响副作用，需要审批", 55, evidence));
   }
@@ -191,6 +208,39 @@ function componentFindings(component: FoundationComponent, config: PluginConfig)
     findings.push(finding("Foundation Integrity", "deterministic", "pass", "OpenClaw 配置文件已纳入初始化完整性盘点", 0, evidence));
   }
   return findings.slice(0, config.initializationDefense.maxComponents);
+}
+
+function admissionForComponent(input: {
+  kind: FoundationComponentKind;
+  risk: number;
+  manifestPath: string;
+  signed: boolean;
+  capabilities: string[];
+  analysis: ReturnType<typeof analyzeTrustContent>;
+}): { admission: FoundationAdmission; reason: string } {
+  const blockedByContent = input.analysis.findings.some((item) => item.verdict === "block");
+  if (blockedByContent || input.risk >= 85) {
+    return { admission: "quarantine", reason: "检测到高危能力组合或明确恶意行为" };
+  }
+  if (input.kind === "skill" && isLowRiskSkill(input.capabilities, input.risk)) {
+    return {
+      admission: "allow_limited",
+      reason: input.signed ? "签名 Skill 的能力边界为低风险" : "本地低风险 Skill 未发现进程执行、持久化、敏感读取或外部写入能力",
+    };
+  }
+  if (input.signed && input.risk < 45) {
+    return { admission: "allow_limited", reason: "签名组件的能力边界处于低风险范围" };
+  }
+  return {
+    admission: "review",
+    reason: input.manifestPath ? "组件具有待确认能力或未完成签名验证" : "组件缺少可验证的能力清单",
+  };
+}
+
+function isLowRiskSkill(capabilities: string[], risk: number): boolean {
+  if (risk >= 45) return false;
+  const restricted = new Set(["network_write", "process_exec", "persistent_state", "sensitive_read", "file_write"]);
+  return capabilities.every((capability) => !restricted.has(capability));
 }
 
 function isComponentCandidate(filePath: string): boolean {
@@ -247,13 +297,20 @@ function manifestHasSecuritySignature(path: string): boolean {
 
 function declaredCapabilities(filePath: string, text: string): string[] {
   const capabilities = new Set<string>();
-  const lower = text.toLowerCase();
-  if (/\b(readfile|readfilesync|fs\.read|cat\s+|open\()/i.test(text)) capabilities.add("file_read");
-  if (/\b(writefile|writefilesync|fs\.write|sed\s+-i|>\s*[\w./~-]+)/i.test(text)) capabilities.add("file_write");
-  if (/\b(fetch|axios|http\.request|curl|wget|post\(|put\(|patch\()/i.test(text)) capabilities.add("network_write");
+  const reads = /\b(readFileSync|readFile|fs\.read|cat\s+|open\(|loads?|reads?|读取|加载|访问)\b/i.test(text);
+  const writes = /\b(writeFileSync|writeFile|fs\.write|sed\s+-i|tee\s+|saves?|writes?|写入|保存)\b/i.test(text);
+  const networkClient = /\b(fetch|axios|https?\.request|curl|wget|XMLHttpRequest|requests?\.(?:get|post|put|patch))\b/i.test(text);
+  const networkWrite = /\b(posts?|puts?|patch(?:es)?|uploads?|sends?|transmits?|webhook|提交|上传|发送|外发)\b/i.test(text)
+    || /-X\s*(?:POST|PUT|PATCH)\b/i.test(text)
+    || /method\s*[:=]\s*["'](?:POST|PUT|PATCH)["']/i.test(text);
+  const sensitiveResource = /(?:openclaw\.json|\.env\b|\.ssh\/(?:id_|config)|id_(?:rsa|ed25519|ecdsa|dsa)|process\.env\.|credentials?|gateway(?:Auth)?Token|私钥|凭据|认证令牌)/i.test(text);
+
+  if (reads) capabilities.add("file_read");
+  if (writes) capabilities.add("file_write");
+  if (networkClient) capabilities.add(networkWrite ? "network_write" : "network_read");
   if (/\b(exec|spawn|child_process|bash|powershell|cmd\.exe)\b/i.test(text)) capabilities.add("process_exec");
-  if (/(cron|systemd|startup|launchagent|开机启动|定时任务)/i.test(text)) capabilities.add("persistent_state");
-  if (/(openclaw\.json|\.env|id_rsa|id_ed25519|token|api[_ -]?key|secret|password|凭据|密钥)/i.test(lower)) capabilities.add("sensitive_read");
+  if (/(cron|crontab|systemd|startup|launchagent|开机启动|定时任务)/i.test(text) && writes) capabilities.add("persistent_state");
+  if (reads && sensitiveResource) capabilities.add("sensitive_read");
   if (capabilities.has("sensitive_read")) capabilities.add("file_read");
   if (basename(filePath).toLowerCase() === "skill.md" && !capabilities.size) capabilities.add("declared_skill");
   return [...capabilities].sort();

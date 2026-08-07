@@ -149,7 +149,7 @@ const GATEWAY_HIJACK_PATTERNS = [
 ];
 
 const SKILL_EXFIL_PATTERNS = [
-  /\b(?:fetch|axios|curl|wget|https?\.request|XMLHttpRequest)\b[\s\S]{0,220}(?:token|secret|openclaw\.json|gateway|credential|password|\.env|\.ssh|identity|config|session)/i,
+  /\b(?:fetch|axios|curl|wget|https?\.request|XMLHttpRequest)\b[\s\S]{0,220}(?:token|secret|openclaw\.json|gateway|credential|password|\.env|\.ssh|identity|\bconfig(?:uration)?\b|\bsession\b)/i,
   /\b(?:readFileSync|readFile|fs\.|openSync|createReadStream)\b[\s\S]{0,220}(?:openclaw\.json|\.env|id_(?:rsa|ed25519|ecdsa|dsa)|secret|token|password|credential|\.openclaw)/i,
   /(?:openclaw\.json|\.openclaw|\.env|\.ssh|id_(?:rsa|ed25519|ecdsa|dsa))[\s\S]{0,260}\b(?:fetch|axios|curl|wget|https?\.request|XMLHttpRequest)\b/i,
 ];

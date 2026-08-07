@@ -6,7 +6,8 @@ import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
 import { handleAgentSentryCommand } from "./core/commands.ts";
 import { detectMessageContent, detectToolCall, serializeToolParams } from "./core/detect.ts";
 import { annotateUserInputForRisk } from "./core/input-annotation.ts";
-import { scanInitializationSurface } from "./core/init-defense.ts";
+import { foundationFindingBlocksSession, scanInitializationSurface } from "./core/init-defense.ts";
+import { annotateActiveSkills } from "./core/skill-context.ts";
 import {
   buildPersistentMemoryLabel,
   loadPersistentMemoryLabels,
@@ -304,7 +305,9 @@ const plugin = {
       const foundationDigest = digestForFoundationScan(foundation);
       if (foundationDigest !== state.lastFoundationDigest) {
         state.lastFoundationDigest = foundationDigest;
-        if (foundation.findings.some((finding) => finding.verdict === "block")) state.policyState.provenanceBlocked = true;
+        // A quarantined Skill or plugin is component-local. Global session blocking
+        // is reserved for a compromised configuration, memory, or workspace source.
+        if (foundation.findings.some(foundationFindingBlocksSession)) state.policyState.provenanceBlocked = true;
         for (const finding of foundation.findings) addFinding(state, finding, { workspaceDir, foundation_scan: true });
         const severity: RecordSeverity = foundation.blocked ? "danger" : foundation.findings.length ? "warning" : "success";
         plugin.store!.add({
@@ -321,8 +324,35 @@ const plugin = {
             blocked: foundation.blocked,
             component_count: foundation.components.length,
             components: foundation.components.slice(0, 80),
+            admissions: foundation.components.reduce<Record<string, number>>((counts, component) => {
+              counts[component.admission] = (counts[component.admission] || 0) + 1;
+              return counts;
+            }, {}),
             omitted_components: Math.max(0, foundation.components.length - 80),
             findings: foundation.findings,
+          },
+        });
+      }
+      const skillAnnotations = annotateActiveSkills(
+        foundation,
+        event as Record<string, unknown>,
+        ctx as Record<string, unknown>,
+        promptText,
+      );
+      for (const annotation of skillAnnotations) {
+        plugin.store!.add({
+          run_id: state.runId,
+          session_key: state.sessionKey,
+          type: "skill_context_annotation",
+          layer: "Foundation Integrity",
+          severity: "info",
+          title: "Skill baseline annotation attached",
+          summary: `${annotation.skillName}; ${annotation.admission}; ${annotation.skillPath}`,
+          payload: {
+            component_id: annotation.componentId,
+            skill_name: annotation.skillName,
+            skill_path: annotation.skillPath,
+            admission: annotation.admission,
           },
         });
       }
@@ -367,10 +397,11 @@ const plugin = {
             recommended_action: promptAnnotation.recommendedAction,
           },
         });
-        return {
-          appendContext: promptAnnotation.annotated,
-        };
       }
+      const appendedContext = [promptAnnotation?.annotated, ...skillAnnotations.map((annotation) => annotation.text)]
+        .filter((item): item is string => Boolean(item?.trim()))
+        .join("\n\n");
+      if (appendedContext) return { appendContext: appendedContext };
     });
 
     api.on("llm_input", (event, ctx) => {
@@ -813,7 +844,7 @@ const plugin = {
         state.policyState,
         plugin.config!,
         event?.toolName || "",
-        { error: event?.error },
+        { error: event?.error, toolArgs: (event?.params || {}) as Record<string, unknown> },
       );
       const checkpointKey = runtimeCheckpointKey(event?.toolCallId || "", event?.toolName || "");
       const runtimeCheckpoint = state.runtimeCheckpoints.get(checkpointKey) || null;
@@ -1000,6 +1031,7 @@ const plugin = {
           sha256: component.sha256,
           trust: component.trust,
           risk: component.risk,
+          admission: component.admission,
         })),
         findings: scan.findings.map((finding) => ({
           layer: finding.layer,

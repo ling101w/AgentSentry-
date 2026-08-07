@@ -111,8 +111,16 @@ function shouldRefineTaskSpec(taskSpec: TaskSpec, config: PluginConfig): boolean
 async function callTaskSpecRefiner(taskSpec: TaskSpec, config: PluginConfig): Promise<SemanticTaskSpecRefinement | null> {
   const apiKey = resolveRefinementApiKey(config.semantic.apiKeyEnv);
   if (!apiKey) return null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const refinement = await callTaskSpecRefinerOnce(taskSpec, config, apiKey);
+    if (refinement) return refinement;
+  }
+  return null;
+}
+
+async function callTaskSpecRefinerOnce(taskSpec: TaskSpec, config: PluginConfig, apiKey: string): Promise<SemanticTaskSpecRefinement | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.min(3500, Math.max(700, config.semantic.timeoutMs)));
+  const timeout = setTimeout(() => controller.abort(), Math.min(10000, Math.max(700, config.semantic.timeoutMs)));
   try {
     const response = await fetch(`${config.semantic.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
@@ -124,6 +132,7 @@ async function callTaskSpecRefiner(taskSpec: TaskSpec, config: PluginConfig): Pr
       body: JSON.stringify({
         model: config.semantic.model,
         temperature: 0,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "system",

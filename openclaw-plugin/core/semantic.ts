@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { AgentSentryAction, PolicyDecision, TaskSpec } from "./policy.ts";
+import { resolveToolManifest } from "./tool-manifest.ts";
 
 export type SemanticJudgeGate = {
   shouldJudge: boolean;
@@ -16,7 +17,7 @@ export type SemanticJudgeGate = {
   reasons: string[];
 };
 
-type SemanticJudgeContext = {
+export type SemanticJudgeContext = {
   policyState?: PolicyState;
   phase?: "message" | "tool_call" | "memory_write" | "provenance" | "task_spec";
   relatedFindings?: DetectionFinding[];
@@ -167,7 +168,7 @@ export async function semanticJudgeToolCall(
   context: SemanticJudgeContext = {},
 ): Promise<DetectionFinding[]> {
   if (!config.semantic.enabled || !config.semantic.judgeToolCalls) return [];
-  const gate = semanticGateForToolCall(toolName, params, config);
+  const gate = semanticGateForToolCall(toolName, params, config, context);
   if (!gate.shouldJudge) return [];
   const contextPack = semanticContextPack({
     phase: "tool_call",
@@ -355,6 +356,7 @@ export function semanticGateForToolCall(
   toolName: string,
   params: Record<string, unknown>,
   config: PluginConfig,
+  context: SemanticJudgeContext = {},
 ): SemanticJudgeGate {
   if (!config.semantic.enabled || !config.semantic.judgeToolCalls || config.semantic.mode === "off") return gate(false, "off", "semantic judge disabled");
   if (config.semantic.mode === "full") return gate(true, "full", "semantic judge mode is full");
@@ -366,6 +368,8 @@ export function semanticGateForToolCall(
   const url = firstString(params, ["url", "href", "endpoint", "target"]);
   const recipient = firstString(params, ["recipient", "to", "email", "target"]).toLowerCase();
   const readOnlySkillDocLookup = isReadOnlyInstalledSkillDocLookup(toolName, params);
+  const manifest = resolveToolManifest(toolName)?.manifest;
+  const state = context.policyState;
   const reasons: string[] = [];
 
   if (securitySignal(text)) reasons.push("security-sensitive text or decoded payload");
@@ -377,11 +381,41 @@ export function semanticGateForToolCall(
   if (/memory|remember|webhook|wake/i.test(lowerTool)) reasons.push("memory or replay surface");
   if (/write|delete|remove|move|chmod|chown/i.test(lowerTool) && (reasons.length || path)) reasons.push("write or mutation capable tool");
 
+  // A manifest is a signed onboarding fact. It provides a language-independent
+  // escalation path for tools whose names and parameters look harmless.
+  if (manifest?.dataClassification === "secret") reasons.push("tool manifest declares secret output data");
+  if (manifest?.dataClassification === "user_private" && hasPriorSensitiveData(state)) {
+    reasons.push("private-data read follows an existing sensitive data flow");
+  }
+  if (manifest?.dataSubjects?.some((subject) => subject === "third_party" || subject === "named_subject")
+    && manifest.purposeBinding === "task_bound"
+    && hasMaterialTaskScope(state)) {
+    reasons.push("task-bound third-party data operation needs purpose consistency review");
+  }
+  if (manifest?.dataOrigins.some((origin) => origin === "external_web" || origin === "email" || origin === "third_party_api")
+    && manifest.sideEffects.some((effect) => effect === "network_write" || effect === "process_exec" || effect === "persistent_state")) {
+    reasons.push("external-origin tool combines intake with material side effects");
+  }
+
   if (reasons.some((reason) => /shell|sensitive|persistent|security-sensitive|memory|replay/.test(reason))) {
     return gate(true, "high", ...reasons);
   }
   if (reasons.length) return gate(true, "medium", ...reasons);
   return gate(false, "low", "low-risk tool call handled by deterministic policy");
+}
+
+function hasPriorSensitiveData(state: PolicyState | undefined): boolean {
+  if (!state) return false;
+  return Array.from(state.toolResultLabels.values()).some((label) =>
+    label.confidentiality === "internal"
+    || label.confidentiality === "secret"
+    || (label.tags || []).some((tag) => tag === "manifest:user_private" || tag === "manifest:secret"),
+  );
+}
+
+function hasMaterialTaskScope(state: PolicyState | undefined): boolean {
+  if (!state) return false;
+  return Boolean(state.taskSpec.task.trim() && state.taskSpec.task_mode !== "chatter" && state.taskSpec.task_mode !== "data_only");
 }
 
 export function semanticGateForMessage(content: unknown, config: PluginConfig): SemanticJudgeGate {
@@ -654,11 +688,33 @@ function semanticContextPack(input: {
     },
     candidate_action: input.toolName ? {
       tool: input.toolName,
+      tool_manifest: manifestProjection(input.toolName),
       normalized_params: redactForJudge(input.params || {}, Math.trunc(max / 2)),
     } : null,
     candidate_content: input.content !== undefined ? boundedJudgeText(input.content, Math.trunc(max / 2)) : null,
   };
   return boundedJudgeText(pack, max);
+}
+
+function manifestProjection(toolName: string): Record<string, unknown> | null {
+  const envelope = resolveToolManifest(toolName);
+  if (!envelope) return null;
+  const manifest = envelope.manifest;
+  return {
+    tool_id: manifest.toolId,
+    data_origins: manifest.dataOrigins,
+    side_effects: manifest.sideEffects,
+    data_classification: manifest.dataClassification || "unknown",
+    data_subjects: manifest.dataSubjects || ["unknown"],
+    purpose_binding: manifest.purposeBinding || "unknown",
+    accepts_sensitive_data: manifest.acceptsSensitiveData,
+    can_exfiltrate: manifest.canExfiltrate,
+    requires_explicit_authorization: manifest.requiresExplicitAuthorization,
+    access_scope: manifest.accessScope || "unknown",
+    sensitive_input_handling: manifest.sensitiveInputHandling || "unknown",
+    default_trust: manifest.defaultTrust,
+    signature_verified: true,
+  };
 }
 
 function redactForJudge(value: unknown, maxChars: number): unknown {
@@ -736,6 +792,14 @@ async function callJudge(prompt: JudgeEnvelope, config: PluginConfig): Promise<J
   const apiKey = resolveSemanticApiKey(config.semantic.apiKeyEnv);
   if (!apiKey) return null;
 
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await callJudgeOnce(prompt, config, apiKey);
+    if (result) return result;
+  }
+  return null;
+}
+
+async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey: string): Promise<JudgeResult | null> {
   const baseUrl = config.semantic.baseUrl.replace(/\/+$/, "");
   const url = `${baseUrl}/chat/completions`;
   const controller = new AbortController();
@@ -751,6 +815,7 @@ async function callJudge(prompt: JudgeEnvelope, config: PluginConfig): Promise<J
       body: JSON.stringify({
         model: config.semantic.model,
         temperature: 0,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "system",
@@ -782,7 +847,7 @@ async function callJudge(prompt: JudgeEnvelope, config: PluginConfig): Promise<J
 }
 
 function semanticBudgetMs(config: PluginConfig): number {
-  return Math.min(2000, Math.max(500, config.semantic.timeoutMs));
+  return Math.min(10000, Math.max(500, config.semantic.timeoutMs));
 }
 
 function markSemanticCacheHit(findings: DetectionFinding[], cacheKey: string): DetectionFinding[] {
