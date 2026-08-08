@@ -1,0 +1,228 @@
+/* The alternate palette changes surfaces and accents while keeping risk colors semantic. */
+html[data-theme="graphite"] {
+  color-scheme: dark;
+  --app-bg: #111319;
+  --nav-bg: #171923;
+  --panel: #1d1f29;
+  --panel-raised: #252735;
+  --panel-soft: #20222d;
+  --panel-deep: #0d0f15;
+  --line: #393d4d;
+  --line-soft: #2b2f3d;
+  --line-strong: #5b6680;
+  --text: #f0eff6;
+  --text-soft: #cccbd8;
+  --muted: #9a9bab;
+  --faint: #747789;
+  --blue: #9aa7ff;
+  --cyan: #75d7d2;
+  --purple: #c5a4ff;
+}
+
+html[data-theme="graphite"] body,
+html[data-theme="graphite"] .app-shell,
+html[data-theme="graphite"] .incident-console,
+html[data-theme="graphite"] .operations-console {
+  background: var(--app-bg);
+}
+
+html[data-theme="graphite"] .app-header,
+html[data-theme="graphite"] .side-navigation {
+  background: var(--nav-bg);
+  border-color: var(--line);
+}
+
+html[data-theme="graphite"] .brand-lockup,
+html[data-theme="graphite"] .side-footer {
+  border-color: var(--line-soft);
+}
+
+html[data-theme="graphite"] .side-navigation a {
+  color: var(--text-soft);
+}
+
+html[data-theme="graphite"] .side-navigation a:hover {
+  background: #222532;
+  color: var(--text);
+}
+
+html[data-theme="graphite"] .side-navigation a.active {
+  border-color: #6572b0;
+  background: rgba(91, 102, 170, 0.24);
+  color: var(--text);
+}
+
+html[data-theme="graphite"] .header-icon-button,
+html[data-theme="graphite"] .operator-menu,
+html[data-theme="graphite"] .panel-icon-button,
+html[data-theme="graphite"] .compact-button,
+html[data-theme="graphite"] .live-button,
+html[data-theme="graphite"] .protection-control {
+  border-color: var(--line);
+  background: var(--panel-soft);
+  color: var(--text-soft);
+}
+
+html[data-theme="graphite"] .header-icon-button:hover:not(:disabled),
+html[data-theme="graphite"] .operator-menu:hover:not(:disabled),
+html[data-theme="graphite"] .panel-icon-button:hover:not(:disabled),
+html[data-theme="graphite"] .compact-button:hover:not(:disabled),
+html[data-theme="graphite"] .live-button:hover:not(:disabled),
+html[data-theme="graphite"] .protection-control:hover {
+  border-color: var(--line-strong);
+  background: #2b2d3a;
+  color: var(--text);
+}
+
+html[data-theme="graphite"] .header-icon-button {
+  background: transparent;
+  border-color: transparent;
+}
+
+html[data-theme="graphite"] .notification-button {
+  border-left-color: var(--line-soft);
+  border-right-color: var(--line-soft);
+}
+
+html[data-theme="graphite"] .workspace-source,
+html[data-theme="graphite"] .workspace-intro,
+html[data-theme="graphite"] .workspace-loading,
+html[data-theme="graphite"] .workspace-empty,
+html[data-theme="graphite"] .workspace-error,
+html[data-theme="graphite"] .overview-kpi-band,
+html[data-theme="graphite"] .incident-flow {
+  background: var(--panel-deep);
+}
+
+html[data-theme="graphite"] .workspace-intro {
+  background: rgba(23, 25, 35, 0.97);
+  border-color: var(--line);
+}
+
+html[data-theme="graphite"] .workspace-section,
+html[data-theme="graphite"] .panel-frame,
+html[data-theme="graphite"] .incident-footer {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+html[data-theme="graphite"] .workspace-section h3,
+html[data-theme="graphite"] .section-heading h3,
+html[data-theme="graphite"] .workspace-intro h2,
+html[data-theme="graphite"] .panel-titlebar h2,
+html[data-theme="graphite"] .summary-heading h2,
+html[data-theme="graphite"] .timeline-heading h2,
+html[data-theme="graphite"] .inspector-titlebar h2 {
+  color: var(--text);
+}
+
+html[data-theme="graphite"] .workspace-primary {
+  border-color: #7c70c6;
+  background: #51458f;
+  color: #faf9ff;
+}
+
+html[data-theme="graphite"] .workspace-primary:hover:not(:disabled) {
+  border-color: #a59afa;
+  background: #6255aa;
+}
+
+html[data-theme="graphite"] .workspace-secondary,
+html[data-theme="graphite"] .workspace-ghost {
+  background: #252735;
+  color: var(--text-soft);
+}
+
+html[data-theme="graphite"] .workspace-secondary:hover:not(:disabled),
+html[data-theme="graphite"] .workspace-ghost:hover:not(:disabled) {
+  background: #303342;
+  color: var(--text);
+}
+
+html[data-theme="graphite"] .graph-viewport {
+  background: #151720;
+}
+
+html[data-theme="graphite"] .graph-grid::before {
+  background-image: linear-gradient(to right, rgba(154, 167, 255, 0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(154, 167, 255, 0.08) 1px, transparent 1px);
+}
+
+html[data-theme="graphite"] .semantic-node {
+  border-color: #555a70;
+  background: #242632;
+  color: var(--text);
+}
+
+html[data-theme="graphite"] .semantic-node.selected {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--panel-deep), 0 0 0 4px rgba(154, 167, 255, 0.58), 0 0 22px rgba(154, 167, 255, 0.2);
+}
+
+html[data-theme="graphite"] .inspector {
+  border-color: #566078;
+  box-shadow: 0 0 18px rgba(74, 81, 117, 0.2);
+}
+
+html[data-theme="graphite"] .inspector-titlebar {
+  border-bottom-color: var(--line-soft);
+}
+
+html[data-theme="graphite"] .workspace-input,
+html[data-theme="graphite"] .workspace-select,
+html[data-theme="graphite"] .workspace-textarea,
+html[data-theme="graphite"] .summary-metric,
+html[data-theme="graphite"] .evidence-snippet,
+html[data-theme="graphite"] .semantic-node,
+html[data-theme="graphite"] .mode-option {
+  border-color: var(--line);
+  background: #252735;
+  color: var(--text);
+}
+
+html[data-theme="graphite"] .workspace-input:focus,
+html[data-theme="graphite"] .workspace-select:focus,
+html[data-theme="graphite"] .workspace-textarea:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(154, 167, 255, 0.14);
+}
+
+html[data-theme="graphite"] .context-block,
+html[data-theme="graphite"] .request-context-item,
+html[data-theme="graphite"] .evidence-record,
+html[data-theme="graphite"] .alert-row,
+html[data-theme="graphite"] .session-row,
+html[data-theme="graphite"] .compact-row,
+html[data-theme="graphite"] .stack-row,
+html[data-theme="graphite"] .rule-row {
+  background: rgba(48, 51, 66, 0.68);
+}
+
+html[data-theme="graphite"] .context-block:hover,
+html[data-theme="graphite"] .request-context-item:hover,
+html[data-theme="graphite"] .evidence-record:hover,
+html[data-theme="graphite"] .alert-row:hover,
+html[data-theme="graphite"] .session-row:hover,
+html[data-theme="graphite"] .compact-row:hover {
+  background: rgba(71, 75, 98, 0.72);
+}
+
+html[data-theme="graphite"] .workspace-table-wrap,
+html[data-theme="graphite"] .workspace-table tbody tr:hover,
+html[data-theme="graphite"] .workspace-table tbody tr.selected {
+  background: #20222d;
+}
+
+html[data-theme="graphite"] .workspace-table th {
+  background: #272a38;
+  color: var(--text-soft);
+}
+
+html[data-theme="graphite"] .theme-toggle {
+  color: var(--blue);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="graphite"] * {
+    transition-duration: 0.01ms !important;
+  }
+}

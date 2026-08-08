@@ -79,3 +79,15 @@ final result: passed
 The workspace reuses the attack-monitor shell, density, color semantics, navigation, and responsive behavior. The QA pass corrected native button backgrounds in alert and identity-risk rows, removed danger color from zero-value attack metrics, and constrained long section metadata on mobile.
 
 No actionable P0, P1, or P2 workspace finding remains.
+
+## Theme Toggle QA (2026-08-08)
+
+- source visual truth path: existing semantic action graph and operations workspace screens
+- implementation screenshots: `artifacts/design-qa/theme-overview-midnight-1680.png`, `artifacts/design-qa/theme-overview-graphite-1680.png`, `artifacts/design-qa/theme-root-graphite-1680.png`, `artifacts/design-qa/theme-overview-graphite-390.png`
+- states: default midnight, graphite after click, graphite after reload, graphite on attack monitor, graphite on 390px mobile viewport
+- primary interactions tested: theme button click, icon and accessible label update, localStorage persistence, cross-route persistence, and mobile viewport rendering
+- console errors checked: 0 runtime errors during the theme interaction pass
+- visual result: the graphite palette changes shell, panel, graph, and control surfaces while retaining red/amber/green risk semantics
+- responsive result: no horizontal overflow on the verified 1680px and 390px states
+
+No actionable P0, P1, or P2 theme finding remains.

@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+const indexHtml = readFileSync(new URL("../../public/index.html", import.meta.url), "utf8");
 const workspaceHtml = readFileSync(new URL("../../public/workspace.html", import.meta.url), "utf8");
 const workspaceJs = readFileSync(new URL("../../public/workspace.js", import.meta.url), "utf8");
 const appJs = readFileSync(new URL("../../public/app.js", import.meta.url), "utf8");
+const themeJs = readFileSync(new URL("../../public/theme.js", import.meta.url), "utf8");
+const themesCss = readFileSync(new URL("../../public/themes.css", import.meta.url), "utf8");
 const dashboardTs = readFileSync(new URL("../../server/dashboard.ts", import.meta.url), "utf8");
 
 describe("玄鉴 operations workspace", () => {
@@ -47,5 +50,15 @@ describe("玄鉴 operations workspace", () => {
     expect(workspaceJs).toContain('data-action="revoke-tool"');
     expect(workspaceJs).toContain('data-action="restore-tool"');
     expect(appJs).toContain('new URLSearchParams(window.location.search).get("session")');
+  });
+
+  it("exposes a persistent theme switch on both investigation shells", () => {
+    expect(workspaceHtml).toContain("data-theme-toggle");
+    expect(workspaceHtml).toContain('/themes.css?v=20260808-15');
+    expect(workspaceHtml).toContain('/theme.js?v=20260808-15');
+    expect(indexHtml).toContain("data-theme-toggle");
+    expect(themeJs).toContain("agentsentry-console-theme");
+    expect(themeJs).toContain("localStorage.setItem");
+    expect(themesCss).toContain('html[data-theme="graphite"]');
   });
 });
