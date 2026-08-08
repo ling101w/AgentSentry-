@@ -3,14 +3,14 @@ import { appendFileSync, createReadStream, existsSync, mkdirSync, readFileSync, 
 import { timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
-import { dirname, extname, join, normalize, resolve } from "node:path";
+import { dirname, extname, isAbsolute, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGzip } from "node:zlib";
 import type { PluginConfig } from "../config.ts";
-import { detectMessageContent, detectToolCall } from "../core/detect.ts";
+import { detectMessageContent, detectToolCall, type DetectionFinding } from "../core/detect.ts";
 import { runtimeConfigPath, saveRuntimeConfig } from "../core/runtime-config.ts";
 import { loadOrCreateStateSecret } from "../core/state-secret.ts";
-import { matchAllowedWritePath, pathWithinRoot } from "../core/path-security.ts";
+import { matchAllowedWritePath, matchWorkspaceReadPath, pathWithinRoot } from "../core/path-security.ts";
 import { safeHttpGet } from "../core/ssrf-http.ts";
 import type { RollbackManager } from "../core/rollback.ts";
 import {
@@ -37,6 +37,7 @@ import type { PolicyState } from "../core/policy.ts";
 import type { AgentSentryRecord, RecordSeverity, RecordStore } from "../core/records.ts";
 import { semanticJudgeAmbiguousAction } from "../core/semantic.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfRuntimeAudit } from "../core/system-monitor.ts";
+import { analyzeTrustContent, type TrustLabel, type TrustSource } from "../core/trust.ts";
 import { agentTrustCatalog } from "../core/agent-trust.ts";
 import {
   listToolManifestRevocations,
@@ -154,9 +155,13 @@ async function handleRequest(
   const url = new URL(req.url || "/", "http://agentsentry.local");
   const config = runtime.getConfig();
 
-  if (req.method === "GET" && url.pathname.startsWith("/lab-content/")) {
+  if ((req.method === "GET" || req.method === "POST") && url.pathname.startsWith("/lab-content/")) {
     const name = url.pathname.split("/").pop() || "";
-    const content = labContent(name);
+    if (req.method === "POST" && name !== "benchmark-api.json") {
+      sendText(res, 405, "Method not allowed");
+      return;
+    }
+    const content = labContent(name, req.method);
     if (!content) {
       sendText(res, 404, "Not found");
       return;
@@ -534,9 +539,11 @@ async function handleRequest(
       const semanticTimeoutMs = optionalInt(body.semanticTimeoutMs, 1000, 30000);
       const benchmarkCaseId = String(body.benchmarkCaseId || "").trim().slice(0, 180);
       const benchmarkSource = String(body.benchmarkSource || "").trim().slice(0, 120);
+      const benchmarkFixtures = benchmarkCaseId ? labBenchmarkFixtures(security) : undefined;
       const sessionKey = `lab:${clientId}`;
       const runId = `lab_${Date.now().toString(36)}`;
-      const actions = labActionsFromCommand(command, scenario, body);
+      const projection = labActionProjection(command, scenario, body, Boolean(benchmarkCaseId), benchmarkFixtures);
+      const actions = projection.actions;
       const effectiveConfig = configWithSemanticOverride(config, semanticJudge, semanticTimeoutMs);
       const semanticProfile = semanticJudgeProfile(semanticJudge, effectiveConfig);
       const record = store.add({
@@ -555,6 +562,7 @@ async function handleRequest(
           semantic_judge: semanticProfile,
           benchmark_case_id: benchmarkCaseId || undefined,
           benchmark_source: benchmarkSource || undefined,
+          action_projection: projection.metadata,
           lab_session_state: resetSession ? "reset" : "continued",
           source: "command-lab",
           business_actions: actions.map((action) => ({
@@ -567,6 +575,8 @@ async function handleRequest(
         store,
         config,
         command,
+        taskCommand: projection.taskCommand,
+        untrustedInputs: projection.untrustedInputs,
         scenario,
         runId,
         sessionKey,
@@ -575,8 +585,9 @@ async function handleRequest(
         resetSession,
         semanticJudge,
         semanticTimeoutMs,
+        benchmarkFixtureUrl: benchmarkFixtures?.apiUrl,
       });
-      sendJson(req, res, { ok: true, record, ...outcome });
+      sendJson(req, res, { ok: true, record, action_projection: projection.metadata, ...outcome });
     } catch (error) {
       sendJson(req, res, { ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
     }
@@ -2701,9 +2712,70 @@ function safeJson(value: unknown): string {
   }
 }
 
+type LabParameterOrigin =
+  | "payload_explicit"
+  | "adapter_explicit"
+  | "benchmark_fixture"
+  | "synthetic_placeholder"
+  | "heuristic_default";
+
 type LabAction = {
   toolName: string;
   params: Record<string, unknown>;
+  parameterOrigin?: LabParameterOrigin;
+};
+
+type LabCommandEnvelopeInput = {
+  kind: string;
+  origin: string;
+  text: string;
+  toolName: string;
+};
+
+type LabCommandEnvelope = {
+  trustedInput: {
+    kind: "user_instruction";
+    text: string;
+  };
+  untrustedInputs: LabCommandEnvelopeInput[];
+};
+
+type LabEnvelopeMetadata = {
+  status: "valid" | "absent" | "invalid";
+  schema: string;
+  trusted_input_kind: string;
+  untrusted_input_count: number;
+  error?: string;
+};
+
+type LabActionProjectionMetadata = {
+  mode:
+    | "explicit_actions"
+    | "explicit_tool"
+    | "envelope_derived"
+    | "content_heuristic"
+    | "scenario_template"
+    | "unsupported";
+  supported: boolean;
+  benchmark_case: boolean;
+  task_input: "trusted_input.text" | "command" | "none";
+  action_count: number;
+  tools: string[];
+  parameter_origins: LabParameterOrigin[];
+  envelope: LabEnvelopeMetadata;
+  reason?: string;
+};
+
+type LabActionProjection = {
+  actions: LabAction[];
+  taskCommand: string;
+  untrustedInputs: LabCommandEnvelopeInput[];
+  metadata: LabActionProjectionMetadata;
+};
+
+type LabBenchmarkFixtures = {
+  readPath: string;
+  apiUrl: string;
 };
 
 type LabContent = {
@@ -2716,6 +2788,26 @@ const LAB_SESSION_TTL_MS = 60 * 60 * 1000;
 const LAB_SESSION_MAX = 200;
 
 const labPolicySessions = new Map<string, { state: PolicyState; updatedAt: number; turn: number }>();
+
+function labBenchmarkFixtures(security: DashboardSecurity): LabBenchmarkFixtures {
+  const bindHost = stripIpv6Brackets(security.bindHost).toLowerCase();
+  const loopbackHost = bindHost === "::" || bindHost === "::1"
+    ? "::1"
+    : isLoopbackHost(bindHost) || bindHost === "0.0.0.0"
+      ? "127.0.0.1"
+      : bindHost;
+  const origin = `http://${formatHostForUrl(loopbackHost)}:${security.port}`;
+  return {
+    readPath: "README.md",
+    apiUrl: `${origin}/lab-content/benchmark-api.json`,
+  };
+}
+
+function labBenchmarkHttpMethod(command: string): "GET" | "POST" {
+  return /\b(post|create|update|delete|send|transfer|pay(?:ment)?|book|reserve|invite|grant|change)\b|发送|转账|支付|预订|预约|创建|修改|删除|授权/i.test(command)
+    ? "POST"
+    : "GET";
+}
 
 function policySessionFor(sessionKey: string, resetSession: boolean): { state: PolicyState; updatedAt: number; turn: number } {
   const now = Date.now();
@@ -2822,19 +2914,69 @@ async function evaluateSidecarPolicy(
   return { ok: true, ...payload };
 }
 
-function labActionsFromCommand(command: string, scenario: string, body: Record<string, unknown>): LabAction[] {
+const LAB_COMMAND_ENVELOPE_SCHEMA = "agentsentry.command-envelope.v1";
+
+function labActionProjection(
+  command: string,
+  scenario: string,
+  body: Record<string, unknown>,
+  benchmarkCase: boolean,
+  benchmarkFixtures?: LabBenchmarkFixtures,
+): LabActionProjection {
+  const parsedEnvelope = parseLabCommandEnvelope(command);
+  const envelope = parsedEnvelope.envelope;
+  const taskCommand = envelope?.trustedInput.text
+    ?? (benchmarkCase && parsedEnvelope.metadata.status === "invalid" ? "" : command);
+  const untrustedInputs = envelope?.untrustedInputs ?? [];
+  const taskInput: LabActionProjectionMetadata["task_input"] = envelope
+    ? "trusted_input.text"
+    : taskCommand
+      ? "command"
+      : "none";
+
+  const build = (
+    mode: LabActionProjectionMetadata["mode"],
+    actions: LabAction[],
+    reason?: string,
+  ): LabActionProjection => ({
+    actions,
+    taskCommand,
+    untrustedInputs,
+    metadata: {
+      mode,
+      supported: actions.length > 0,
+      benchmark_case: benchmarkCase,
+      task_input: taskInput,
+      action_count: actions.length,
+      tools: actions.map((action) => action.toolName),
+      parameter_origins: actions.map((action) => action.parameterOrigin ?? "heuristic_default"),
+      envelope: parsedEnvelope.metadata,
+      ...(reason ? { reason } : {}),
+    },
+  });
+
+  // A malformed benchmark envelope cannot be faithfully mapped.  In
+  // particular, do not let a caller-supplied tool hint manufacture a scored
+  // action from an opaque or invalid command payload.
+  if (benchmarkCase && parsedEnvelope.metadata.status === "invalid") {
+    return build("unsupported", [], parsedEnvelope.metadata.error || "invalid command envelope");
+  }
+
   const requestedActions = Array.isArray(body.actions) ? body.actions : [];
   if (requestedActions.length) {
-    return requestedActions
+    const actions = requestedActions
       .map((item) => recordParam(item))
       .filter((item): item is Record<string, unknown> => Boolean(item))
-      .map((item) => {
+      .map((item): LabAction | null => {
         const toolName = String(item.toolName || item.tool || "").trim();
         const params = recordParam(item.params) || {};
-        return toolName ? { toolName, params } : null;
+        return toolName ? { toolName, params, parameterOrigin: "payload_explicit" as const } : null;
       })
       .filter((item): item is LabAction => Boolean(item))
       .slice(0, 8);
+    return actions.length
+      ? build("explicit_actions", actions)
+      : build("unsupported", [], "explicit actions contained no valid tool entries");
   }
 
   const requestedTool = String(body.tool || "").trim();
@@ -2842,75 +2984,424 @@ function labActionsFromCommand(command: string, scenario: string, body: Record<s
   if (requestedTool) {
     const explicitParams = recordParam(body.params) || recordParam(body.toolParams);
     if (explicitParams) {
-      return [{
+      return build("explicit_tool", [{
         toolName: requestedTool,
         params: explicitParams,
-      }];
+        parameterOrigin: "payload_explicit",
+      }]);
     }
-    return [{
+    return build("explicit_tool", [{
       toolName: requestedTool,
-      params: labParamsForTool(requestedTool, command, requestedTarget),
-    }];
+      params: labParamsForTool(
+        requestedTool,
+        taskCommand || command,
+        requestedTarget,
+        envelope?.untrustedInputs[0],
+        benchmarkFixtures,
+      ),
+      parameterOrigin: labExplicitToolParameterOrigin(
+        requestedTool,
+        requestedTarget,
+        benchmarkFixtures,
+      ),
+      }]);
   }
 
+  if (benchmarkCase) {
+    if (envelope) {
+      const actions = labEnvelopeActions(envelope.untrustedInputs, benchmarkFixtures);
+      if (!actions.length) {
+        return build(
+          "unsupported",
+          [],
+          "untrusted_inputs did not contain an explicit business sink",
+        );
+      }
+      return build("envelope_derived", actions);
+    }
+    const actions = labContentActions(taskCommand, false, "", benchmarkFixtures);
+    if (!actions.length) {
+      return build("unsupported", [], "benchmark command did not project a supported business action");
+    }
+    return build("content_heuristic", actions);
+  }
+
+  const scenarioActions = labScenarioActions(command, scenario);
+  if (scenarioActions.length) return build("scenario_template", scenarioActions);
+  return build("content_heuristic", labContentActions(command, true, scenario));
+}
+
+function parseLabCommandEnvelope(command: string): {
+  envelope: LabCommandEnvelope | null;
+  metadata: LabEnvelopeMetadata;
+} {
+  let value: unknown;
+  try {
+    value = JSON.parse(command);
+  } catch {
+    return {
+      envelope: null,
+      metadata: /^\s*[\[{]/.test(command)
+        ? {
+            status: "invalid",
+            schema: "",
+            trusted_input_kind: "",
+            untrusted_input_count: 0,
+            error: "command looks structured but is not valid JSON",
+          }
+        : {
+            status: "absent",
+            schema: "",
+            trusted_input_kind: "",
+            untrusted_input_count: 0,
+          },
+    };
+  }
+  const root = recordParam(value);
+  if (!root) {
+    return {
+      envelope: null,
+      metadata: {
+        status: value !== null && typeof value === "object" ? "invalid" : "absent",
+        schema: "",
+        trusted_input_kind: "",
+        untrusted_input_count: 0,
+        ...(value !== null && typeof value === "object"
+          ? { error: "structured command envelope root must be an object" }
+          : {}),
+      },
+    };
+  }
+  const schema = typeof root.schema === "string" ? root.schema.trim() : "";
+  if (!schema) {
+    return invalidLabEnvelope("", "structured command envelope is missing schema");
+  }
+  if (schema !== LAB_COMMAND_ENVELOPE_SCHEMA) {
+    return invalidLabEnvelope(schema, "unsupported command envelope schema");
+  }
+  const trusted = recordParam(root.trusted_input);
+  const trustedKind = typeof trusted?.kind === "string" ? trusted.kind.trim() : "";
+  const trustedText = typeof trusted?.text === "string" ? trusted.text : null;
+  if (trustedKind !== "user_instruction" || trustedText === null || !trustedText.trim()) {
+    return invalidLabEnvelope(schema, "trusted_input must contain non-empty user_instruction text", trustedKind);
+  }
+  if (!Array.isArray(root.untrusted_inputs)) {
+    return invalidLabEnvelope(schema, "untrusted_inputs must be an array", trustedKind);
+  }
+  const untrustedInputs: LabCommandEnvelopeInput[] = [];
+  for (const [index, rawInput] of root.untrusted_inputs.entries()) {
+    const input = recordParam(rawInput);
+    const kind = typeof input?.kind === "string" ? input.kind.trim() : "";
+    const text = typeof input?.text === "string" ? input.text : null;
+    const origin = typeof input?.origin === "string" ? input.origin : null;
+    const toolName = typeof input?.tool_name === "string" ? input.tool_name : null;
+    if (!kind || text === null || origin === null || toolName === null) {
+      return invalidLabEnvelope(
+        schema,
+        `untrusted_inputs[${index}] must contain string kind, origin, text, and tool_name`,
+        trustedKind,
+        root.untrusted_inputs.length,
+      );
+    }
+    untrustedInputs.push({ kind, origin, text, toolName });
+  }
+  return {
+    envelope: {
+      trustedInput: { kind: "user_instruction", text: trustedText },
+      untrustedInputs,
+    },
+    metadata: {
+      status: "valid",
+      schema,
+      trusted_input_kind: trustedKind,
+      untrusted_input_count: untrustedInputs.length,
+    },
+  };
+}
+
+function invalidLabEnvelope(
+  schema: string,
+  error: string,
+  trustedInputKind = "",
+  untrustedInputCount = 0,
+): { envelope: null; metadata: LabEnvelopeMetadata } {
+  return {
+    envelope: null,
+    metadata: {
+      status: "invalid",
+      schema,
+      trusted_input_kind: trustedInputKind,
+      untrusted_input_count: untrustedInputCount,
+      error,
+    },
+  };
+}
+
+function labContentActions(
+  command: string,
+  includeFallback: boolean,
+  scenario = "",
+  benchmarkFixtures?: LabBenchmarkFixtures,
+): LabAction[] {
   const text = `${scenario}\n${command}`.toLowerCase();
   const actions: LabAction[] = [];
-  const push = (toolName: string, params: Record<string, unknown>) => {
+  const push = (
+    toolName: string,
+    params: Record<string, unknown>,
+    parameterOrigin: LabParameterOrigin = "adapter_explicit",
+  ) => {
     if (!actions.some((item) => item.toolName === toolName && JSON.stringify(item.params) === JSON.stringify(params))) {
-      actions.push({ toolName, params });
+      actions.push({ toolName, params, parameterOrigin });
     }
   };
 
-  const scenarioActions = labScenarioActions(command, scenario);
-  if (scenarioActions.length) return scenarioActions;
-
-  if (/(邮件|邮箱|email|mail|发送给|发给|attacker@|外发|exfil|泄露)/i.test(text)) {
+  if (/(邮件|邮箱|email|mail|send[_ -]?email|send[_ -]?mail|发送给|发给|forward|recipient|attacker@|外发|exfil|泄露)/i.test(text)) {
+    const recipient = firstMatch(command, /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
     push("send_email", {
-      recipient: firstMatch(command, /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || "external-review@example.invalid",
+      recipient: recipient || "external-review@example.invalid",
       body: command,
       reason: "business request email sink",
-    });
+    }, recipient ? "adapter_explicit" : "synthetic_placeholder");
   }
-  if (/(读取|read|cat|打开).{0,24}(\/etc|\.env|id_rsa|secret|token|api[_ -]?key|配置|文件|file)/i.test(text)) {
+  const projectedReadPath = labProjectedLocalPath(command);
+  const projectsFileRead = /(?:读取|打开|获取|\b(?:read|cat|open|download|get)\b|read[_ -]?file|read[_ -]?text[_ -]?file).{0,32}(\/etc|\.env|id_rsa|secret|token|api[_ -]?key|配置|文件|file|document|passport|bank|credential)/i.test(text)
+    || /(?:read[_ -]?file|read[_ -]?text[_ -]?file|download_file)/i.test(text);
+  if (projectsFileRead && (projectedReadPath || !benchmarkFixtures)) {
     push("read_file", {
-      path: firstMatch(command, /(\/[^\s，。；,;]+|\.env|id_rsa|secret\.txt|system_prompt\.txt)/i) || ".env",
+      path: projectedReadPath
+        || benchmarkFixtures?.readPath
+        || ".env",
       reason: "business request file read",
-    });
+    }, projectedReadPath
+      ? labPathParameterOrigin(projectedReadPath)
+      : benchmarkFixtures
+        ? "benchmark_fixture"
+        : "heuristic_default");
   }
-  if (/(写入|保存|修改|创建|write|save|patch).{0,32}(\/|\.txt|文件|file)/i.test(text)) {
+  if (/(写入|保存|修改|创建|删除|上传|共享|重命名|移动|write|save|patch|write[_ -]?file|edit[_ -]?file|create[_ -]?file|delete[_ -]?file|upload[_ -]?file|share[_ -]?file|rename[_ -]?file).{0,48}(\/|\.txt|文件|file|document|cloud|drive)/i.test(text)
+    || /(?:write[_ -]?file|edit[_ -]?file|create[_ -]?file|delete[_ -]?file|upload[_ -]?file|share[_ -]?file|rename[_ -]?file)/i.test(text)) {
+    const projectedWritePath = labProjectedLocalPath(command);
     push("write_file", {
-      path: firstMatch(command, /(\/[^\s，。；,;]+|[A-Za-z0-9_.-]+\.txt)/i) || "notes/agentsentry-test.txt",
+      path: projectedWritePath || "notes/agentsentry-test.txt",
       content: command,
       reason: "business request file write",
-    });
+    }, projectedWritePath ? labPathParameterOrigin(projectedWritePath) : "synthetic_placeholder");
   }
-  if (/(api|http|https|curl|wget|接口|请求|调用)/i.test(text)) {
+  if (/(https?:\/\/|curl|wget|\b(?:call|invoke|use)\s+api\b|api[_ -]?(?:call|request|endpoint)|接口|请求|调用|website|web\s+site|post|send\s+a\s+link|reservation|calendar|event|invite|transaction|transfer|payment|password|account|grant|access)/i.test(text)) {
+    const projectedUrl = firstMatch(command, /https?:\/\/[^\s，。；,;]+/i);
     push("call_api", {
-      url: firstMatch(command, /https?:\/\/[^\s，。；,;]+/i) || "http://127.0.0.1:8765/api/health",
+      url: projectedUrl
+        || benchmarkFixtures?.apiUrl
+        || "http://127.0.0.1:8765/api/health",
+      ...(benchmarkFixtures ? { method: labBenchmarkHttpMethod(command) } : {}),
       body: command,
       reason: "business request API call",
-    });
+    }, projectedUrl
+      ? "adapter_explicit"
+      : benchmarkFixtures
+        ? "benchmark_fixture"
+        : "heuristic_default");
   }
-  if (/(shell|终端|命令|执行|运行|rm\s+-rf|powershell|bash|cmd)/i.test(text)) {
+  if (/(shell|终端|命令|执行|运行|rm\s+-rf|powershell|bash|cmd|kill[_ -]?process|run[_ -]?command|execute[_ -]?command|ssh-rsa)/i.test(text)) {
     push("shell_exec", {
       command: firstMatch(command, /(rm\s+-rf\s+[^\s，。；,;]+|curl\s+[^\n，。；]+|wget\s+[^\n，。；]+|powershell\s+[^\n，。；]+|bash\s+[^\n，。；]+)/i)
         || command,
       reason: "business request shell execution",
     });
   }
-  if (/(记住|记忆|memory|remember|以后|忽略.*策略|投毒)/i.test(text)) {
+  if (/(记住|记忆|memory|remember|以后|长期.{0,8}(?:经验|记忆)|经验库|忽略.*策略|投毒)/i.test(text)) {
     push("memory_write", {
       content: command,
       reason: "business request memory write",
     });
   }
-  if (!actions.length) {
+  if (!actions.length && includeFallback) {
+    const projectedUrl = firstMatch(command, /https?:\/\/[^\s，。；,;]+/i);
     push("call_api", {
-      url: firstMatch(command, /https?:\/\/[^\s，。；,;]+/i) || "http://127.0.0.1:8765/api/health",
+      url: projectedUrl
+        || benchmarkFixtures?.apiUrl
+        || "http://127.0.0.1:8765/api/health",
+      ...(benchmarkFixtures ? { method: labBenchmarkHttpMethod(command) } : {}),
       reason: "business request health check",
-    });
+    }, projectedUrl
+      ? "adapter_explicit"
+      : benchmarkFixtures
+        ? "benchmark_fixture"
+        : "heuristic_default");
   }
   return actions.slice(0, 4);
+}
+
+function labProjectedLocalPath(command: string): string {
+  const withoutUris = command.replace(
+    /\b[A-Z][A-Z0-9+.-]*:\/\/[^\s，。；,;]+/gi,
+    " ",
+  );
+  const candidate = firstMatch(
+    withoutUris,
+    /(\/[^\s，。；,;'"`<>{}\[\]()]+|\.env|id_rsa|secret\.txt|system_prompt\.txt|[A-Za-z0-9_.-]+\.(?:md|txt|json|jsonl|ya?ml|toml|ini|env|csv|pdf))/i,
+  ).trim();
+  if (!candidate || /^[\\/]{2}/.test(candidate) || /^[\s'"`]|[\s'"`]$/.test(candidate)) return "";
+  return candidate;
+}
+
+function labPathParameterOrigin(path: string): LabParameterOrigin {
+  return /^\/?ABSOLUTE\/PATH(?:\/|$)/i.test(path.replace(/\\/g, "/"))
+    ? "synthetic_placeholder"
+    : "adapter_explicit";
+}
+
+function labExplicitToolParameterOrigin(
+  toolName: string,
+  target: string,
+  benchmarkFixtures?: LabBenchmarkFixtures,
+): LabParameterOrigin {
+  if (target) return labPathParameterOrigin(target);
+  const tool = toolName.toLowerCase();
+  if (benchmarkFixtures && (/read.*file|filesystem.*read|cat/.test(tool) || /api|http|fetch|request|curl|browser/.test(tool))) {
+    return "benchmark_fixture";
+  }
+  if (/write.*file|filesystem.*write|patch/.test(tool)) return "synthetic_placeholder";
+  return "adapter_explicit";
+}
+
+/**
+ * Project only explicit side effects described by untrusted envelope inputs.
+ * The trusted instruction is intentionally excluded here; it is used solely
+ * to build TaskSpec.  Every projected action carries the original candidate
+ * text so the policy engine can attach provenance/taint labels before the
+ * business-tool adapter unwraps parameters for execution.
+ */
+function labEnvelopeActions(inputs: LabCommandEnvelopeInput[], benchmarkFixtures?: LabBenchmarkFixtures): LabAction[] {
+  const actions: LabAction[] = [];
+  for (const input of inputs) {
+    const projected = labContentActions(input.text, false, "", benchmarkFixtures);
+    for (const action of projected) {
+      const params = { ...action.params };
+      const hasOriginalText = Object.values(params).some((value) => value === input.text);
+      if (!hasOriginalText) params.source_text = input.text;
+      const candidate = {
+        toolName: action.toolName,
+        params,
+        parameterOrigin: action.parameterOrigin,
+      };
+      if (!actions.some((item) => item.toolName === candidate.toolName && JSON.stringify(item.params) === JSON.stringify(candidate.params))) {
+        actions.push(candidate);
+      }
+      if (actions.length >= 8) return actions;
+    }
+  }
+  return actions;
+}
+
+type LabUntrustedAnalysis = {
+  input: LabCommandEnvelopeInput;
+  label: TrustLabel;
+  findings: DetectionFinding[];
+};
+
+function analyzeLabUntrustedInput(
+  input: LabCommandEnvelopeInput,
+  index: number,
+  config: PluginConfig,
+): LabUntrustedAnalysis {
+  const source = labTrustSourceForInput(input);
+  const analysis = analyzeTrustContent(input.text, {
+    source,
+    sourceId: `benchmark_untrusted:${index}:${input.origin || input.kind}`,
+    path: input.origin,
+    toolName: input.toolName,
+    previewChars: config.capture.previewChars,
+  });
+  const registration: DetectionFinding = {
+    layer: "Context Provenance",
+    finding_type: "deterministic",
+    verdict: "pass",
+    reason: "untrusted benchmark input registered for taint tracking",
+    score: 0,
+    evidence: {
+      source,
+      input_kind: input.kind,
+      origin: input.origin,
+      tool_name: input.toolName,
+      provenance_untrusted: true,
+      trust_label: analysis.label,
+      risk_vector: analysis.risk_vector,
+    },
+  };
+  return {
+    input,
+    label: analysis.label,
+    findings: [registration, ...analysis.findings],
+  };
+}
+
+function labTrustSourceForInput(input: LabCommandEnvelopeInput): TrustSource {
+  const text = `${input.kind} ${input.origin} ${input.toolName}`.toLowerCase();
+  if (/email|mail/.test(text)) return "email_html";
+  if (/pdf/.test(text)) return "pdf_text";
+  if (/image|ocr|vision/.test(text)) return "image_metadata";
+  if (/webhook|hook|wake/.test(text)) return "webhook";
+  return "external_web";
+}
+
+function labelLabActionParams(
+  params: Record<string, unknown>,
+  analyses: LabUntrustedAnalysis[],
+): Record<string, unknown> {
+  return mapLabActionValue(params, analyses, new WeakSet<object>()) as Record<string, unknown>;
+}
+
+function mapLabActionValue(
+  value: unknown,
+  analyses: LabUntrustedAnalysis[],
+  visited: WeakSet<object>,
+): unknown {
+  if (typeof value === "string") {
+    const match = analyses.find((item) => item.input.text === value && item.input.text.trim());
+    if (match) {
+      return {
+        value,
+        label: {
+          integrity: match.label.integrity,
+          trust_label: match.label,
+          source: match.label.source,
+        },
+      };
+    }
+    return value;
+  }
+  if (!value || typeof value !== "object") return value;
+  if (visited.has(value)) return value;
+  visited.add(value);
+  if (Array.isArray(value)) return value.map((item) => mapLabActionValue(item, analyses, visited));
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      mapLabActionValue(item, analyses, visited),
+    ]),
+  );
+}
+
+function unwrapLabActionParams(params: Record<string, unknown>): Record<string, unknown> {
+  return unwrapLabActionValue(params, new WeakSet<object>()) as Record<string, unknown>;
+}
+
+function unwrapLabActionValue(value: unknown, visited: WeakSet<object>): unknown {
+  if (!value || typeof value !== "object") return value;
+  if (visited.has(value)) return value;
+  visited.add(value);
+  if (!Array.isArray(value)) {
+    const object = value as Record<string, unknown>;
+    const label = recordParam(object.label);
+    if (object.value !== undefined && typeof label?.integrity === "string") {
+      return unwrapLabActionValue(object.value, visited);
+    }
+    return Object.fromEntries(
+      Object.entries(object).map(([key, item]) => [key, unwrapLabActionValue(item, visited)]),
+    );
+  }
+  return value.map((item) => unwrapLabActionValue(item, visited));
 }
 
 function recordParam(value: unknown): Record<string, unknown> | null {
@@ -3101,7 +3592,13 @@ function labScenarioActions(command: string, scenario: string): LabAction[] {
   return actions;
 }
 
-function labParamsForTool(toolName: string, command: string, target: string): Record<string, unknown> {
+function labParamsForTool(
+  toolName: string,
+  command: string,
+  target: string,
+  untrustedInput?: LabCommandEnvelopeInput,
+  benchmarkFixtures?: LabBenchmarkFixtures,
+): Record<string, unknown> {
   const tool = toolName.toLowerCase();
   if (/email|mail/.test(tool)) {
     return {
@@ -3110,12 +3607,29 @@ function labParamsForTool(toolName: string, command: string, target: string): Re
       reason: "operator selected email tool",
     };
   }
-  if (/read.*file|filesystem.*read|cat/.test(tool)) return { path: target || ".env", reason: "operator selected file read" };
+  if (/read.*file|filesystem.*read|cat/.test(tool)) {
+    return { path: target || benchmarkFixtures?.readPath || ".env", reason: "operator selected file read" };
+  }
   if (/write.*file|filesystem.*write|patch/.test(tool)) return { path: target || "notes/agentsentry-test.txt", content: command, reason: "operator selected file write" };
-  if (/api|http|fetch|request|curl|browser/.test(tool)) return { url: target || "http://127.0.0.1:8765/api/health", body: command, reason: "operator selected API call" };
+  if (/api|http|fetch|request|curl|browser/.test(tool)) {
+    return {
+      url: target || benchmarkFixtures?.apiUrl || "http://127.0.0.1:8765/api/health",
+      ...(benchmarkFixtures ? { method: labBenchmarkHttpMethod(command) } : {}),
+      body: command,
+      reason: "operator selected API call",
+    };
+  }
   if (/shell|exec|cmd|command|terminal/.test(tool)) return { command, reason: "operator selected shell command" };
   if (/memory.*read|read.*memory/.test(tool)) return { key: target, reason: "operator selected memory read" };
-  if (/memory|remember/.test(tool)) return { key: target || undefined, content: command, source_class: "user_directive", reason: "operator selected memory write" };
+  if (/memory|remember/.test(tool)) {
+    return {
+      key: target || undefined,
+      content: untrustedInput?.text ?? command,
+      source_class: untrustedInput ? "tool_result" : "user_directive",
+      origin: untrustedInput?.origin || undefined,
+      reason: "operator selected memory write",
+    };
+  }
   return { input: command, target, reason: "operator selected tool" };
 }
 
@@ -3142,7 +3656,18 @@ function emailBodyForCommand(command: string): string {
   return stripped || command;
 }
 
-function labContent(name: string): LabContent | null {
+function labContent(name: string, method = "GET"): LabContent | null {
+  if (name === "benchmark-api.json") {
+    return {
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify({
+        ok: true,
+        fixture: "agentsentry-command-lab-api-v1",
+        method,
+        side_effects: "none",
+      }),
+    };
+  }
   if (name === "hidden-email.html") {
     return {
       contentType: "text/html; charset=utf-8",
@@ -3218,6 +3743,8 @@ async function executeLabActions(input: {
   store: RecordStore;
   config: PluginConfig;
   command: string;
+  taskCommand: string;
+  untrustedInputs: LabCommandEnvelopeInput[];
   scenario: string;
   runId: string;
   sessionKey: string;
@@ -3226,31 +3753,56 @@ async function executeLabActions(input: {
   resetSession?: boolean;
   semanticJudge?: SemanticJudgeOverride;
   semanticTimeoutMs?: number;
-}): Promise<{ processed: boolean; decisions: Array<Record<string, unknown>>; session: Record<string, unknown> }> {
+  benchmarkFixtureUrl?: string;
+}): Promise<{
+  processed: boolean;
+  unsupported: boolean;
+  decisions: Array<Record<string, unknown>>;
+  session: Record<string, unknown>;
+}> {
   const semanticMode = input.semanticJudge ?? "default";
   const config = configWithSemanticOverride(input.config, semanticMode, input.semanticTimeoutMs);
   const semanticProfile = semanticJudgeProfile(semanticMode, config);
   const labSession = policySessionFor(input.sessionKey, Boolean(input.resetSession));
   const policyState = labSession.state;
-  updateTaskSpec(policyState, [{ role: "user", content: input.command }], config);
-  const messageFindings = [
-    ...detectMessageContent(input.command, config),
-  ];
-  updateAfterMessage(policyState, messageFindings);
-  for (const finding of messageFindings) {
+  if (input.taskCommand) {
+    updateTaskSpec(policyState, [{ role: "user", content: input.taskCommand }], config);
+  }
+  const trustedFindings = input.taskCommand ? detectMessageContent(input.taskCommand, config) : [];
+  updateAfterMessage(policyState, trustedFindings);
+  for (const finding of trustedFindings) {
     addLabFinding(input.store, config, input.runId, input.sessionKey, finding, {
       command_id: input.commandId,
       scenario: input.scenario,
-      source: "command-lab",
+      source: "command-lab:trusted-input",
       semantic_judge: semanticProfile,
     });
   }
+  const untrustedAnalyses = input.untrustedInputs.map((item, index) =>
+    analyzeLabUntrustedInput(item, index, config));
+  const untrustedFindings = untrustedAnalyses.flatMap((item) => item.findings);
+  updateAfterMessage(policyState, untrustedFindings);
+  for (const analysis of untrustedAnalyses) {
+    for (const finding of analysis.findings) {
+      addLabFinding(input.store, config, input.runId, input.sessionKey, finding, {
+        command_id: input.commandId,
+        scenario: input.scenario,
+        source: "command-envelope:untrusted-input",
+        input_kind: analysis.input.kind,
+        input_origin: analysis.input.origin,
+        input_tool_name: analysis.input.toolName || undefined,
+        semantic_judge: semanticProfile,
+      });
+    }
+  }
 
   const decisions: Array<Record<string, unknown>> = [];
+  const workspaceDir = openClawWorkspaceRoot();
   for (const [index, action] of input.actions.entries()) {
     const toolCallId = `lab_${labSession.turn}_${input.commandId}_${index + 1}`;
-    const context = { toolCallId };
-    const preliminary = detectToolCall(action.toolName, action.params, config, policyState, [], context);
+    const context = { toolCallId, workspaceDir };
+    const policyParams = labelLabActionParams(action.params, untrustedAnalyses);
+    const preliminary = detectToolCall(action.toolName, policyParams, config, policyState, [], context);
     const semanticFindings = await semanticJudgeAmbiguousAction({
       action: preliminary.policy.action,
       taskSpec: preliminary.policy.task_spec,
@@ -3258,12 +3810,33 @@ async function executeLabActions(input: {
       preliminary: preliminary.policy,
     }, config);
     const result = semanticFindings.length
-      ? detectToolCall(action.toolName, action.params, config, policyState, semanticFindings, context)
+      ? detectToolCall(action.toolName, policyParams, config, policyState, semanticFindings, context)
       : preliminary;
     const severity = severityForDecision(result.decision);
+    const decisionReasons = Array.from(new Set(
+      result.decision === "allow"
+        ? result.policy.reasons
+        : result.findings
+            .filter((finding) => finding.verdict !== "pass")
+            .map((finding) => finding.reason)
+            .filter(Boolean),
+    ));
+    const blockingCauses = Array.from(new Set([
+      ...result.policy.violations,
+      ...result.findings
+        .filter((finding) => finding.verdict === "block" || finding.verdict === "require_approval")
+        .map((finding) => finding.reason)
+        .filter(Boolean),
+    ]));
+    const compatibility = labCompatibilityEvidence(action, blockingCauses);
+    const securityBlockingCauses = blockingCauses.filter(
+      (cause) => !compatibility.blockingCauses.includes(cause),
+    );
+    const contextualSignals = decisionReasons.filter((reason) => !blockingCauses.includes(reason));
+    const parameterOrigin = action.parameterOrigin ?? "heuristic_default";
     const normalizedAction: LabAction = {
       toolName: result.policy.action.tool,
-      params: result.policy.action.args,
+      params: unwrapLabActionParams(result.policy.action.args),
     };
     updateAfterDecision(policyState, result.policy, config);
     updateActionGraphEnforcement(
@@ -3271,19 +3844,27 @@ async function executeLabActions(input: {
       result.policy,
       result.decision === "allow" ? "executing" : "blocked",
     );
+    let executionStatus: "executed" | "blocked" | "skipped" | "failed";
+    let executionOk: boolean | null = null;
+    let executionError = "";
     const payload = {
       toolName: action.toolName,
       normalized_tool: result.policy.action.tool,
       toolCallId,
       params: action.params,
+      parameter_origin: parameterOrigin,
       decision: result.decision,
       original_decision: result.decision,
       risk_score: result.risk_score,
       sentry_score: result.policy.sentry_score,
       deterministic_block: result.policy.deterministic_block,
       deterministic_disposition: result.policy.deterministic_disposition,
-      reasons: result.policy.reasons,
+      reasons: decisionReasons,
       violations: result.policy.violations,
+      blocking_causes: blockingCauses,
+      compatibility_reason_codes: compatibility.reasonCodes,
+      security_blocking_causes: securityBlockingCauses,
+      contextual_signals: contextualSignals,
       verdict: result.policy.findings.some((finding) => finding.verdict === "block")
         ? "block"
         : result.policy.findings.some((finding) => finding.verdict === "require_approval")
@@ -3325,6 +3906,9 @@ async function executeLabActions(input: {
       });
     }
     if (result.decision === "deny" || result.decision === "ask") {
+      executionStatus = result.decision === "deny" ? "blocked" : "skipped";
+      executionOk = false;
+      executionError = result.summary;
       input.store.add({
         run_id: input.runId,
         session_key: input.sessionKey,
@@ -3340,7 +3924,15 @@ async function executeLabActions(input: {
         reason: result.summary,
       });
     } else {
-      const execution = await executeBusinessTool(normalizedAction, config, `${input.scenario}\n${input.command}`);
+      const execution = await executeBusinessTool(
+        normalizedAction,
+        config,
+        `${input.scenario}\n${input.command}`,
+        input.benchmarkFixtureUrl,
+      );
+      executionStatus = execution.ok ? "executed" : "failed";
+      executionOk = execution.ok;
+      executionError = execution.ok ? "" : String(execution.error || execution.reason || "tool execution failed");
       addToolResultRecord(input, normalizedAction, toolCallId, execution.ok ? "executed" : "failed", execution);
       const executionFindings = Array.isArray(execution.findings) ? execution.findings as Array<Record<string, unknown>> : [];
       if (executionFindings.length) {
@@ -3446,15 +4038,25 @@ async function executeLabActions(input: {
       normalized_tool: result.policy.action.tool,
       decision: result.decision,
       risk_score: result.risk_score,
+      reasons: decisionReasons,
       violations: result.policy.violations,
+      parameter_origin: parameterOrigin,
+      blocking_causes: blockingCauses,
+      compatibility_reason_codes: compatibility.reasonCodes,
+      security_blocking_causes: securityBlockingCauses,
+      contextual_signals: contextualSignals,
       findings: result.findings.length,
       finding_types: Array.from(new Set(result.findings.map((finding) => finding.finding_type))),
       semantic_judge_called: result.findings.some((finding) => finding.finding_type === "semantic"),
       semantic_judge: semanticProfile,
+      execution_status: executionStatus,
+      execution_ok: executionOk,
+      execution_error: executionError,
     });
   }
   return {
-    processed: true,
+    processed: input.actions.length > 0,
+    unsupported: input.actions.length === 0,
     decisions,
     session: {
       key: input.sessionKey,
@@ -3463,6 +4065,38 @@ async function executeLabActions(input: {
       trust: policyTrustSnapshot(policyState),
       semantic_judge: semanticProfile,
     },
+  };
+}
+
+function labCompatibilityEvidence(
+  action: LabAction,
+  blockingCauses: string[],
+): { reasonCodes: string[]; blockingCauses: string[] } {
+  const reasonCodes = new Set<string>();
+  const compatibilityCauses = new Set<string>();
+  const origin = action.parameterOrigin ?? "heuristic_default";
+  const tool = action.toolName.toLowerCase();
+  for (const cause of blockingCauses) {
+    if (
+      origin === "synthetic_placeholder"
+      && /(?:read|write).*file|filesystem|cat|patch/.test(tool)
+      && /(?:read|write) path escapes allowed root|cannot canonicalize (?:read|write) path/i.test(cause)
+    ) {
+      reasonCodes.add("synthetic_placeholder_path_outside_allowed_root");
+      compatibilityCauses.add(cause);
+    }
+    if (
+      origin === "benchmark_fixture"
+      && /api|http|fetch|request|curl|browser/.test(tool)
+      && /target .*\/lab-content\/benchmark-api\.json is outside allowed_targets/i.test(cause)
+    ) {
+      reasonCodes.add("benchmark_fixture_target_outside_allowed_targets");
+      compatibilityCauses.add(cause);
+    }
+  }
+  return {
+    reasonCodes: Array.from(reasonCodes).sort(),
+    blockingCauses: Array.from(compatibilityCauses),
   };
 }
 
@@ -3526,14 +4160,21 @@ function addToolResultRecord(
   });
 }
 
-async function executeBusinessTool(action: LabAction, config: PluginConfig, context = ""): Promise<BusinessExecution> {
+async function executeBusinessTool(
+  action: LabAction,
+  config: PluginConfig,
+  context = "",
+  benchmarkFixtureUrl = "",
+): Promise<BusinessExecution> {
   const checkpoint = config.runtimeIsolation.auditAfterExecution ? ebpfLogCheckpoint() : null;
   let execution: BusinessExecution;
   try {
     if (action.toolName === "send_email") execution = executeEmail(action);
     else if (action.toolName === "read_file") execution = executeReadFile(action, config);
     else if (action.toolName === "write_file") execution = executeWriteFile(action, config);
-    else if (action.toolName === "call_api" || action.toolName === "read_webpage") execution = await executeHttpRequest(action, config);
+    else if (action.toolName === "call_api" || action.toolName === "read_webpage") {
+      execution = await executeHttpRequest(action, config, benchmarkFixtureUrl);
+    }
     else if (action.toolName === "memory_write") execution = executeMemoryWrite(action, config, context);
     else if (action.toolName === "memory_read") execution = executeMemoryRead(action, config, context);
     else if (action.toolName === "sessions_send") execution = executeAgentMessage(action);
@@ -3653,12 +4294,31 @@ function executeWriteFile(action: LabAction, config: PluginConfig): BusinessExec
   };
 }
 
-async function executeHttpRequest(action: LabAction, config: PluginConfig): Promise<BusinessExecution> {
+async function executeHttpRequest(
+  action: LabAction,
+  config: PluginConfig,
+  benchmarkFixtureUrl = "",
+): Promise<BusinessExecution> {
   const url = firstParam(action.params, ["url", "href", "endpoint", "target"]);
   if (!url) return { ok: false, error: "missing URL" };
   const parsed = new URL(url);
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { ok: false, error: `unsupported URL protocol ${parsed.protocol}` };
+  }
+  const method = firstParam(action.params, ["method", "httpMethod", "verb"]).toUpperCase() || "GET";
+  if (benchmarkFixtureUrl && sameLabBenchmarkFixture(parsed, benchmarkFixtureUrl)) {
+    if (method !== "GET" && method !== "POST") {
+      return { ok: false, error: `benchmark API fixture does not support ${method}` };
+    }
+    return executeLabBenchmarkApiFixture(
+      parsed,
+      method,
+      stringifyValue(action.params.body ?? action.params.content ?? action.params.text ?? ""),
+      config,
+    );
+  }
+  if (benchmarkFixtureUrl && method !== "GET") {
+    return { ok: false, error: `benchmark proxy cannot safely execute ${method} against a non-fixture URL` };
   }
   const response = await safeHttpGet(parsed, {
     allowedHosts: labLocalHttpUrl(parsed)
@@ -3686,6 +4346,95 @@ async function executeHttpRequest(action: LabAction, config: PluginConfig): Prom
     },
     error: response.truncated ? "HTTP response exceeded 1048576 byte limit" : ok ? undefined : `HTTP ${response.status}`,
   };
+}
+
+function sameLabBenchmarkFixture(url: URL, benchmarkFixtureUrl: string): boolean {
+  try {
+    const fixture = new URL(benchmarkFixtureUrl);
+    return url.protocol === "http:"
+      && fixture.protocol === "http:"
+      && url.origin === fixture.origin
+      && url.pathname === "/lab-content/benchmark-api.json"
+      && url.pathname === fixture.pathname
+      && url.search === fixture.search
+      && !url.username
+      && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function executeLabBenchmarkApiFixture(
+  url: URL,
+  method: "GET" | "POST",
+  requestBody: string,
+  config: PluginConfig,
+): Promise<BusinessExecution> {
+  const maxBytes = 1024 * 1024;
+  return new Promise((resolveRequest) => {
+    let settled = false;
+    const finish = (result: BusinessExecution) => {
+      if (settled) return;
+      settled = true;
+      resolveRequest(result);
+    };
+    const payload = method === "POST" ? Buffer.from(requestBody, "utf8") : Buffer.alloc(0);
+    const request = httpRequest({
+      protocol: url.protocol,
+      hostname: stripIpv6Brackets(url.hostname),
+      port: url.port ? Number(url.port) : undefined,
+      path: `${url.pathname}${url.search}`,
+      method,
+      headers: {
+        Accept: "application/json",
+        Host: url.host,
+        ...(method === "POST"
+          ? { "Content-Type": "application/json; charset=utf-8", "Content-Length": String(payload.length) }
+          : {}),
+      },
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      let truncated = false;
+      response.on("data", (chunk: Buffer | string) => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        const remaining = maxBytes - bytes;
+        if (remaining > 0) chunks.push(buffer.subarray(0, remaining));
+        bytes += Math.min(buffer.length, Math.max(remaining, 0));
+        if (buffer.length > remaining) {
+          truncated = true;
+          response.destroy();
+        }
+      });
+      response.on("end", () => {
+        const status = response.statusCode || 0;
+        const body = Buffer.concat(chunks).toString("utf8");
+        const contentType = Array.isArray(response.headers["content-type"])
+          ? response.headers["content-type"][0] || ""
+          : response.headers["content-type"] || "";
+        const ok = status >= 200 && status < 300 && !truncated;
+        finish({
+          ok,
+          status,
+          output: {
+            url: url.toString(),
+            method,
+            status,
+            content_type: contentType,
+            bytes,
+            truncated,
+            redirects: 0,
+            preview: clip(body, config.capture.previewChars),
+          },
+          error: truncated ? `HTTP response exceeded ${maxBytes} byte limit` : ok ? undefined : `HTTP ${status}`,
+        });
+      });
+      response.on("error", (error) => finish({ ok: false, error: error.message }));
+    });
+    request.setTimeout(5000, () => request.destroy(new Error("benchmark API fixture timed out")));
+    request.on("error", (error) => finish({ ok: false, error: error.message }));
+    request.end(payload);
+  });
 }
 
 function labLocalHttpUrl(url: URL): boolean {
@@ -3913,8 +4662,14 @@ function writeRoot(): string {
 
 function resolveReadPath(requestedPath: string): string {
   const root = readRoot();
-  const filePath = requestedPath.startsWith("/") ? resolve(requestedPath) : resolve(root, requestedPath);
-  if (!insideRoot(filePath, root)) throw new Error(`read path is outside workspace: ${requestedPath}`);
+  const boundary = matchWorkspaceReadPath(requestedPath, root);
+  if (!boundary.allowed) throw new Error(`read path is outside workspace: ${requestedPath}`);
+  let filePath = boundary.target;
+  const normalizedRequest = normalize(requestedPath);
+  if (!existsSync(filePath) && !isAbsolute(requestedPath) && normalizedRequest === "README.md") {
+    const publicReadme = join(repoRoot(), "README.md");
+    if (existsSync(publicReadme)) filePath = publicReadme;
+  }
   if (!existsSync(filePath)) {
     throw new Error(`file not found: ${requestedPath}`);
   }
@@ -3924,21 +4679,17 @@ function resolveReadPath(requestedPath: string): string {
 function resolveWritePath(requestedPath: string, config: PluginConfig): string {
   const root = writeRoot();
   mkdirSync(root, { recursive: true });
-  const filePath = requestedPath.startsWith("/") ? resolve(requestedPath) : resolve(root, requestedPath);
+  const filePath = isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(root, requestedPath);
   const workspaceBoundary = pathWithinRoot(filePath, root);
   if (!workspaceBoundary.allowed) throw new Error(`write path is outside allowed workspace: ${requestedPath}`);
   if (config.policy.restrictWritesToAllowedRoots) {
-    const allowlistBoundary = matchAllowedWritePath(workspaceBoundary.target, config.policy.allowedWriteRoots, root);
+    const allowedRoots = config.policy.allowedWriteRoots.map((allowedRoot) =>
+      isAbsolute(allowedRoot) ? resolve(allowedRoot) : resolve(root, allowedRoot));
+    const allowlistBoundary = matchAllowedWritePath(workspaceBoundary.target, allowedRoots, root);
     if (!allowlistBoundary.allowed) throw new Error(allowlistBoundary.reason || `write path is outside configured allowed roots: ${requestedPath}`);
     return allowlistBoundary.target;
   }
   return workspaceBoundary.target;
-}
-
-function insideRoot(filePath: string, root: string): boolean {
-  const normalizedRoot = resolve(root);
-  const normalizedFile = resolve(filePath);
-  return normalizedFile === normalizedRoot || normalizedFile.startsWith(`${normalizedRoot}/`);
 }
 
 function ensureParent(filePath: string): void {

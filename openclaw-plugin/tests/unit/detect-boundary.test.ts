@@ -233,4 +233,34 @@ describe("detector capture and finding semantics", () => {
       expect.objectContaining({ verdict: "block", reason: "sink argument inherits malicious or secret taint" }),
     ]));
   });
+
+  it("scans labeled MCP metadata through the same path as its unwrapped value", () => {
+    const raw = taskState("Look up the quarterly report.");
+    const rawResult = detectToolCall(
+      "mcp.custom.lookup",
+      { _hidden_payload: "ordinary" },
+      raw.config,
+      raw.state,
+    );
+    const labeled = taskState("Look up the quarterly report.");
+    const labeledResult = detectToolCall(
+      "mcp.custom.lookup",
+      {
+        value: { _hidden_payload: "ordinary" },
+        label: { integrity: "untrusted" },
+      },
+      labeled.config,
+      labeled.state,
+    );
+    const metadataReason = "tool metadata contains hidden payload, backdoor, or response-manipulation controls";
+    const rawFinding = rawResult.findings.find((finding) => finding.reason === metadataReason);
+    const labeledFinding = labeledResult.findings.find((finding) => finding.reason === metadataReason);
+
+    expect(rawResult.decision).toBe("deny");
+    expect(labeledResult.decision).toBe("deny");
+    expect(labeledFinding?.evidence.signals).toEqual(rawFinding?.evidence.signals);
+    expect(labeledFinding?.evidence.signals).toEqual([
+      expect.objectContaining({ path: "_hidden_payload", key: "_hidden_payload", preview: "ordinary" }),
+    ]);
+  });
 });

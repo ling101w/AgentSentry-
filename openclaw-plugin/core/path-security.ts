@@ -39,6 +39,13 @@ export function pathWithinRoot(
   if (!isAbsolute(allowedRoot)) {
     return { allowed: false, target: resolve(targetPath), reason: `allowed ${operation} root must be absolute: ${allowedRoot}` };
   }
+  if (isNetworkPath(targetPath) && !isNetworkPath(allowedRoot)) {
+    return {
+      allowed: false,
+      target: targetPath,
+      reason: `${operation} path cannot use a UNC or network path outside the configured root`,
+    };
+  }
 
   try {
     const canonicalRoot = canonicalizePath(allowedRoot);
@@ -80,6 +87,10 @@ export function matchAllowedWritePath(requestedPath: string, allowedRoots: strin
 
 function isMissingPathError(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT");
+}
+
+function isNetworkPath(value: string): boolean {
+  return /^[\\/]{2}[^\\/]/.test(value.trim());
 }
 
 export function matchWorkspaceReadPath(requestedPath: string, workspaceDir: string): PathBoundaryResult {

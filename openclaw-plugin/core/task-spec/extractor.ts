@@ -23,7 +23,7 @@ const ACTION_DENIALS: Array<[string, RegExp]> = [
   ["send_email", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:发送|发邮件|发给|邮件|外发)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:send|email|mail|forward)\b/i],
   ["write_file", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:写入|保存|修改|创建)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:write|save|edit|create)\b/i],
   ["shell_exec", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:执行|运行|命令|终端)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:execute|run|shell|command)\b/i],
-  ["memory_write", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:记住|记忆|长期保存|持久)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:remember|persist|memory)\b/i],
+  ["memory_write", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:记住|记忆|长期保存|持久|经验库)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:remember|persist|memory)\b/i],
 ];
 
 type Clause = { text: string; start: number; end: number; dataOnly: boolean };
@@ -208,7 +208,9 @@ function candidatesForClause(clause: string): Candidate[] {
 }
 
 function explicitSend(text: string): boolean {
-  return /\b(?:please\s+)?(?:send|email|mail|forward)\b/i.test(text)
+  const englishSend = /\b(?:please\s+)?(?:send|forward)\b/i.test(text)
+    || /(?:^|\b(?:please|kindly|then)\s+|\band\s+|\b(?:can|could|would|will)\s+you\s+(?:please\s+)?)(?:email|mail)\b/i.test(text);
+  return englishSend
     || /(?:请|帮我|现在|直接)?(?:把|将).{0,80}(?:发送给|发送到|发送至|发给|邮件给)/i.test(text)
     || /(?:请|帮我)?给\s*[^，,。；;]{1,80}(?:发|发送).{0,30}(?:邮件|报告|文件|消息)/i.test(text)
     || /^\s*(?:(?:请|帮我|现在|直接)\s*)?(?:发送|发邮件|外发).{0,80}(?:给|到)/i.test(text);
@@ -243,7 +245,7 @@ function explicitShell(text: string): boolean {
 
 function explicitMemoryWrite(text: string): boolean {
   return /\b(?:please\s+)?(?:remember|persist|store in (?:long[- ]term )?memory)\b/i.test(text)
-    || /(?:请|帮我)?(?:记住|写入长期记忆|保存为长期偏好|记录到经验库|记录经验)/i.test(text);
+    || /(?:请|帮我)?(?:记住|写入长期(?:记忆|经验库)|保存为长期偏好|记录到经验库|记录经验)/i.test(text);
 }
 
 function analysisOnly(text: string): boolean {
@@ -258,7 +260,7 @@ function negatedAction(text: string, action: CapabilityAction): boolean {
     send: "发送|发邮件|发给|邮件|外发|send|email|mail|forward",
     execute: "执行|运行|命令|execute|run|command",
     request: "调用|请求|上报|上传|提交|call|request|post|upload|submit",
-    persist: "记住|记忆|持久|remember|memory|persist",
+    persist: "记住|记忆|持久|经验库|remember|memory|persist",
   };
   const pattern = actionPatterns[action];
   return new RegExp(`(?:不要|别|不得|禁止|不能|无需|仅分析|只分析|只总结|仅总结).{0,40}(?:${pattern})`, "i").test(text)
@@ -295,6 +297,12 @@ function nonAuthoritativeRanges(text: string): Array<[number, number]> {
     for (const match of text.matchAll(pattern)) {
       ranges.push([match.index ?? 0, (match.index ?? 0) + match[0].length]);
     }
+  }
+  // Structured benchmark payload fields are evidence, not user authorization.
+  const structuredDataFrame = /^[ \t\r]*(?:问题|经验|待写入正文|正文)[ \t]*[:：]/gim;
+  for (const match of text.matchAll(structuredDataFrame)) {
+    const start = (match.index ?? 0) + match[0].length;
+    ranges.push([start, text.length]);
   }
   const dataFrame = /(?:summari[sz]e|analy[sz]e|translate|quote|总结|分析|翻译|引用)(?:\s+the)?(?:\s+following|以下|下面)(?:\s*(?:text|content|文字|内容))?\s*[:：]/gi;
   for (const match of text.matchAll(dataFrame)) {

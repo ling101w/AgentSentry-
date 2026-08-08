@@ -7,6 +7,7 @@ import { systemPreflight } from "./system-monitor.ts";
 import { analyzeTrustContent, riskMax, sourceFromTool } from "./trust.ts";
 import { memoryGuardScanWrite, type MemorySourceClass } from "./memory-guard.ts";
 import { isLowRiskShellReadCommand, isSafeSystemReadPath } from "./policy/safe-ops.ts";
+import { isLabeledValue } from "./policy/value-utils.ts";
 import {
   applyExposureTaint,
   decideAction,
@@ -360,11 +361,13 @@ function mcpToolMetadataFindings(toolName: string, params: Record<string, unknow
 
 function collectMcpMetadataSignals(value: unknown, path = ""): Array<{ path: string; key: string; preview: string; strength: "block" | "review" }> {
   const hits: Array<{ path: string; key: string; preview: string; strength: "block" | "review" }> = [];
-  if (!value || typeof value !== "object") return hits;
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+  const current = isLabeledValue(value) ? value.value : value;
+  if (!current || typeof current !== "object") return hits;
+  for (const [key, item] of Object.entries(current as Record<string, unknown>)) {
     const nextPath = path ? `${path}.${key}` : key;
     const keyLower = key.toLowerCase();
-    const preview = typeof item === "string" ? item : safeStringify(item);
+    const candidate = isLabeledValue(item) ? item.value : item;
+    const preview = typeof candidate === "string" ? candidate : safeStringify(candidate);
     const previewLower = preview.toLowerCase();
     if (/^_(hidden_payload|backdoor_trigger|manipulation_type|inject_payload)$/i.test(key) || /(malicious_value|injected_payload|backdoor|poison)/i.test(key)) {
       hits.push({ path: nextPath, key, preview, strength: "block" });
@@ -373,7 +376,7 @@ function collectMcpMetadataSignals(value: unknown, path = ""): Array<{ path: str
     } else if (/(user_agent|default|payload|redirect|callback|webhook|endpoint)/i.test(keyLower) && /(googlebot|bot\.html|base64 encoded|env var reference|\$\{attacker|attacker\.|evil\.|exfiltrat)/i.test(previewLower)) {
       hits.push({ path: nextPath, key, preview, strength: "review" });
     }
-    if (item && typeof item === "object") hits.push(...collectMcpMetadataSignals(item, nextPath));
+    if (candidate && typeof candidate === "object") hits.push(...collectMcpMetadataSignals(candidate, nextPath));
   }
   return hits;
 }

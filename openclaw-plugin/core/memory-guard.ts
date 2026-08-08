@@ -82,6 +82,13 @@ const AUTHORITATIVE_MEMORY_PATTERNS = [
   /(以后|未来|下次|永久|默认|优先).{0,80}(必须|总是|永远|策略|审批|确认|安全|监督|静默|无需|跳过)/i,
 ];
 
+const NEGATED_SAFETY_BOUNDARY_PATTERNS = [
+  /(不改变|不会改变|不涉及|不得改变|不能改变|不覆盖|不绕过|不跳过|不禁用|不关闭).{0,80}?(安全策略|策略|权限边界|审批|确认|工具审批|授权|监督)/i,
+  /(不改变|不会改变|不涉及|不得改变|不能改变|不覆盖|不绕过|不跳过|不禁用|不关闭).{0,80}?(security|policy|permission|authorization|approval|guard|audit)/i,
+  /\b(?:does\s+not|do\s+not|without|never)\b.{0,80}?\b(?:change|override|bypass|skip|disable|suppress)\b.{0,80}?\b(?:security|policy|permission|authorization|approval|guard|audit)\b/i,
+  /\bnever\s+hardcode\s+(?:api[_ -]?)?(?:keys?|tokens?|passwords?|credentials?|secrets?)\b/i,
+];
+
 const MEMORY_SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/,
   /\bgh[pousr]_[a-zA-Z0-9_]{20,}\b/,
@@ -374,16 +381,19 @@ function trustRankForPassport(passport: MemoryPassport): number {
 }
 
 function isAuthoritativeMemory(content: string): boolean {
-  if (isNegatedSafetyBoundaryMemory(content)) return false;
-  return AUTHORITATIVE_MEMORY_PATTERNS.some((pattern) => pattern.test(content));
+  return content
+    .split(/[\r\n.!?;；。！？]+/)
+    .map((clause) => stripNegatedSafetyBoundaryMemory(clause).trim())
+    .filter(Boolean)
+    .some((clause) => AUTHORITATIVE_MEMORY_PATTERNS.some((pattern) => pattern.test(clause)));
 }
 
-function isNegatedSafetyBoundaryMemory(content: string): boolean {
-  return [
-    /(不改变|不会改变|不涉及|不得改变|不能改变|不覆盖|不绕过|不跳过|不禁用|不关闭).{0,80}(安全策略|策略|权限边界|审批|确认|工具审批|授权|监督)/i,
-    /(不改变|不会改变|不涉及|不得改变|不能改变|不覆盖|不绕过|不跳过|不禁用|不关闭).{0,80}(security|policy|permission|authorization|approval|guard|audit)/i,
-    /\b(?:does\s+not|do\s+not|without|never)\b.{0,80}\b(?:change|override|bypass|skip|disable|suppress)\b.{0,80}\b(?:security|policy|permission|authorization|approval|guard|audit)\b/i,
-  ].some((pattern) => pattern.test(content));
+function stripNegatedSafetyBoundaryMemory(content: string): string {
+  let remaining = content;
+  for (const pattern of NEGATED_SAFETY_BOUNDARY_PATTERNS) {
+    remaining = remaining.replace(pattern, " ");
+  }
+  return remaining;
 }
 
 function redactMemorySecrets(content: string): string {

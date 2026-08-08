@@ -103,7 +103,8 @@ def main() -> int:
         if args.report is not None:
             write_report(args.report, payload)
         print(json.dumps(payload["summary"]["overall"], ensure_ascii=False))
-        return 2 if payload["summary"]["overall"]["harness_errors"] else 0
+        overall = payload["summary"]["overall"]
+        return 2 if overall["harness_errors"] or overall.get("unsupported_cases", 0) else 0
 
     cases = load_cases(args.input)
     if args.max_cases > 0:
@@ -177,7 +178,8 @@ def main() -> int:
     write_json(args.output or DEFAULT_OUTPUT, payload)
     write_report(args.report or DEFAULT_REPORT, payload)
     print(json.dumps(payload["summary"]["overall"], ensure_ascii=False))
-    return 2 if payload["summary"]["overall"]["harness_errors"] else 0
+    overall = payload["summary"]["overall"]
+    return 2 if overall["harness_errors"] or overall.get("unsupported_cases", 0) else 0
 
 
 def load_cases(path: Path) -> list[BenchmarkCase]:
@@ -410,6 +412,46 @@ def render_report(payload: dict[str, Any]) -> str:
         f"- False positive rate: {_format_rate(_group_rate(overall, 'false_positive_rate'))}",
         f"- Harness errors: {overall['harness_errors']}",
         "",
+        "## Action Projection Coverage",
+        "",
+        f"- Faithful mapping coverage: {_format_rate(overall.get('mapping_coverage_rate'))} "
+        f"({overall.get('mapping_supported_cases', 0)}/{overall.get('cases', 0)} cases).",
+        f"- Unsupported projections: {overall.get('unsupported_cases', 0)} "
+        f"({_format_rate(overall.get('unsupported_rate'))}); excluded from security denominators.",
+        f"- Projected actions with policy decisions: {overall.get('policy_decisions', 0)}/"
+        f"{overall.get('projected_actions', 0)} ({_format_rate(overall.get('action_coverage_rate'))}).",
+        f"- Source overblock rate among scorable attacks: {_format_rate(overall.get('source_overblock_rate'))} "
+        f"({overall.get('source_overblock_cases', 0)}/{overall.get('attack_cases', 0)}).",
+        f"- Sink compatibility-affected attacks: {overall.get('compatibility_affected_attack_cases', 0)} "
+        f"({_format_rate(overall.get('compatibility_affected_attack_rate'))}); "
+        f"sink compatibility-only protected: {overall.get('compatibility_dependent_protected_cases', 0)} "
+        f"({_format_rate(overall.get('compatibility_dependent_protected_rate'))} of protected cases).",
+        f"- Compatibility-clean protection: {overall.get('compatibility_clean_protected_cases', 0)}/"
+        f"{overall.get('compatibility_clean_attack_cases', 0)} "
+        f"({_format_rate(overall.get('compatibility_clean_protection_rate'))}); "
+        f"coverage {_format_rate(overall.get('compatibility_clean_attack_coverage_rate'))} of scorable attacks "
+        f"and {_format_rate(overall.get('compatibility_clean_attempted_attack_coverage_rate'))} of attempted attacks.",
+        f"- Security-attribution strict subset: {overall.get('strict_attribution_protected_cases', 0)}/"
+        f"{overall.get('strict_attribution_attack_cases', 0)} "
+        f"({_format_rate(overall.get('strict_attribution_protection_rate'))}); "
+        f"coverage {_format_rate(overall.get('strict_attribution_attack_coverage_rate'))} of scorable attacks "
+        f"and {_format_rate(overall.get('strict_attribution_attempted_attack_coverage_rate'))} of attempted attacks.",
+        f"- Mapping-warning union (source overblock OR projection fallback): {overall.get('mapping_warning_union_cases', 0)} "
+        f"({_format_rate(overall.get('mapping_warning_union_rate'))}); flag-clean protection: "
+        f"{overall.get('mapping_flag_clean_protected_cases', 0)}/{overall.get('mapping_flag_clean_attack_cases', 0)} "
+        f"({_format_rate(overall.get('mapping_flag_clean_protection_rate'))}), diagnostic only.",
+        f"- Protection evidence classes: `{json.dumps(overall.get('protection_evidence_class_counts', {}), ensure_ascii=False, sort_keys=True)}`.",
+        f"- Compatibility reason codes: `{json.dumps(overall.get('compatibility_reason_counts', {}), ensure_ascii=False, sort_keys=True)}`.",
+        f"- Whole-case compatibility-only protected cases: {overall.get('whole_case_compatibility_only_cases', 0)}.",
+        f"- False-positive policy reasons: `{json.dumps(summary.get('false_positive_reason_counts', {}), ensure_ascii=False, sort_keys=True)}`.",
+        f"- Tool execution attempts: {summary.get('execution_action_counts', {}).get('attempted', 0)}; "
+        f"succeeded: {summary.get('execution_action_counts', {}).get('succeeded', 0)}; "
+        f"failed: {summary.get('execution_action_counts', {}).get('failed', 0)}.",
+        "- Policy blocks/asks before execution are tracked separately from allowed actions whose tool execution fails.",
+        f"- Projection modes: `{json.dumps(summary.get('projection_mode_counts', {}), ensure_ascii=False, sort_keys=True)}`.",
+        f"- Action decisions: `{json.dumps(summary.get('action_decision_counts', {}), ensure_ascii=False, sort_keys=True)}`.",
+        f"- Unsupported reasons: `{json.dumps(summary.get('unsupported_reason_counts', {}), ensure_ascii=False, sort_keys=True)}`.",
+        "",
         "## Macro Summary",
         "",
         "| Grouping | Groups | Protection | Unsafe release | Benign allow | False positive |",
@@ -460,8 +502,8 @@ def _render_macro_row(label: str, macro: Mapping[str, Any]) -> str:
 
 def _render_group_table(rows: list[dict[str, Any]]) -> list[str]:
     lines = [
-        "| Group | Cases | Evaluated | Attack | Benign | Protection | Unsafe release | Benign allow | False positive | Errors |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Group | Cases | Evaluated | Attack | Benign | Protection | Unsafe release | Benign allow | False positive | Compat affected | Strict attribution | Errors |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
@@ -469,7 +511,11 @@ def _render_group_table(rows: list[dict[str, Any]]) -> list[str]:
             f"{row['benign_cases']} | {_format_rate(_group_rate(row, 'protection_rate'))} | "
             f"{_format_rate(_group_rate(row, 'unsafe_release_rate'))} | "
             f"{_format_rate(_group_rate(row, 'benign_allow_rate'))} | "
-            f"{_format_rate(_group_rate(row, 'false_positive_rate'))} | {row['harness_errors']} |"
+            f"{_format_rate(_group_rate(row, 'false_positive_rate'))} | "
+            f"{row.get('compatibility_affected_attack_cases', 0)} | "
+            f"{row.get('strict_attribution_protected_cases', 0)}/{row.get('strict_attribution_attack_cases', 0)} "
+            f"({_format_rate(row.get('strict_attribution_protection_rate') if int(row.get('strict_attribution_attack_cases') or 0) else None)}) | "
+            f"{row['harness_errors']} |"
         )
     return lines
 

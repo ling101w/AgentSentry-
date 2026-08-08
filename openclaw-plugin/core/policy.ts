@@ -1412,6 +1412,9 @@ function deterministicViolations(
     toolName: action.originalTool,
     previewChars: config.capture.previewChars,
   });
+  if (action.tool === "send_email" && hasLowTrustEmailDirective(action.args)) {
+    violations.push("low-trust content cannot authorize or replace an email-send instruction");
+  }
   if (action.tool === "read_webpage") {
     const url = readFirstString(action.args, ["url", "href", "endpoint", "target"]);
     if (!targetAllowed(url, taskSpec.allowed_targets)) {
@@ -1547,6 +1550,40 @@ function deterministicViolations(
   }
 
   return unique(violations);
+}
+
+function hasLowTrustEmailDirective(args: Record<string, unknown>): boolean {
+  const candidates = [args.body, args.content, args.message, args.text, args.source_text];
+  return candidates.some((value) => lowTrustLabeledTexts(value).some(isEmailSendDirective));
+}
+
+function lowTrustLabeledTexts(
+  value: unknown,
+  visited = new WeakSet<object>(),
+  depth = 0,
+): string[] {
+  if (depth > 32 || !value || typeof value !== "object") return [];
+  if (visited.has(value)) return [];
+  visited.add(value);
+  if (isLabeledValue(value)) {
+    const label = value.label.trust_label;
+    const provenanceUntrusted = label?.evidence?.provenance_untrusted === true;
+    const lowIntegrity = label?.integrity === "external" || label?.integrity === "tainted";
+    const text = flattenValueText(value.value).trim();
+    return text && (provenanceUntrusted || lowIntegrity) ? [text] : [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => lowTrustLabeledTexts(item, visited, depth + 1));
+  }
+  return Object.values(value as Record<string, unknown>)
+    .flatMap((item) => lowTrustLabeledTexts(item, visited, depth + 1));
+}
+
+function isEmailSendDirective(text: string): boolean {
+  return /(?:^|[.!?;。！？；]\s*|\b(?:please|just|then|next|also|now|and)\s+)(?:send|forward)\b/i.test(text)
+    || /\b(?:please|just|then|next|also|now|and|can\s+you|could\s+you|would\s+you|will\s+you)\s+(?:email|mail)\b/i.test(text)
+    || /^\s*(?:email|mail)\s+(?!address\b)/i.test(text)
+    || /(?:^|[。！？；]\s*|(?:请|然后|接着|随后|再|立即|直接|务必))\s*(?:发送|发邮件|转发|外发)\b/i.test(text);
 }
 
 function decisionAlignment(action: AgentSentryAction, taskSpec: TaskSpec): DetectionFinding[] {

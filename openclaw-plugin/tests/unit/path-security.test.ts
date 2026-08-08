@@ -33,6 +33,14 @@ describe("canonical filesystem boundaries", () => {
     expect(matchWorkspaceReadPath(join(outside, "secret.txt"), workspace).allowed).toBe(false);
   });
 
+  it("rejects UNC reads before filesystem canonicalization", () => {
+    const { workspace } = fixture();
+    expect(matchWorkspaceReadPath("//github.com/octocat/Hello-World'", workspace)).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining("UNC or network path"),
+    });
+  });
+
   it("rejects a workspace symlink or junction that resolves outside", () => {
     const { workspace, outside } = fixture();
     const link = join(workspace, "linked-outside");
