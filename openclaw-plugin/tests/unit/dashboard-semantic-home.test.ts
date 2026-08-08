@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error The dashboard adapter is a browser-native ES module served without a build step.
-import { buildDashboardModel, causalPathTitles } from "../../public/graph-adapter.js";
+import { buildDashboardModel, buildSelectionEvidence, causalPathTitles } from "../../public/graph-adapter.js";
 
 const indexSource = readFileSync(new URL("../../public/index.html", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../../public/app.js", import.meta.url), "utf8");
+const graphSource = readFileSync(new URL("../../public/semantic-graph.js", import.meta.url), "utf8");
 
 describe("semantic action graph homepage", () => {
   it("projects a real causal graph into typed security nodes and an explicit decision chain", () => {
@@ -36,7 +38,7 @@ describe("semantic action graph homepage", () => {
             edges: [
               { id: "auth", from: "capability", to: "action-send", kind: "constrains" },
               { id: "returns", from: "action-read", to: "data-secret", kind: "produces", on_path: true, confidence: 1 },
-              { id: "uses", from: "data-secret", to: "action-send", kind: "consumes", on_path: true, confidence: 0.98 },
+              { id: "uses", from: "data-secret", to: "action-send", kind: "consumes", arg_path: "$.args.body", on_path: true, confidence: 0.98 },
               { id: "targets", from: "action-send", to: "sink-email", kind: "targets", on_path: true, confidence: 1 },
             ],
           },
@@ -67,6 +69,25 @@ describe("semantic action graph homepage", () => {
     expect(session.reasons.map((reason: { title: string }) => reason.title)).toEqual(expect.arrayContaining([
       "能力未获授权", "参数包含污染数据", "检测到敏感信息",
     ]));
+
+    const edge = session.graph.edges.find((item: { id: string }) => item.id === "uses");
+    const edgeEvidence = buildSelectionEvidence(session, { type: "edge", value: edge });
+    expect(edgeEvidence).toMatchObject({
+      type: "edge",
+      id: "uses",
+      kindLabel: "语义关系",
+      title: "uses",
+      state: "攻击路径",
+      records: [expect.objectContaining({ id: "decision-1" })],
+    });
+    expect(edgeEvidence.subtitle).toContain("敏感数据");
+    expect(edgeEvidence.subtitle).toContain("工具动作");
+    expect(edgeEvidence.facts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "目标参数", value: "$.args.body" }),
+      expect.objectContaining({ label: "置信度", value: "98%" }),
+    ]));
+    expect(edgeEvidence.policies).toContain("TAINT_TO_EXTERNAL_SINK");
+    expect(session.timeline[0]).toEqual(expect.objectContaining({ nodeId: expect.any(String), revealSequence: expect.any(Number) }));
   });
 
   it("derives a labeled projection for sessions that do not carry a backend causal graph", () => {
@@ -111,5 +132,17 @@ describe("semantic action graph homepage", () => {
     expect(indexSource).toContain("证据详情");
     expect(indexSource).toContain("事件时间线");
     expect(indexSource).not.toContain("id=\"statsGrid\"");
+    expect(indexSource).toContain("<strong>玄鉴</strong>");
+    expect(indexSource).not.toContain("AgentSentry / OpenClaw");
+    expect(indexSource).not.toContain("v1.2.0");
+  });
+
+  it("keeps graph selections stable and reserves edge labels for edge interaction", () => {
+    expect(appSource).toContain("selectedEdgeId, preserveTransform: true");
+    expect(graphSource).toContain('event.target.closest(".semantic-edge-group")');
+    expect(graphSource).toContain('labelHit.setAttribute("class", "semantic-edge-label-hit")');
+    expect(graphSource).toContain('labelHit.addEventListener("pointerdown", reserveEdgePointer)');
+    expect(graphSource).toContain("placeEdgeLabel(geometry");
+    expect(graphSource).toContain("|| this.nodeDrag");
   });
 });

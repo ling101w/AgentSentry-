@@ -1,12 +1,9 @@
 import {
   buildDashboardModel,
-  causalPathTitles,
+  buildSelectionEvidence,
   decisionCode,
-  decisionLabel,
-  humanizeReason,
-  nodeKindLabel,
-} from "/graph-adapter.js?v=20260807-9";
-import { SemanticGraph } from "/semantic-graph.js?v=20260807-9";
+} from "/graph-adapter.js?v=20260808-10";
+import { SemanticGraph } from "/semantic-graph.js?v=20260808-10";
 
 const $ = (id) => document.getElementById(id);
 
@@ -56,7 +53,7 @@ async function refreshData({ keepSelection = true, quiet = false } = {}) {
   try {
     const [overviewResult, recordsResult, enforcementResult] = await Promise.allSettled([
       fetchJson("/api/security/overview?limit=500"),
-      fetchJson("/api/records?compact=1&limit=500"),
+      fetchJson("/api/records?limit=500"),
       fetchJson("/api/settings/enforcement"),
     ]);
     if (overviewResult.status === "rejected" && recordsResult.status === "rejected") {
@@ -67,7 +64,7 @@ async function refreshData({ keepSelection = true, quiet = false } = {}) {
     const recordsPayload = recordsResult.status === "fulfilled" ? recordsResult.value : {};
     state.records = Array.isArray(recordsPayload.records) ? recordsPayload.records : [];
     if (enforcementResult.status === "fulfilled") state.enforcement = enforcementResult.value;
-    state.model = buildDashboardModel({ overview: state.overview, records: state.records });
+    state.model = buildDashboardModel({ overview: state.overview, records: state.records, recordsMeta: recordsPayload });
 
     const preserved = keepSelection && state.model.sessions.some((session) => session.id === state.selectedSessionId);
     if (!preserved) state.selectedSessionId = preferredSession(state.model.sessions)?.id || "";
@@ -75,12 +72,13 @@ async function refreshData({ keepSelection = true, quiet = false } = {}) {
     if (!session) {
       state.playhead = 0;
       state.selectedItem = null;
-    } else if (state.live || !keepSelection) {
-      state.playhead = Math.max(0, session.timeline.length - 1);
-      state.selectedItem = defaultSelection(session);
     } else {
-      state.playhead = Math.min(state.playhead, Math.max(0, session.timeline.length - 1));
-      state.selectedItem = restoreSelection(session, state.selectedItem) || defaultSelection(session);
+      state.playhead = state.live
+        ? Math.max(0, session.timeline.length - 1)
+        : Math.min(state.playhead, Math.max(0, session.timeline.length - 1));
+      state.selectedItem = keepSelection
+        ? restoreSelection(session, state.selectedItem) || defaultSelection(session)
+        : defaultSelection(session);
     }
 
     renderAll();
@@ -120,19 +118,30 @@ function renderAll() {
 
 function renderHeader() {
   const select = $("modeSelect");
-  const mode = String(state.enforcement?.mode || "observe");
-  if (select && select.value !== mode) select.value = mode;
+  const mode = String(state.enforcement?.mode || "");
+  if (select && mode && select.value !== mode) select.value = mode;
   const source = state.model.source || {};
-  $("sourceLabel").textContent = String(source.label || "OPENCLAW RECORDS").toUpperCase();
+  $("sourceLabel").textContent = String(source.label || "玄鉴审计记录").toUpperCase();
   $("sourceMeta").textContent = source.totalRecords
     ? `${formatNumber(source.windowRecords)} / ${formatNumber(source.totalRecords)} 条审计记录`
     : "等待审计数据";
+  const alertCount = Math.max(0, Number(source.alertCount) || 0);
+  for (const id of ["headerAlertCount", "navAlertCount"]) {
+    const target = $(id);
+    if (!target) continue;
+    target.textContent = alertCount > 99 ? "99+" : String(alertCount);
+    target.hidden = alertCount === 0;
+  }
+  const runtimeProfile = $("runtimeProfile");
+  if (runtimeProfile) {
+    runtimeProfile.textContent = [state.enforcement?.profile, mode].filter(Boolean).join(" · ") || "未记录";
+  }
 
   const session = currentSession();
   const badge = $("severityBadge");
   const tone = decisionTone(session);
   badge.className = `severity-badge tone-${tone}`;
-  badge.textContent = tone === "danger" ? "高危" : tone === "warning" ? "中危" : "安全";
+  badge.textContent = !session ? "等待" : tone === "danger" ? "高危" : tone === "warning" ? "中危" : "安全";
 }
 
 function renderSessions() {
@@ -145,7 +154,7 @@ function renderSessions() {
   $("sessionList").textContent = sessions.map((session) => session.id).join("\n");
   $("sessionSelect").innerHTML = sessions.length
     ? sessions.map((session) => `<option value="${escapeHtml(session.id)}" ${session.id === state.selectedSessionId ? "selected" : ""}>${escapeHtml(incidentId(session))}</option>`).join("")
-    : `<option value="">AS-WAITING-0000</option>`;
+    : `<option value="">等待事件</option>`;
 }
 
 function selectSession(id) {
@@ -167,72 +176,49 @@ function renderRequestContext() {
     return;
   }
 
-  const userRecord = session.records.find((record) => ["lab_command", "user_message", "command"].includes(String(record.type))) || session.records[0];
-  const toolResult = session.records.find((record) => String(record.type) === "tool_result" && record.payload?.preview);
-  const input = firstText(
-    userRecord?.payload?.command,
-    userRecord?.payload?.input,
-    userRecord?.summary,
-    session.graph.nodes.find((node) => node.kind === "intent")?.title,
-    "等待用户请求",
-  );
-  const originalInput = firstText(
-    userRecord?.payload?.raw_input,
-    userRecord?.payload?.preview,
-    input,
-  );
-  const taintNode = session.graph.nodes.find((node) => node.kind === "taint");
-  const adversarial = firstText(
-    toolResult?.payload?.preview,
-    session.records.find((record) => record.payload?.adversarial_input)?.payload?.adversarial_input,
-    taintNode?.title,
-    session.decision === "allow" ? "未检测到对抗性输入" : session.alert?.rawReason,
-    "检测到可疑指令传播",
-  );
-  const tools = [...new Set([
-    ...session.graph.nodes.filter((node) => node.kind === "action").map((node) => node.tool || node.title),
-    ...session.records.map((record) => record.payload?.normalized_tool || record.payload?.toolName).filter(Boolean),
-  ])].filter(Boolean);
-  const displayTools = tools.length ? tools : ["graph_builder", "search_docs", "read_file"];
-  const eventTime = formatClock(userRecord?.created_at || session.latest);
-  const detectionTime = formatClock(session.alert?.createdAt || session.latest);
-  const attackDetected = session.decision !== "allow" || Boolean(taintNode);
+  const context = session.requestContext || {};
+  const eventMeta = [
+    context.eventTime ? `时间：${formatDateTime(context.eventTime)}` : "",
+    context.channel ? `渠道：${context.channel}` : "",
+  ].filter(Boolean);
+  const detectionMeta = [
+    context.detectionSources?.length ? `证据来源：${context.detectionSources.slice(0, 3).join("、")}` : "",
+    context.detectionTime ? `检测时间：${formatDateTime(context.detectionTime)}` : "",
+  ].filter(Boolean);
 
   target.innerHTML = `
     ${contextBlock({
       number: 1,
       title: "用户发送的原始文本",
-      content: input,
-      meta: [`时间：${eventTime}`, "渠道：Web 控制台"],
+      content: context.input,
+      meta: eventMeta,
     })}
     ${contextBlock({
       number: 2,
       title: "提供的工具集",
       tone: "purple",
-      tools: displayTools,
+      tools: context.tools || [],
     })}
     ${contextBlock({
       number: 3,
       title: "原始输入（交给模型/工具前）",
       tone: "cyan",
-      content: originalInput,
+      content: context.originalInput,
     })}
     ${contextBlock({
       number: 4,
-      title: attackDetected ? "生成的对抗性输入（检测到的注入/操纵内容）" : "输入安全检查结果",
-      tone: attackDetected ? "danger" : "cyan",
-      tag: attackDetected ? "Prompt 注入片段" : "未发现注入",
-      content: attackDetected
-        ? `${adversarial}\n\n可能诱导 Agent 调用越权工具并访问系统提示、配置或密钥。`
-        : adversarial,
-      meta: [`检测引擎：OpenClaw Prompt Shield`, `检测时间：${detectionTime}`],
+      title: context.attackDetected ? "检测到的注入 / 操纵内容" : "对抗性输入证据",
+      tone: context.attackDetected ? "danger" : "cyan",
+      tag: context.attackDetected && context.adversarial ? "Prompt 注入片段" : "无独立片段",
+      content: context.adversarial,
+      meta: detectionMeta,
     })}`;
 }
 
 function contextBlock({ number, title, tone = "blue", content = "", meta = [], tools = [], tag = "" }) {
   const body = tools.length
     ? `<div class="tool-chip-list">${tools.slice(0, 3).map((tool) => `<span class="tool-chip">${escapeHtml(tool)}<small>${escapeHtml(toolDescription(tool))}</small></span>`).join("")}${tools.length > 3 ? `<span class="tool-chip">+${tools.length - 3}<small>其他工具</small></span>` : ""}</div>`
-    : `<div class="context-content">${escapeHtml(content).replace(/\n/g, "<br>")}</div>`;
+    : `<div class="context-content ${content ? "" : "is-empty"}">${escapeHtml(content || "未记录").replace(/\n/g, "<br>")}</div>`;
   return `<section class="context-block tone-${escapeHtml(tone)}">
     <header class="context-block-header">
       <span class="context-number">${number}</span>
@@ -275,17 +261,19 @@ function renderGraph() {
   $("pathFocusBtn").classList.toggle("active", state.pathFocus);
   $("pathFocusBtn").setAttribute("aria-pressed", String(state.pathFocus));
 
-  const selectedNodeId = state.selectedItem?.type === "node" ? state.selectedItem.value.id : graph.selectedNodeId;
-  semanticGraph.setGraph(graph, { selectedNodeId });
+  const selectedNodeId = state.selectedItem?.type === "node"
+    ? state.selectedItem.value.id
+    : state.selectedItem ? "" : graph.selectedNodeId;
+  const selectedEdgeId = state.selectedItem?.type === "edge" ? state.selectedItem.value.id : "";
+  semanticGraph.setGraph(graph, { selectedNodeId, selectedEdgeId, preserveTransform: true });
   semanticGraph.setPathFocus(state.pathFocus);
   syncGraphPlayback();
-  if (state.selectedItem?.type === "edge") semanticGraph.selectEdge(state.selectedItem.value.id, { notify: false });
-  else if (selectedNodeId) semanticGraph.selectNode(selectedNodeId, { notify: false });
 }
 
 function handleGraphSelection(item) {
   state.selectedItem = item;
   renderInspector(item);
+  renderIncidentSummary();
   $("inspector").classList.toggle("open", Boolean(item));
   $("incidentConsole").classList.remove("inspector-collapsed");
   renderIcons();
@@ -295,139 +283,167 @@ function renderInspector(item) {
   const session = currentSession();
   const body = $("inspectorBody");
   if (!session) {
-    body.innerHTML = emptyInspector("等待会话", "新的安全事件会在这里解释裁决原因");
+    body.innerHTML = emptyInspector("等待会话", "新的行为事件会在这里还原当前节点和因果关系");
     return;
   }
 
-  const selection = item || defaultSelection(session);
-  if (!selection) {
-    body.innerHTML = emptyInspector("选择一个语义节点", "查看裁决、证据、溯源和命中策略");
+  if (!item) {
+    body.innerHTML = emptyInspector("选择一个节点或边", "查看此处发生了什么、输入输出和关联审计记录");
     return;
   }
+  const selection = item;
   state.selectedItem = selection;
-  const isNode = selection.type === "node";
-  const value = selection.value;
-  const graph = session.graph;
-  const score = riskScore(session.decision === "allow" ? 0 : session.alert?.score, session.decision);
-  const tone = decisionTone(session);
-  const evidenceRows = isNode ? nodeEvidence(value) : edgeEvidence(value, graph);
-  const fromNode = !isNode ? graph.nodes.find((node) => node.id === value.from) : null;
-  const toNode = !isNode ? graph.nodes.find((node) => node.id === value.to) : null;
-  const reverseConstraint = !isNode && value.label === "constrains" && fromNode?.kind === "capability" && toNode?.kind === "action";
-  const selectionTitle = isNode
-    ? `${inspectorNodeTitle(value)} → ${value.title}`
-    : `${inspectorNodeTitle(reverseConstraint ? toNode : fromNode)} → ${inspectorNodeTitle(reverseConstraint ? fromNode : toNode)}（边）`;
-  const actionNode = (isNode && value.kind === "action" ? value : null)
-    || [...graph.nodes].reverse().find((node) => node.kind === "action" && node.onPath)
-    || graph.nodes.find((node) => node.kind === "action");
-  const taintNode = graph.nodes.find((node) => node.kind === "taint");
-  const secretNode = graph.nodes.find((node) => node.kind === "secret");
-  const sinkNode = graph.nodes.find((node) => node.kind === "sink");
-  const policies = session.policies.length ? session.policies : [session.alert?.rule || "SEMANTIC_ACTION_GRAPH"];
-  const conclusion = session.decision === "deny"
-    ? `检测到 ${session.alert?.type || graph.riskLabel} 导致的越权工具调用，存在敏感数据泄露风险。`
-    : session.decision === "ask"
-      ? "检测到超出当前授权范围的高风险动作，执行已暂停并等待人工确认。"
-      : "当前动作与 TaskSpec 授权范围一致，未形成可利用的攻击路径。";
-  const response = session.decision === "deny"
-    ? "已拦截并阻断该调用，返回安全降级响应。"
-    : session.decision === "ask"
-      ? "调用已暂停，等待安全运营人员授权。"
-      : "策略校验通过，工具调用继续执行。";
-  const riskText = session.reasons.map((reason) => reason.detail).filter(Boolean).join("；") || session.subtitle;
-  const snippet = [
-    `<b>生成的对抗性输入：</b> “${escapeHtml(taintNode?.title || session.alert?.rawReason || "未发现") }”`,
-    `<b>工具调用：</b> ${escapeHtml(actionNode?.tool || actionNode?.title || "--")}(params={...})`,
-    `<b>读取对象：</b> ${escapeHtml(secretNode?.path || secretNode?.title || "system_prompt, tools, config, keys")}`,
-    `<b>返回目标：</b> ${escapeHtml(sinkNode?.title || "用户会话")}`,
-  ].join("\n");
-  const ip = firstText(...session.records.map((record) => record.payload?.ip_address || record.payload?.ip), "10.23.45.67（内网）");
+  const evidence = buildSelectionEvidence(session, selection);
+  if (!evidence) {
+    body.innerHTML = emptyInspector("没有可展示的证据", "该图元素未关联到当前会话");
+    return;
+  }
+  const meta = [
+    evidence.occurredAt ? ["发生时间", formatDateTime(evidence.occurredAt)] : null,
+    session.metadata?.incidentId ? ["事件记录", session.metadata.incidentId] : null,
+    session.metadata?.sessionId ? ["会话 ID", session.metadata.sessionId] : null,
+    session.metadata?.source ? ["数据来源", session.metadata.source] : null,
+    session.metadata?.ip ? ["IP 地址", session.metadata.ip] : null,
+  ].filter(Boolean);
 
   body.innerHTML = `
     <div class="inspector-selection">
-      <span>当前选中</span>
-      <strong>${escapeHtml(selectionTitle)}</strong>
-      <i data-lucide="link-2"></i>
+      <span>当前${evidence.type === "edge" ? "关系" : "节点"}</span>
+      <strong>${escapeHtml(evidence.id)}</strong>
+      <i data-lucide="${evidence.type === "edge" ? "git-branch" : "mouse-pointer-click"}"></i>
     </div>
 
-    <dl class="evidence-rows">
-      <div class="evidence-row">
-        <dt><i data-lucide="badge-alert"></i>策略等级</dt>
-        <dd><span class="${tone === "safe" ? "success-chip" : "risk-chip"}">${tone === "danger" ? "高危" : tone === "warning" ? "中危" : "安全"} · ${score.toFixed(1)}</span></dd>
+    <section class="selection-hero tone-${escapeHtml(evidence.tone)}">
+      <span class="selection-hero-icon"><i data-lucide="${selectionIcon(evidence)}"></i></span>
+      <div>
+        <small>${escapeHtml(evidence.kindLabel)}</small>
+        <h3>${escapeHtml(evidence.title)}</h3>
+        <p>${escapeHtml(evidence.subtitle || "未记录")}</p>
       </div>
-      <div class="evidence-row">
-        <dt><i data-lucide="circle-alert"></i>检测结论</dt>
-        <dd>${escapeHtml(conclusion)}</dd>
-      </div>
-      <div class="evidence-row">
-        <dt><i data-lucide="scan-search"></i>规则/策略命中</dt>
-        <dd>${policies.slice(0, 3).map((policy, index) => `<span class="policy-hit">${escapeHtml(policy)}${index === 0 ? `<br><small>确定性策略 / v2.3.1</small>` : ""}</span>`).join("")}</dd>
-      </div>
-      <div class="evidence-row">
-        <dt><i data-lucide="shield-check"></i>OpenClaw 响应</dt>
-        <dd>${escapeHtml(response)}<br><span class="${session.decision === "deny" ? "success-chip" : "success-text"}">${session.decision === "deny" ? "拦截成功" : escapeHtml(decisionLabel(session.decision))}</span></dd>
-      </div>
-      <div class="evidence-row">
-        <dt><i data-lucide="stamp"></i>处置动作<br>（allow / ask / deny）</dt>
-        <dd><div class="decision-segments">
-          <span class="${session.decision === "allow" ? "active-allow" : ""}">allow</span>
-          <span class="${session.decision === "ask" ? "active-ask" : ""}">ask</span>
-          <span class="${session.decision === "deny" ? "active-deny" : ""}">deny${session.decision === "deny" ? "（已执行）" : ""}</span>
-        </div></dd>
-      </div>
-      <div class="evidence-row">
-        <dt><i data-lucide="info"></i>风险说明</dt>
-        <dd>${escapeHtml(riskText)}</dd>
-      </div>
-      <div class="evidence-row">
-        <dt><i data-lucide="file-warning"></i>证据片段</dt>
-        <dd><div class="evidence-snippet">${snippet}</div></dd>
-      </div>
-      <div class="evidence-row">
-        <dt><i data-lucide="crosshair"></i>节点证据</dt>
-        <dd>${evidenceRows.slice(0, 3).map(([label, content]) => `<span class="policy-hit"><small>${escapeHtml(label)}：</small>${escapeHtml(content)}</span>`).join("")}</dd>
-      </div>
-    </dl>
+      ${evidence.state ? `<span class="selection-state">${escapeHtml(evidence.state)}</span>` : ""}
+    </section>
 
-    <div class="inspector-meta">
-      <span>时间 <b>${escapeHtml(formatDateTime(session.alert?.createdAt || session.latest))}</b></span>
-      <span>会话 ID <b>${escapeHtml(session.id)}</b></span>
-      <span>IP 地址 <b>${escapeHtml(ip)}</b></span>
-    </div>
+    <section class="inspector-section current-event-section">
+      <h4><i data-lucide="activity"></i>这里发生了什么</h4>
+      <p>${escapeHtml(evidence.description)}</p>
+      ${evidence.occurredAt ? `<time>${escapeHtml(formatDateTime(evidence.occurredAt))}</time>` : `<time>时间未记录</time>`}
+    </section>
+
+    ${renderInspectorFacts(evidence.facts)}
+    ${renderInspectorObservations(evidence.observations)}
+    ${renderInspectorRelations(evidence.relations)}
+    ${renderInspectorPolicies(evidence.policies)}
+    ${renderDownstreamDecision(evidence.downstreamDecision)}
+    ${renderEvidenceRecords(evidence.records)}
+
+    ${meta.length ? `<div class="inspector-meta">${meta.map(([label, value]) => `<span>${escapeHtml(label)} <b title="${escapeHtml(value)}">${escapeHtml(value)}</b></span>`).join("")}</div>` : ""}
 
     <details class="raw-evidence">
       <summary><span>原始脱敏证据</span><i data-lucide="chevron-down"></i></summary>
-      <pre>${escapeHtml(JSON.stringify({ selection: value, alert: session.alert, graph: graph.raw }, null, 2))}</pre>
+      <pre>${escapeHtml(JSON.stringify({ selection: selection.value, records: evidence.records }, null, 2))}</pre>
     </details>`;
+
+  bindInspectorLinks();
 }
 
-function nodeEvidence(node) {
-  const rows = [
-    ["节点类型", node.kindLabel || nodeKindLabel(node.kind)],
-    ["状态", node.state || "OBSERVED"],
-    ["证据边界", node.displayOnly ? "视图投影，不代表新增血缘" : "运行时脱敏证据"],
-  ];
-  if (node.authorized !== undefined) rows.push(["授权", node.authorized ? "已授权" : "未授权"]);
-  if (node.authorization_reason) rows.push(["授权依据", String(node.authorization_reason)]);
-  if (node.integrity) rows.push(["完整性", String(node.integrity).toUpperCase()]);
-  if (node.confidentiality) rows.push(["保密性", String(node.confidentiality).toUpperCase()]);
-  if (node.path) rows.push(["字段路径", String(node.path)]);
-  if (node.tool) rows.push(["工具", String(node.tool)]);
-  if (node.effect) rows.push(["副作用", String(node.effect)]);
-  return rows;
+function renderInspectorFacts(facts = []) {
+  if (!facts.length) return "";
+  return `<section class="inspector-section">
+    <h4><i data-lucide="list-tree"></i>当前节点</h4>
+    <dl class="selection-facts">${facts.map((fact) => `<div><dt>${escapeHtml(fact.label)}</dt><dd>${escapeHtml(fact.value).replace(/\n/g, "<br>")}</dd></div>`).join("")}</dl>
+  </section>`;
 }
 
-function edgeEvidence(edge, graph) {
-  const from = graph.nodes.find((node) => node.id === edge.from);
-  const to = graph.nodes.find((node) => node.id === edge.to);
-  return [
-    ["语义关系", edge.label],
-    ["来源", from?.title || edge.from],
-    ["目标", to?.title || edge.to],
-    ["证据", edge.displayOnly ? "视图投影" : edge.basis === "decoded" ? "解码复现" : edge.basis === "conservative" ? "保守推断" : "运行时观测"],
-    ["置信度", `${Math.round(edge.confidence * 100)}%`],
-    ["参数字段", String(edge.arg_path || edge.argPath || edge.match || "--")],
-  ];
+function renderInspectorObservations(observations = []) {
+  if (!observations.length) return "";
+  return `<section class="inspector-section">
+    <h4><i data-lucide="radar"></i>玄鉴观测</h4>
+    <div class="observation-list">${observations.map((item) => `<div class="observation-item">
+      <span>${escapeHtml(item.label)}</span>
+      <p>${escapeHtml(item.value).replace(/\n/g, "<br>")}</p>
+      ${item.recordId ? `<small>${escapeHtml(item.recordId)}</small>` : ""}
+    </div>`).join("")}</div>
+  </section>`;
+}
+
+function renderInspectorRelations(relations = []) {
+  if (!relations.length) return "";
+  return `<section class="inspector-section">
+    <h4><i data-lucide="git-branch"></i>输入 / 输出</h4>
+    <div class="relation-list">${relations.map((relation) => `<button type="button" class="relation-item direction-${escapeHtml(relation.direction)}" data-related-edge="${escapeHtml(relation.edgeId)}">
+      <i data-lucide="${relation.direction === "in" ? "corner-down-right" : "corner-right-down"}"></i>
+      <span><small>${relation.direction === "in" ? "输入" : "输出"} · ${escapeHtml(relation.label)}</small><strong>${escapeHtml(relation.nodeTitle)}</strong></span>
+      <i data-lucide="chevron-right"></i>
+    </button>`).join("")}</div>
+  </section>`;
+}
+
+function renderInspectorPolicies(policies = []) {
+  if (!policies.length) return "";
+  return `<section class="inspector-section">
+    <h4><i data-lucide="shield-alert"></i>与此处直接相关的策略</h4>
+    <div class="selection-policy-list">${policies.map((policy) => `<code>${escapeHtml(policy)}</code>`).join("")}</div>
+  </section>`;
+}
+
+function renderDownstreamDecision(decision) {
+  if (!decision?.id) return "";
+  return `<section class="inspector-section">
+    <h4><i data-lucide="gavel"></i>下游裁决</h4>
+    <button type="button" class="downstream-decision" data-related-node="${escapeHtml(decision.id)}">
+      <span><small>沿当前因果链到达</small><strong>${escapeHtml(decision.title || "安全裁决")}</strong></span>
+      <b>${escapeHtml(decision.state || "未记录")}</b>
+      <i data-lucide="chevron-right"></i>
+    </button>
+  </section>`;
+}
+
+function renderEvidenceRecords(records = []) {
+  if (!records.length) return `<section class="inspector-section evidence-records-section">
+    <h4><i data-lucide="notebook-tabs"></i>关联审计记录</h4>
+    <p class="section-empty">该图元素没有独立记录；其关系来自后端因果图投影。</p>
+  </section>`;
+  return `<section class="inspector-section evidence-records-section">
+    <h4><i data-lucide="notebook-tabs"></i>关联审计记录 <span>${records.length}</span></h4>
+    <div class="evidence-record-list">${records.map((record) => `<button type="button" class="evidence-record" data-record-id="${escapeHtml(record.id)}">
+      <span class="record-tone tone-${escapeHtml(record.severity)}"></span>
+      <span><small>${escapeHtml(record.layer || record.type)} · ${escapeHtml(formatDateTime(record.time))}</small><strong>${escapeHtml(record.title || record.type)}</strong>${record.summary ? `<p>${escapeHtml(record.summary)}</p>` : ""}</span>
+      <i data-lucide="clock-3"></i>
+    </button>`).join("")}</div>
+  </section>`;
+}
+
+function bindInspectorLinks() {
+  for (const button of $("inspectorBody").querySelectorAll("[data-related-edge]")) {
+    button.addEventListener("click", () => selectGraphItem("edge", button.dataset.relatedEdge));
+  }
+  for (const button of $("inspectorBody").querySelectorAll("[data-related-node]")) {
+    button.addEventListener("click", () => selectGraphItem("node", button.dataset.relatedNode));
+  }
+  for (const button of $("inspectorBody").querySelectorAll("[data-record-id]")) {
+    button.addEventListener("click", () => {
+      const index = currentSession()?.timeline.findIndex((event) => event.id === button.dataset.recordId) ?? -1;
+      if (index >= 0) setPlayhead(index, { live: false, select: true });
+    });
+  }
+}
+
+function selectionIcon(evidence) {
+  if (evidence.type === "edge") return "git-branch";
+  return ({
+    intent: "user-round",
+    capability: "badge-check",
+    agent: "bot",
+    action: "wrench",
+    data: "database",
+    taint: "shield-alert",
+    secret: "lock-keyhole",
+    sink: "send",
+    guard: "shield-check",
+    judge: "scale",
+    decision: "gavel",
+    collapsed: "ellipsis",
+  })[evidence.kind] || "circle";
 }
 
 function emptyInspector(title, text) {
@@ -472,17 +488,38 @@ function renderIncidentSummary() {
   severity.className = `severity-badge tone-${tone}`;
   severity.textContent = tone === "danger" ? "高危" : tone === "warning" ? "中危" : "安全";
   text.textContent = session.subtitle || session.alert?.reason || "语义行动图已生成";
-  const pathLength = session.graph.pathEdgeIds?.length || session.graph.pathNodeIds?.length || 0;
+  const pathEdges = (session.graph.pathEdgeIds || [])
+    .map((id) => session.graph.edges.find((edge) => edge.id === id))
+    .filter(Boolean);
+  const observedPathEdges = pathEdges.filter((edge) => !edge.displayOnly);
+  const pathSelection = observedPathEdges[Math.floor(observedPathEdges.length / 2)] || pathEdges[0] || null;
+  const guardNode = session.graph.nodes.find((node) => node.kind === "guard");
   const impactNode = session.graph.nodes.find((node) => node.kind === "secret")
     || session.graph.nodes.find((node) => node.kind === "capability" && node.authorized === false)
     || session.graph.nodes.find((node) => node.kind === "sink");
+  const decisionNode = [...session.graph.nodes].reverse().find((node) => node.kind === "decision");
   const result = session.decision === "deny" ? "已阻断" : session.decision === "ask" ? "待确认" : "已放行";
-  metrics.innerHTML = [
-    ["攻击路径长度", String(pathLength), "danger"],
-    ["拦截节点", "拦截 (OpenClaw)", "green"],
-    ["影响范围", impactNode?.title || "授权工具调用", tone === "safe" ? "green" : "amber"],
-    ["处理结果", result, session.decision === "deny" || session.decision === "allow" ? "green" : "amber"],
-  ].map(([label, value, tone]) => `<div class="summary-metric tone-${tone}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+  const items = [
+    {
+      label: session.decision === "allow" ? "授权路径" : "攻击路径",
+      value: `${observedPathEdges.length || pathEdges.length} 条因果边`,
+      tone: session.decision === "allow" ? "green" : "danger",
+      type: "edge",
+      id: pathSelection?.id,
+    },
+    { label: "执行边界", value: guardNode?.title || "未记录", tone: session.decision === "ask" ? "amber" : "green", type: "node", id: guardNode?.id },
+    { label: "影响对象", value: impactNode?.title || "未记录", tone: tone === "safe" ? "green" : "amber", type: "node", id: impactNode?.id },
+    { label: "处理结果", value: result, tone: session.decision === "ask" ? "amber" : "green", type: "node", id: decisionNode?.id },
+  ];
+  metrics.innerHTML = items.map((entry) => {
+    const selected = state.selectedItem?.type === entry.type && state.selectedItem?.value?.id === entry.id;
+    return `<button class="summary-metric tone-${entry.tone} ${selected ? "selected" : ""}" type="button" ${entry.id ? `data-summary-type="${entry.type}" data-summary-id="${escapeHtml(entry.id)}"` : "disabled"}>
+      <span>${escapeHtml(entry.label)}</span><strong>${escapeHtml(entry.value)}</strong><i data-lucide="chevron-right"></i>
+    </button>`;
+  }).join("");
+  for (const button of metrics.querySelectorAll("[data-summary-id]")) {
+    button.addEventListener("click", () => selectGraphItem(button.dataset.summaryType, button.dataset.summaryId));
+  }
 }
 
 function renderTimeline() {
@@ -501,16 +538,17 @@ function renderTimeline() {
     const left = max ? (index / max) * 100 : 0;
     const tone = event.decision === "deny" || event.severity === "critical" || event.severity === "high"
       ? "danger" : event.decision === "ask" || event.severity === "medium" ? "warning" : event.decision === "allow" ? "safe" : "info";
-    return `<button class="timeline-tick tone-${tone} ${index <= state.playhead ? "reached" : ""} ${index === state.playhead ? "current" : ""}" type="button" style="left:${left}%" data-step="${index}" title="${escapeHtml(`${formatClock(event.time)} · ${event.title}`)}" aria-label="跳转到 ${escapeHtml(event.title)}"><span></span><small>${escapeHtml(timelineStageLabel(event, index, events))}<time>${escapeHtml(formatClock(event.time))}</time></small></button>`;
+    return `<button class="timeline-tick tone-${tone} ${index <= state.playhead ? "reached" : ""} ${index === state.playhead ? "current" : ""}" type="button" style="left:${left}%" data-step="${index}" title="${escapeHtml(`${formatDateTime(event.time)} · ${event.title}`)}" aria-label="跳转到 ${escapeHtml(event.title)}"><span></span><small>${escapeHtml(timelineStageLabel(event, index, events))}<time>${escapeHtml(formatClock(event.time))}</time></small></button>`;
   }).join("");
 
   for (const tick of $("timelineTicks").querySelectorAll("[data-step]")) {
-    tick.addEventListener("click", () => setPlayhead(Number(tick.dataset.step), { live: false }));
+    tick.addEventListener("click", () => setPlayhead(Number(tick.dataset.step), { live: false, select: true }));
   }
 
   const event = events[state.playhead];
-  $("timelineCurrent").textContent = event ? formatClock(event.time) : "--:--:--";
-  $("timelineEvent").textContent = event?.title || "等待事件";
+  $("timelineCurrent").textContent = event?.time ? formatDateTime(event.time) : "时间未记录";
+  $("timelineEvent").textContent = event ? `${event.stage || timelineStageLabel(event, state.playhead, events)} · ${event.title}` : "等待事件";
+  $("timelineEvent").title = event?.detail || event?.title || "";
   $("liveBtn").classList.toggle("active", state.live);
   $("playbackBadge").classList.toggle("paused", !state.live);
   $("playbackBadge").innerHTML = state.live ? `<span class="live-dot"></span> LIVE` : `<i data-lucide="history"></i> REPLAY ${state.playhead + 1}/${Math.max(1, events.length)}`;
@@ -518,12 +556,13 @@ function renderTimeline() {
   syncGraphPlayback();
 }
 
-function setPlayhead(value, { live = false } = {}) {
+function setPlayhead(value, { live = false, select = true } = {}) {
   const session = currentSession();
   const max = Math.max(0, (session?.timeline.length || 1) - 1);
   state.playhead = Math.max(0, Math.min(max, Number(value) || 0));
   state.live = live && state.playhead === max;
   if (!state.live) stopPlayback();
+  if (select) applyTimelineSelection(session?.timeline[state.playhead]);
   renderTimeline();
   renderIcons();
 }
@@ -531,9 +570,8 @@ function setPlayhead(value, { live = false } = {}) {
 function syncGraphPlayback() {
   const session = currentSession();
   if (!session) return;
-  const eventCount = session.timeline.length;
-  const ratio = state.live || eventCount <= 1 ? 1 : (state.playhead + 1) / eventCount;
-  semanticGraph.setRevealRatio(ratio);
+  const event = session.timeline[state.playhead];
+  semanticGraph.setRevealSequence(state.live ? Number.POSITIVE_INFINITY : Number(event?.revealSequence || 0));
 }
 
 function togglePlayback() {
@@ -557,6 +595,7 @@ function togglePlayback() {
       return;
     }
     state.playhead += 1;
+    applyTimelineSelection(latestEvents[state.playhead]);
     renderTimeline();
     renderIcons();
   }, 900);
@@ -584,6 +623,7 @@ function jumpToLive() {
   const events = currentSession()?.timeline || [];
   state.playhead = Math.max(0, events.length - 1);
   state.live = true;
+  applyTimelineSelection(events[state.playhead]);
   renderTimeline();
   renderIcons();
   void refreshData({ keepSelection: true, quiet: true });
@@ -696,6 +736,21 @@ function restoreSelection(session, selection) {
   return value ? { type: selection.type, value } : null;
 }
 
+function selectGraphItem(type, id) {
+  const session = currentSession();
+  const list = type === "edge" ? session?.graph?.edges : session?.graph?.nodes;
+  const value = list?.find((item) => item.id === id);
+  if (!value) return;
+  if (type === "edge") semanticGraph.selectEdge(id);
+  else semanticGraph.selectNode(id);
+}
+
+function applyTimelineSelection(event) {
+  if (!event) return;
+  if (event.nodeId) selectGraphItem("node", event.nodeId);
+  else if (event.edgeId) selectGraphItem("edge", event.edgeId);
+}
+
 function timelineTickIndexes(length) {
   if (length <= 7) return Array.from({ length }, (_, index) => index);
   const indexes = new Set([0, length - 1, state.playhead]);
@@ -709,6 +764,7 @@ function shortEventLabel(value) {
 }
 
 function timelineStageLabel(event, index, events) {
+  if (event?.stage) return event.stage;
   const text = String(event?.title || "事件");
   const type = String(event?.type || "");
   const payload = event?.record?.payload || {};
@@ -718,38 +774,15 @@ function timelineStageLabel(event, index, events) {
   if (type === "tool_result" && (payload.preview || payload.adversarial_input)) return "Prompt 注入";
   if (type === "tool_call") return "工具调用";
   if (type === "tool_decision" && event.decision === "deny") return "系统/配置访问";
-  if (type === "alert" && event.decision === "deny") return "拦截 (OpenClaw)";
+  if (type === "alert" && event.decision === "deny") return "玄鉴拦截";
   if (/用户|user|command/i.test(text)) return "用户输入";
   if (/intent|意图|任务/i.test(text)) return "意图解析";
   if (/prompt|注入|taint|污染/i.test(text)) return "Prompt 注入";
   if (/tool|工具|调用/i.test(text)) return "工具调用";
   if (/系统|配置|secret|密钥|敏感/i.test(text)) return "系统/配置访问";
-  if (/拦截|阻断|deny|block/i.test(text)) return "拦截 (OpenClaw)";
+  if (/拦截|阻断|deny|block/i.test(text)) return "玄鉴拦截";
   if (/返回|result|response/i.test(text)) return "响应返回";
   return shortEventLabel(text);
-}
-
-function inspectorNodeTitle(node) {
-  if (!node) return "未知节点";
-  if (node.kind === "action") return "工具调用";
-  if (node.kind === "capability" && node.authorized === false) return "系统/配置访问";
-  if (node.kind === "capability") return "意图解析";
-  if (node.kind === "taint") return "Prompt 注入";
-  if (node.kind === "secret") return "敏感数据";
-  if (node.kind === "sink") return "外发/执行";
-  if (node.kind === "guard") return "拦截 (OpenClaw)";
-  if (node.kind === "decision") return "安全裁决";
-  if (node.kind === "intent") return "用户输入";
-  return node.title || nodeKindLabel(node.kind);
-}
-
-function firstText(...values) {
-  for (const value of values) {
-    if (value === undefined || value === null) continue;
-    const text = typeof value === "string" ? value.trim() : String(value).trim();
-    if (text) return text;
-  }
-  return "";
 }
 
 function toolDescription(tool) {
@@ -763,11 +796,7 @@ function toolDescription(tool) {
 }
 
 function incidentId(session) {
-  const date = new Date(session?.latest || Date.now());
-  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
-  const ymd = [safeDate.getFullYear(), String(safeDate.getMonth() + 1).padStart(2, "0"), String(safeDate.getDate()).padStart(2, "0")].join("");
-  const hash = [...String(session?.id || "event")].reduce((value, character) => (value * 31 + character.charCodeAt(0)) % 10000, 17);
-  return `AS-${ymd}-${String(hash).padStart(4, "0")}`;
+  return String(session?.metadata?.incidentId || session?.alert?.id || session?.records?.at(-1)?.id || session?.id || "未记录");
 }
 
 function formatDateTime(value) {
@@ -806,16 +835,10 @@ function exportCurrentReport() {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `${incidentId(session)}.json`;
+  anchor.download = `${incidentId(session).replace(/[^a-zA-Z0-9._-]+/g, "_")}.json`;
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
   showToast("事件报告已导出");
-}
-
-function riskScore(value, decision) {
-  const score = Number(value);
-  if (Number.isFinite(score) && score > 0) return Math.max(0, Math.min(10, score > 10 ? score / 10 : score));
-  return decision === "deny" ? 9.2 : decision === "ask" ? 6.8 : 1.8;
 }
 
 function decisionTone(session) {

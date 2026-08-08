@@ -4,18 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#030b13" />
-    <title>玄鉴 AgentSentry · 攻击事件详情</title>
+    <title>玄鉴 · 攻击事件详情</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=20260807-8" />
+    <link rel="stylesheet" href="/styles.css?v=20260808-10" />
   </head>
   <body>
     <div class="app-shell">
       <header class="app-header">
-        <a class="brand-lockup" href="/" aria-label="玄鉴 AgentSentry 首页">
+        <a class="brand-lockup" href="/" aria-label="玄鉴首页">
           <img src="/favicon.svg" width="38" height="38" alt="" />
           <span>
-            <strong>AgentSentry / OpenClaw</strong>
-            <small>智能体安全监控平台</small>
+            <strong>玄鉴</strong>
+            <small>Agent 行为安全裁决系统</small>
           </span>
         </a>
 
@@ -46,7 +46,7 @@
             <i data-lucide="refresh-cw"></i>
           </button>
           <button class="header-icon-button notification-button" type="button" title="查看告警" aria-label="查看告警">
-            <i data-lucide="bell"></i><b>99+</b>
+            <i data-lucide="bell"></i><b id="headerAlertCount" hidden>0</b>
           </button>
           <button class="operator-menu" type="button" aria-label="安全运营团队菜单">
             <span class="operator-avatar"><i data-lucide="user-round"></i></span>
@@ -64,13 +64,13 @@
             <a href="/security-screen#agents"><i data-lucide="bot"></i><span>智能体资产</span></a>
             <a href="/security-screen#policies"><i data-lucide="shield-check"></i><span>策略管理</span></a>
             <a href="/security-screen#tools"><i data-lucide="circle-gauge"></i><span>工具管理</span></a>
-            <a href="/security-screen#alerts" class="nav-alert"><i data-lucide="bell-ring"></i><span>告警中心</span><b>23</b></a>
+            <a href="/security-screen#alerts" class="nav-alert"><i data-lucide="bell-ring"></i><span>告警中心</span><b id="navAlertCount" hidden>0</b></a>
             <a href="/security-screen#audit"><i data-lucide="notebook-tabs"></i><span>审计日志</span></a>
             <a href="/security-screen#settings"><i data-lucide="settings"></i><span>系统设置</span></a>
           </nav>
           <div class="side-footer">
-            <strong><i data-lucide="shield-check"></i>OpenClaw</strong>
-            <span>v1.2.0</span>
+            <strong><i data-lucide="shield-check"></i>玄鉴</strong>
+            <span id="runtimeProfile">连接中</span>
           </div>
         </aside>
 
@@ -118,7 +118,7 @@
             <div id="graphViewport" class="graph-viewport" tabindex="0" aria-label="实时语义动作图">
               <div class="graph-grid" aria-hidden="true"></div>
               <div id="graphWorld" class="graph-world">
-                <svg id="graphEdges" class="graph-edges" aria-hidden="true"></svg>
+                <svg id="graphEdges" class="graph-edges" aria-label="语义关系边"></svg>
                 <div id="graphNodes" class="graph-nodes"></div>
               </div>
               <div id="graphEmpty" class="graph-empty">
@@ -194,7 +194,7 @@
             <span id="sessionCount">0</span>
             <input id="sessionSearch" tabindex="-1" />
             <div id="sessionList"></div>
-            <span id="sourceLabel">OPENCLAW RECORDS</span>
+            <span id="sourceLabel">玄鉴审计记录</span>
             <span id="sourceMeta">等待审计数据</span>
           </div>
         </main>
@@ -204,6 +204,6 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script src="/vendor/lucide.min.js?v=0.468.0"></script>
-    <script type="module" src="/app.js?v=20260807-10"></script>
+    <script type="module" src="/app.js?v=20260808-10"></script>
   </body>
 </html>

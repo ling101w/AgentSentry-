@@ -4379,7 +4379,7 @@
                 </div>
               </div>
               <div class="assessment" id="assessment">
-                等待真实审计事件进入玄鉴。运行实验用例后，系统会自动汇总工具调用、策略裁决、OpenClaw 记录和阻断结果。
+                等待真实审计事件进入玄鉴。运行实验用例后，系统会自动汇总工具调用、策略裁决、玄鉴记录和阻断结果。
               </div>
               <div class="running">防护状态：<span class="dot"></span> 稳定运行</div>
             </section>
@@ -4596,7 +4596,7 @@
       return JSON.parse(JSON.stringify(obj));
     }
 
-    function emptyData(message = "真实态势 API 暂不可用，当前不展示统计。请检查 8000 服务、SQLite 事件库和 OpenClaw 插件记录源。") {
+    function emptyData(message = "真实态势 API 暂不可用，当前不展示统计。请检查 8000 服务、SQLite 事件库和玄鉴插件记录源。") {
       const d = clone(baseData);
       d.metrics.forEach(metric => {
         metric.num = 0;
@@ -4665,7 +4665,7 @@
         state.enforcement = enforcement;
         renderAll(state.data);
         const source = state.data.source || {};
-        $("#runtimeMode").textContent = source.openclaw_available ? "OPENCLAW" : "API";
+        $("#runtimeMode").textContent = source.openclaw_available ? "玄鉴" : "API";
       } catch (err) {
         if (state.data && metricValue(state.data, "total") > 0) {
           $("#runtimeMode").textContent = "STALE";
@@ -4764,7 +4764,7 @@
       ];
       const total = items.reduce((sum, item) => sum + item.count, 0);
       if (!total) {
-        $("#modeList").innerHTML = `<div class="mode-empty">暂无真实裁决数据<br>执行 OpenClaw 工具调用后展示</div>`;
+        $("#modeList").innerHTML = `<div class="mode-empty">暂无真实裁决数据<br>执行玄鉴工具调用后展示</div>`;
         $("#radarChart").innerHTML = `<div class="mode-empty">等待审计事件</div>`;
         return;
       }
@@ -4834,7 +4834,7 @@
         <div class="decision-stat"><b class="bad">${fmt(block)}</b><span>阻断 · ${blockRate}%</span></div>
         <div class="decision-stat"><b class="warn">${fmt(ask)}</b><span>审批 · ${askRate}%</span></div>
         <div class="decision-stat"><b class="good">${fmt(allow)}</b><span>放行 · ${allowRate}%</span></div>
-        <div class="decision-note">这里展示的是玄鉴在真实运行中对 OpenClaw 工具调用和运行证据作出的处置结果，不再混入 benchmark 模式对比。</div>
+        <div class="decision-note">这里展示的是玄鉴在真实运行中对玄鉴工具调用和运行证据作出的处置结果，不再混入 benchmark 模式对比。</div>
       `;
     }
 
@@ -4933,7 +4933,7 @@
       $("#defenseMainText").textContent = enforcement.competitionReady ? "玄鉴已启动 · 全域戒备" : "玄鉴在线 · 风险巡弋中";
       $("#defenseSubText").textContent = stack.length
         ? `${profile} / ${mode} · ${enabled}/${stack.length} 重防线已列阵`
-        : "审计链路已接驳 · 策略、工具调用与 OpenClaw 记录持续汇总";
+        : "审计链路已接驳 · 策略、工具调用与玄鉴记录持续汇总";
     }
 
     function activeOverviewAlert(data) {
@@ -5875,7 +5875,7 @@
         .replace(/recent contaminated context tightens high-risk sink policy/gi, "污染上下文收紧高危工具")
         .replace(/ABAC blocked high-risk sink because relevant context includes untrusted tainted data/gi, "ABAC 阻断不可信污点流向")
         .replace(/content references sensitive credentials or private assets/gi, "内容引用敏感凭据/私有资产")
-        .replace(/OpenClaw business test request/gi, "业务测试请求")
+        .replace(/OpenClaw business test request/gi, "玄鉴业务测试请求")
         .replace(/Business tool blocked:\s*([\w.-]+)/gi, "业务工具已阻断：$1")
         .replace(/tool read_file is outside TaskSpec/gi, "read_file 超出任务边界")
         .replace(/tool ([\w.-]+) is outside TaskSpec/gi, "$1 超出任务边界")
@@ -5991,7 +5991,7 @@
       const alerts = Number(data.alertCount || 0);
       $("#assessment").textContent = totalEvents
         ? `当前汇总 ${fmt(totalEvents)} 条真实审计事件，高危/严重 ${fmt(alerts)} 条，已阻断 ${fmt(blocked)} 次，污染传播 ${fmt(taint)} 条，防护指数 ${protection}/100。`
-        : "等待真实审计事件进入玄鉴。运行实验用例后，系统会自动汇总工具调用、策略裁决、OpenClaw 记录和阻断结果。";
+        : "等待真实审计事件进入玄鉴。运行实验用例后，系统会自动汇总工具调用、策略裁决、玄鉴记录和阻断结果。";
       bindTooltips();
     }
 

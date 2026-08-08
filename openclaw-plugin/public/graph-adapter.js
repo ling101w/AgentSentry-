@@ -75,7 +75,7 @@ const KIND_ICONS = {
 
 const EXTERNAL_TOOLS = new Set(["send_email", "call_api", "write_file", "shell_exec", "memory_write"]);
 
-export function buildDashboardModel({ overview = {}, records = [] } = {}) {
+export function buildDashboardModel({ overview = {}, records = [], recordsMeta = {} } = {}) {
   const safeRecords = Array.isArray(records) ? records.filter(isObject) : [];
   const alerts = Array.isArray(overview?.alerts) ? overview.alerts.filter(isObject).map(normalizeAlert) : [];
   const recordById = new Map(safeRecords.map((record) => [String(record.id || ""), record]));
@@ -108,10 +108,12 @@ export function buildDashboardModel({ overview = {}, records = [] } = {}) {
     generatedAt: String(overview?.generated_at || ""),
     protectionIndex: clampNumber(overview?.protectionIndex, 0, 100),
     source: {
-      label: source.primary || "OpenClaw plugin records",
-      totalRecords: numberOr(source.total_records, safeRecords.length),
-      windowRecords: numberOr(source.window_records, safeRecords.length),
+      label: source.primary || "玄鉴审计记录",
+      totalRecords: numberOr(source.total_records, numberOr(recordsMeta.totalRecords, safeRecords.length)),
+      windowRecords: numberOr(source.window_records, numberOr(recordsMeta.windowRecords, safeRecords.length)),
       available: source.openclaw_available !== false,
+      alertCount: numberOr(overview?.alertCount, alerts.length),
+      recordsPath: String(recordsMeta.recordsPath || source.openclaw_source || ""),
     },
   };
 }
@@ -123,13 +125,17 @@ function buildSession(group) {
   const graph = primaryAlert?.causalGraph
     ? normalizeCausalGraph(primaryAlert.causalGraph, primaryAlert, primaryAlert.record)
     : deriveGraphFromRecords(records, primaryAlert);
+  graph.sessionId = group.id;
+  linkGraphEvidence(graph, records, primaryAlert);
   const decision = primaryAlert?.decision || decisionFromRecords(records);
   const severity = primaryAlert?.severity || severityFromRecords(records);
   const latest = records.at(-1)?.created_at || primaryAlert?.createdAt || "";
   const latestMs = dateMs(latest);
   const actionCount = graph.nodes.filter((node) => node.kind === "action").length;
-  const timeline = buildTimeline(records, primaryAlert);
+  const timeline = buildTimeline(records, primaryAlert, graph);
   const policies = policyList(primaryAlert, records);
+  const metadata = buildSessionMetadata(group.id, records, primaryAlert);
+  const requestContext = buildRequestContext(records, graph, primaryAlert);
 
   return {
     id: group.id,
@@ -150,6 +156,8 @@ function buildSession(group) {
     graph,
     timeline,
     policies,
+    metadata,
+    requestContext,
     reasons: buildWhyReasons({ alert: primaryAlert, graph, records }),
   };
 }
@@ -388,11 +396,158 @@ function normalizeEdge(raw, index, pathEdgeSet, nodeById) {
   };
 }
 
-function buildTimeline(records, alert) {
+function linkGraphEvidence(graph, records, alert) {
+  const prepared = records.map((record) => ({
+    record,
+    id: String(record.id || ""),
+    type: String(record.type || ""),
+    tool: String(record.payload?.normalized_tool || record.payload?.toolName || record.payload?.tool || "").toLowerCase(),
+    decision: normalizeDecision(record.payload?.decision || record.payload?.verdict || record.payload?.original_decision || ""),
+    text: recordText(record).toLowerCase(),
+    timeMs: dateMs(record.created_at),
+  }));
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+
+  for (const node of graph.nodes) {
+    let matches = prepared.filter((item) => recordMatchesNode(item, node));
+    if (!matches.length && ["guard", "decision"].includes(node.kind)) {
+      matches = prepared.filter((item) => ["alert", "tool_decision", "approval_request", "approval_resolution"].includes(item.type));
+    }
+    const ordered = matches.slice().sort((left, right) => left.timeMs - right.timeMs);
+    const representative = representativeNodeRecord(node, ordered);
+    node.recordIds = ordered.map((item) => item.id).filter(Boolean).slice(0, 12);
+    node.recordId = representative?.id || "";
+    node.time = String(representative?.record?.created_at || "");
+    node.evidenceTitle = String(representative?.record?.title || "");
+    node.evidenceSummary = String(representative?.record?.summary || representative?.record?.payload?.reason || "");
+  }
+
+  for (const edgeValue of graph.edges) {
+    const from = nodeById.get(edgeValue.from);
+    const to = nodeById.get(edgeValue.to);
+    const relatedIds = new Set([...(from?.recordIds || []), ...(to?.recordIds || [])]);
+    let candidates = prepared.filter((item) => relatedIds.has(item.id));
+    const argPath = String(edgeValue.arg_path || edgeValue.argPath || "");
+    if (argPath) {
+      const argTerms = [argPath, argPath.split(/[.[\]]/).filter(Boolean).at(-1)].filter(Boolean).map((item) => String(item).toLowerCase());
+      const argumentMatches = candidates.filter((item) => argTerms.some((term) => item.text.includes(term)));
+      if (argumentMatches.length) candidates = argumentMatches;
+    }
+    candidates = candidates.slice().sort((left, right) => left.timeMs - right.timeMs);
+    edgeValue.recordIds = candidates.map((item) => item.id).filter(Boolean).slice(0, 10);
+    edgeValue.time = String(to?.time || from?.time || "");
+    edgeValue.policyCodes = policyCodesForRelation(edgeValue.kind, candidates.map((item) => item.record), alert);
+    edgeValue.fromState = String(from?.state || "");
+    edgeValue.toState = String(to?.state || "");
+  }
+}
+
+function recordMatchesNode(item, node) {
+  const type = item.type;
+  const payload = item.record.payload || {};
+  const terms = nodeSearchTerms(node);
+  const includesNodeTerm = terms.some((term) => item.text.includes(term));
+
+  if (node.kind === "intent") {
+    return ["lab_command", "user_message", "command"].includes(type)
+      || (type === "message_write" && String(payload.role || "").toLowerCase() === "user")
+      || (type === "llm_input" && Boolean(payload.command || payload.preview));
+  }
+  if (node.kind === "capability") {
+    if (type === "task_spec" || isObject(payload.task_spec)) return includesNodeTerm || !terms.length;
+    return ["tool_decision", "approval_request", "alert", "guard_finding"].includes(type)
+      && (includesNodeTerm || /taskspec|capabilit|authoriz|scope|intent|授权|能力|越权/.test(item.text));
+  }
+  if (node.kind === "agent") return ["llm_input", "message_write", "session_start", "tool_call"].includes(type);
+  if (node.kind === "action") {
+    const nodeTool = String(node.tool || node.original_tool || "").toLowerCase();
+    const toolMatch = nodeTool ? item.tool === nodeTool || item.text.includes(nodeTool) : includesNodeTerm;
+    return toolMatch && ["tool_call", "tool_decision", "tool_result", "alert", "approval_request", "approval_resolution", "guard_finding"].includes(type);
+  }
+  if (node.kind === "taint") {
+    return ["tool_result", "guard_finding", "alert", "provenance_scan", "llm_input"].includes(type)
+      && (includesNodeTerm || /prompt.?injection|taint|untrusted|污染|不可信|ignore previous/.test(item.text));
+  }
+  if (node.kind === "secret") {
+    return ["tool_result", "guard_finding", "alert", "provenance_scan", "tool_decision"].includes(type)
+      && (includesNodeTerm || /secret|credential|private.?key|api.?key|token|password|敏感|密钥|凭据|私钥/.test(item.text));
+  }
+  if (node.kind === "data") {
+    return ["tool_result", "guard_finding", "alert", "provenance_scan"].includes(type)
+      && (includesNodeTerm || type === "tool_result");
+  }
+  if (node.kind === "sink") {
+    return ["tool_call", "tool_decision", "tool_result", "alert", "approval_request"].includes(type)
+      && (includesNodeTerm || (node.effect === "external" && /recipient|target|url|external|email|api|外发|目标/.test(item.text)));
+  }
+  if (node.kind === "guard") return ["guard_finding", "alert", "tool_decision", "approval_request", "approval_resolution"].includes(type);
+  if (node.kind === "decision") return item.decision !== "info" || ["alert", "approval_request", "approval_resolution"].includes(type);
+  return includesNodeTerm;
+}
+
+function nodeSearchTerms(node) {
+  const ignored = new Set(["data_field", "tool.response", "current user request", "当前用户请求", "agent plan", "policy guard"]);
+  return [node.tool, node.original_tool, node.path, node.sink, node.source, node.label, node.title]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter((value, index, values) => value.length >= 3 && !ignored.has(value) && values.indexOf(value) === index)
+    .slice(0, 8);
+}
+
+function representativeNodeRecord(node, matches) {
+  if (!matches.length) return null;
+  const priorities = {
+    intent: ["lab_command", "user_message", "command", "message_write", "llm_input"],
+    capability: ["task_spec", "tool_decision", "approval_request", "guard_finding", "alert"],
+    agent: ["llm_input", "message_write", "tool_call", "session_start"],
+    action: String(node.state || "").toUpperCase().includes("BLOCK")
+      ? ["tool_decision", "tool_call", "alert", "tool_result", "guard_finding"]
+      : ["tool_call", "tool_decision", "tool_result", "alert", "guard_finding"],
+    data: ["tool_result", "provenance_scan", "guard_finding", "alert"],
+    taint: ["tool_result", "guard_finding", "provenance_scan", "alert"],
+    secret: ["tool_result", "guard_finding", "tool_decision", "alert"],
+    sink: ["tool_call", "tool_decision", "approval_request", "alert", "tool_result"],
+    guard: ["guard_finding", "alert", "tool_decision", "approval_request", "approval_resolution"],
+    decision: ["approval_resolution", "alert", "tool_decision", "approval_request", "tool_result"],
+  }[node.kind] || [];
+  for (const type of priorities) {
+    const candidates = matches.filter((item) => item.type === type);
+    if (candidates.length) return node.kind === "guard" || node.kind === "decision" ? candidates.at(-1) : candidates[0];
+  }
+  return node.kind === "guard" || node.kind === "decision" ? matches.at(-1) : matches[0];
+}
+
+function policyCodesForRelation(kind, records, alert) {
+  const values = new Set();
+  if (alert?.rule) values.add(String(alert.rule));
+  for (const record of records) {
+    const payload = record.payload || {};
+    if (payload.rule) values.add(String(payload.rule));
+    for (const violation of Array.isArray(payload.violations) ? payload.violations : []) values.add(String(violation));
+    for (const finding of Array.isArray(payload.findings) ? payload.findings : []) {
+      if (finding?.id || finding?.type) values.add(String(finding.id || finding.type));
+    }
+    if (record.type === "guard_finding" && (payload.id || payload.type)) values.add(String(payload.id || payload.type));
+  }
+  const relation = String(kind || "").toLowerCase();
+  const pattern = ["declares", "governs", "authorizes", "constrains", "requests"].includes(relation)
+    ? /task|capabil|intent|scope|authoriz|recipient|target|授权|能力|越权/i
+    : ["produces", "derives", "taints", "consumes"].includes(relation)
+      ? /taint|secret|sensitive|provenance|inject|trust|data|exfil|污染|敏感|溯源/i
+      : relation === "targets"
+        ? /sink|external|recipient|target|email|api|write|exfil|外发|目标/i
+        : null;
+  const all = [...values].filter(Boolean);
+  if (!pattern) return all.slice(0, 6);
+  const matched = all.filter((value) => pattern.test(value));
+  return matched.slice(0, 6);
+}
+
+function buildTimeline(records, alert, graph) {
   const events = records.map((record, index) => ({
     id: String(record.id || `event-${index}`),
     time: String(record.created_at || ""),
     title: eventTitle(record),
+    detail: humanizeReason(record.summary || record.payload?.reason || ""),
     type: String(record.type || "record"),
     decision: normalizeDecision(record.payload?.decision || record.payload?.verdict || ""),
     severity: normalizeSeverity(record.severity),
@@ -403,13 +558,74 @@ function buildTimeline(records, alert) {
       id: alert.id,
       time: alert.createdAt,
       title: alert.type || "安全裁决",
+      detail: alert.reason || "",
       type: "alert",
       decision: alert.decision,
       severity: alert.severity,
       record: null,
     });
   }
+  for (const event of events) {
+    const node = bestTimelineNode(event, graph);
+    const edgeValue = node ? graph.edges.find((edge) => edge.to === node.id && edge.recordIds?.includes(event.id)) : null;
+    event.nodeId = node?.id || "";
+    event.edgeId = edgeValue?.id || "";
+    event.stage = timelineStage(event, node);
+    event.revealSequence = timelineRevealSequence(event, graph, node);
+  }
   return events.slice(-80);
+}
+
+function bestTimelineNode(event, graph) {
+  if (!graph?.nodes?.length) return null;
+  const candidates = graph.nodes.filter((node) => node.recordIds?.includes(event.id));
+  if (!candidates.length) return null;
+  const type = String(event.type || "");
+  const payload = event.record?.payload || {};
+  const preferredKinds = ["lab_command", "user_message", "command"].includes(type)
+    ? ["intent"]
+    : type === "task_spec" ? ["capability"]
+      : type === "tool_call" ? ["action", "sink"]
+        : type === "tool_result" && (payload.preview || payload.adversarial_input)
+          ? ["taint", "secret", "data", "action"]
+          : type === "tool_result" && (payload.blocked || payload.execution_status === "blocked")
+            ? ["decision", "guard", "action"]
+            : type === "tool_result" ? ["data", "action", "decision"]
+              : type === "guard_finding" ? ["taint", "secret", "capability", "guard"]
+                : type === "alert" ? ["guard", "decision", "action"]
+                  : ["decision", "guard", "action", "agent", "data"];
+  return candidates.slice().sort((left, right) => {
+    const leftRank = preferredKinds.indexOf(left.kind);
+    const rightRank = preferredKinds.indexOf(right.kind);
+    const normalizedLeft = leftRank < 0 ? preferredKinds.length : leftRank;
+    const normalizedRight = rightRank < 0 ? preferredKinds.length : rightRank;
+    return normalizedLeft - normalizedRight || left.sequence - right.sequence;
+  })[0];
+}
+
+function timelineRevealSequence(event, graph, selectedNode) {
+  const eventMs = dateMs(event.time);
+  const reached = graph.nodes.filter((node) => {
+    const nodeMs = dateMs(node.time);
+    return nodeMs > 0 && eventMs > 0 && nodeMs <= eventMs;
+  });
+  return Math.max(0, selectedNode?.sequence || 0, ...reached.map((node) => node.sequence));
+}
+
+function timelineStage(event, node) {
+  if (node) {
+    if (node.kind === "intent") return "用户输入";
+    if (node.kind === "capability") return node.authorized === false ? "授权越界" : "意图解析";
+    if (node.kind === "agent") return "Agent 计划";
+    if (node.kind === "action") return "工具调用";
+    if (node.kind === "taint") return "Prompt 注入";
+    if (node.kind === "secret") return "敏感数据";
+    if (node.kind === "data") return "工具返回";
+    if (node.kind === "sink") return "外部目标";
+    if (node.kind === "guard") return "玄鉴拦截";
+    if (node.kind === "decision") return "安全裁决";
+  }
+  return event.title || "运行事件";
 }
 
 export function buildWhyReasons({ alert, graph, records = [] } = {}) {
@@ -448,6 +664,347 @@ export function buildWhyReasons({ alert, graph, records = [] } = {}) {
     });
   }
   return reasons.slice(0, 4);
+}
+
+function buildSessionMetadata(sessionId, records, alert) {
+  const decisionRecord = records.find((record) => record.id === alert?.id)
+    || [...records].reverse().find((record) => ["alert", "tool_decision", "approval_request", "approval_resolution"].includes(String(record.type)));
+  return {
+    incidentId: String(alert?.id || decisionRecord?.id || records.at(-1)?.id || sessionId || ""),
+    sessionId: String(sessionId || ""),
+    runId: firstString(...records.map((record) => record.run_id)),
+    source: firstString(alert?.source, ...records.map((record) => record.payload?.source)),
+    scenario: firstString(...records.map((record) => record.payload?.scenario)),
+    ip: firstString(...records.map((record) => record.payload?.ip_address || record.payload?.ip)),
+    createdAt: String(records[0]?.created_at || alert?.createdAt || ""),
+    latestAt: String(records.at(-1)?.created_at || alert?.createdAt || ""),
+  };
+}
+
+function buildRequestContext(records, graph, alert) {
+  const userRecord = records.find((record) => ["lab_command", "user_message", "command"].includes(String(record.type)))
+    || records.find((record) => record.type === "message_write" && String(record.payload?.role || "").toLowerCase() === "user")
+    || records.find((record) => record.type === "llm_input")
+    || null;
+  const taintRecord = records.find((record) => record.payload?.adversarial_input)
+    || records.find((record) => record.type === "tool_result" && record.payload?.preview && /prompt.?injection|ignore previous|taint|污染|不可信/i.test(recordText(record)))
+    || records.find((record) => record.type === "guard_finding" && /prompt.?injection|taint|污染|不可信/i.test(recordText(record)))
+    || null;
+  const tools = Array.from(new Set([
+    ...graph.nodes.filter((node) => node.kind === "action").map((node) => node.tool || node.original_tool),
+    ...records.map((record) => record.payload?.normalized_tool || record.payload?.toolName || record.payload?.tool),
+  ].map((value) => String(value || "").trim()).filter(Boolean)));
+  const findings = records.flatMap((record) => Array.isArray(record.payload?.findings) ? record.payload.findings : []);
+  const detectionSources = Array.from(new Set([
+    ...findings.map((finding) => finding?.id || finding?.type || finding?.finding_type || finding?.layer),
+    alert?.rule,
+  ].map((value) => String(value || "").trim()).filter(Boolean)));
+  const taintNode = graph.nodes.find((node) => node.kind === "taint");
+  return {
+    input: firstString(userRecord?.payload?.command, userRecord?.payload?.input, userRecord?.summary, graph.nodes.find((node) => node.kind === "intent")?.title),
+    originalInput: firstString(userRecord?.payload?.raw_input, userRecord?.payload?.preview, userRecord?.payload?.command, userRecord?.summary),
+    tools,
+    adversarial: firstString(
+      taintRecord?.payload?.adversarial_input,
+      taintRecord?.payload?.preview,
+      findingEvidenceText(findings),
+      taintNode?.title,
+      alert?.rawReason,
+    ),
+    attackDetected: Boolean(taintNode || taintRecord || graph.verdict === "deny" || graph.verdict === "ask"),
+    eventTime: String(userRecord?.created_at || ""),
+    detectionTime: String(taintRecord?.created_at || alert?.createdAt || ""),
+    channel: firstString(userRecord?.payload?.channel, userRecord?.payload?.source),
+    detectionSources,
+  };
+}
+
+function findingEvidenceText(findings) {
+  for (const finding of findings) {
+    const evidence = isObject(finding?.evidence) ? finding.evidence : {};
+    const value = firstString(
+      evidence.preview,
+      Array.isArray(evidence.matched) ? evidence.matched[0] : "",
+      finding?.reason,
+    );
+    if (value) return value;
+  }
+  return "";
+}
+
+export function buildSelectionEvidence(session, selection) {
+  if (!session || !selection?.value) return null;
+  const graph = session.graph;
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const recordById = new Map(session.records.map((record) => [String(record.id || ""), record]));
+
+  if (selection.type === "edge") {
+    const edgeValue = graph.edges.find((edge) => edge.id === selection.value.id) || selection.value;
+    const from = nodeById.get(edgeValue.from);
+    const to = nodeById.get(edgeValue.to);
+    const records = (edgeValue.recordIds || []).map((id) => recordById.get(id)).filter(Boolean);
+    const downstreamDecision = reachableDecision(graph, edgeValue.to);
+    const facts = compactFacts([
+      ["语义关系", edgeValue.label],
+      ["来源节点", nodeEvidenceLabel(from, edgeValue.from)],
+      ["目标节点", nodeEvidenceLabel(to, edgeValue.to)],
+      ["来源状态", from?.state],
+      ["目标状态", to?.state],
+      ["来源字段", from?.path || from?.source],
+      ["目标参数", edgeValue.arg_path || edgeValue.argPath || edgeValue.match],
+      ["证据依据", evidenceBasisLabel(edgeValue)],
+      ["置信度", Number.isFinite(Number(edgeValue.confidence)) ? `${Math.round(Number(edgeValue.confidence) * 100)}%` : ""],
+      ["攻击路径", edgeValue.onPath ? "是" : "否"],
+      ["字段变换", Array.isArray(to?.transformations) ? to.transformations.join(" → ") : ""],
+    ]);
+    return {
+      type: "edge",
+      id: edgeValue.id,
+      kind: edgeValue.kind,
+      kindLabel: "语义关系",
+      title: edgeValue.label,
+      subtitle: `${nodeEvidenceLabel(from, edgeValue.from)} → ${nodeEvidenceLabel(to, edgeValue.to)}`,
+      state: edgeValue.onPath ? "攻击路径" : "支撑关系",
+      occurredAt: edgeValue.time || to?.time || from?.time || "",
+      tone: selectionTone(session, edgeValue, to),
+      description: describeEdge(edgeValue, from, to),
+      facts,
+      observations: recordObservations(records, { includePolicy: true }),
+      relations: [],
+      records: records.map(publicEvidenceRecord).slice(0, 8),
+      policies: edgeValue.policyCodes || [],
+      downstreamDecision: downstreamDecision ? {
+        id: downstreamDecision.id,
+        title: downstreamDecision.title,
+        state: downstreamDecision.state,
+      } : null,
+      raw: { edge: edgeValue, records },
+    };
+  }
+
+  const node = graph.nodes.find((item) => item.id === selection.value.id) || selection.value;
+  const records = (node.recordIds || []).map((id) => recordById.get(id)).filter(Boolean);
+  const incoming = graph.edges.filter((edge) => edge.to === node.id);
+  const outgoing = graph.edges.filter((edge) => edge.from === node.id);
+  const facts = compactFacts([
+    ["语义类型", node.kindLabel || nodeKindLabel(node.kind)],
+    ["当前状态", node.state],
+    ["工具", node.tool || node.original_tool],
+    ["字段路径", node.path],
+    ["数据来源", node.source],
+    ["数据完整性", node.integrity ? String(node.integrity).toUpperCase() : ""],
+    ["保密级别", node.confidentiality ? String(node.confidentiality).toUpperCase() : ""],
+    ["授权状态", node.authorized === true ? "已授权" : node.authorized === false ? "未授权" : ""],
+    ["授权主体", node.authorization_actor],
+    ["授权依据", node.authorization_reason],
+    ["目标", node.sink],
+    ["副作用", node.effect],
+    ["血缘 ID", node.provenance_id || node.provenanceId],
+    ["字段变换", Array.isArray(node.transformations) ? node.transformations.join(" → ") : ""],
+    ["证据边界", node.displayOnly ? "视图投影" : "运行时观测"],
+  ]);
+  return {
+    type: "node",
+    id: node.id,
+    kind: node.kind,
+    kindLabel: node.kindLabel || nodeKindLabel(node.kind),
+    title: nodeDisplayTitle(node),
+    subtitle: node.title,
+    state: node.state,
+    occurredAt: node.time || "",
+    tone: selectionTone(session, null, node),
+    description: describeNode(node, records, session),
+    facts,
+    observations: recordObservations(records, { includePolicy: ["capability", "taint", "secret", "guard", "decision"].includes(node.kind) }),
+    relations: [
+      ...incoming.map((edge) => ({ direction: "in", edgeId: edge.id, label: edge.label, nodeId: edge.from, nodeTitle: nodeEvidenceLabel(nodeById.get(edge.from), edge.from) })),
+      ...outgoing.map((edge) => ({ direction: "out", edgeId: edge.id, label: edge.label, nodeId: edge.to, nodeTitle: nodeEvidenceLabel(nodeById.get(edge.to), edge.to) })),
+    ],
+    records: records.map(publicEvidenceRecord).slice(0, 8),
+    policies: selectionPolicies(node, records, session.alert),
+    downstreamDecision: node.kind === "decision" ? null : reachableDecision(graph, node.id),
+    raw: { node, records },
+  };
+}
+
+function describeNode(node, records, session) {
+  const record = records.find((item) => item.id === node.recordId) || records[0];
+  const payload = record?.payload || {};
+  if (node.kind === "intent") {
+    const command = firstString(payload.command, payload.input, record?.summary, node.title);
+    return command ? `玄鉴收到用户任务：“${command}”` : "玄鉴记录了本次会话的用户任务边界。";
+  }
+  if (node.kind === "capability") {
+    return node.authorized === false
+      ? `Agent 请求了“${node.title}”，但该能力没有进入当前 TaskSpec 授权范围。`
+      : node.authorized === true
+        ? `玄鉴从用户任务中解析出“${node.title}”，并确认该能力已获授权。`
+        : `玄鉴从当前任务中识别出能力请求“${node.title}”，授权状态尚未明确。`;
+  }
+  if (node.kind === "agent") return `Agent 在此阶段形成或更新执行计划：${node.title}。`;
+  if (node.kind === "action") {
+    const status = node.state ? `，运行状态为 ${node.state}` : "";
+    return `Agent 请求调用 ${node.tool || node.title}${status}。`;
+  }
+  if (node.kind === "taint") return `工具返回或外部内容中的“${node.title}”被标记为不可信数据，并进入后续参数传播。`;
+  if (node.kind === "secret") return `字段“${node.path || node.title}”同时携带敏感性${node.integrity === "tainted" ? "和污染" : ""}标签。`;
+  if (node.kind === "data") return `工具产生了数据“${node.path || node.title}”，玄鉴记录了它的来源与完整性标签。`;
+  if (node.kind === "sink") return `Agent 的动作目标指向“${node.sink || node.title}”${node.effect ? `，副作用类型为 ${node.effect}` : ""}。`;
+  if (node.kind === "guard") return `玄鉴在执行边界运行“${node.title}”，状态为 ${node.state || "未记录"}。`;
+  if (node.kind === "decision") return `玄鉴根据已观测到的行为链输出最终裁决：${node.state || session.decisionLabel}。`;
+  if (node.kind === "collapsed") return "后端返回的因果路径超过视图上限，中间节点在此处按边界信息折叠展示。";
+  return node.evidenceSummary || node.meta || "玄鉴记录了该语义阶段的运行时证据。";
+}
+
+function describeEdge(edgeValue, from, to) {
+  const source = nodeEvidenceLabel(from, edgeValue.from);
+  const target = nodeEvidenceLabel(to, edgeValue.to);
+  const argPath = String(edgeValue.arg_path || edgeValue.argPath || "");
+  const relation = String(edgeValue.kind || "").toLowerCase();
+  if (["declares", "authorizes"].includes(relation)) return `“${source}”为“${target}”提供了明确的任务授权依据。`;
+  if (relation === "constrains") return `“${source}”形成授权边界，“${target}”超出了这条边界。`;
+  if (["requests", "invokes"].includes(relation)) return `Agent 计划从“${source}”推进到工具动作“${target}”。`;
+  if (relation === "produces") return `“${source}”执行后返回了数据“${target}”。`;
+  if (relation === "derives") return `“${target}”由上游数据“${source}”派生，血缘关系被玄鉴保留。`;
+  if (relation === "taints") return `不可信数据“${source}”污染了下游字段“${target}”。`;
+  if (relation === "consumes") return `“${target}”使用了“${source}”${argPath ? `，进入参数 ${argPath}` : ""}。`;
+  if (relation === "targets") return `动作“${source}”把副作用指向目标“${target}”。`;
+  if (relation === "blocked_by") return `“${source}”在执行前被“${target}”拦截。`;
+  if (relation === "reviewed_by") return `“${source}”被交给“${target}”进行人工复核。`;
+  if (relation === "approved_by") return `“${source}”通过了“${target}”的执行边界校验。`;
+  if (relation === "decides") return `“${source}”将本次安全裁决写入“${target}”。`;
+  return `“${source}”通过 ${edgeValue.label} 关联到“${target}”。`;
+}
+
+function recordObservations(records, { includePolicy = false } = {}) {
+  const observations = [];
+  const add = (label, value, record) => {
+    const text = displayValue(value);
+    if (!text || observations.some((item) => item.label === label && item.value === text)) return;
+    observations.push({ label, value: text, recordId: String(record?.id || "") });
+  };
+  for (const record of records) {
+    const payload = record.payload || {};
+    add("用户请求", payload.command || payload.input, record);
+    add("工具参数", payload.params, record);
+    add("返回预览", payload.preview, record);
+    add("执行状态", payload.execution_status, record);
+    add("运行裁决", payload.decision || payload.verdict, record);
+    add("记录原因", payload.reason || record.summary, record);
+    add("数据来源", payload.source, record);
+    add("场景", payload.scenario, record);
+    if (isObject(payload.task_spec)) {
+      add("任务能力", payload.task_spec.capabilities, record);
+      add("允许工具", payload.task_spec.allowed_tools, record);
+      add("允许目标", payload.task_spec.allowed_targets, record);
+    }
+    if (includePolicy) add("策略信号", payload.violations, record);
+    if (observations.length >= 10) break;
+  }
+  return observations.slice(0, 10);
+}
+
+function publicEvidenceRecord(record) {
+  return {
+    id: String(record.id || ""),
+    time: String(record.created_at || ""),
+    type: String(record.type || ""),
+    layer: String(record.layer || ""),
+    severity: String(record.severity || ""),
+    title: String(record.title || ""),
+    summary: humanizeReason(record.summary || record.payload?.reason || ""),
+  };
+}
+
+function selectionPolicies(node, records, alert) {
+  if (!["capability", "taint", "secret", "guard", "decision"].includes(node.kind)
+    && !(node.kind === "action" && /BLOCK|DENY|UNSCOPED|REJECT/.test(String(node.state || "").toUpperCase()))) return [];
+  return policyCodesForRelation(node.kind === "capability" ? "constrains" : node.kind === "guard" || node.kind === "decision" ? "decides" : "consumes", records, alert);
+}
+
+function reachableDecision(graph, startId) {
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const outgoing = new Map();
+  for (const edgeValue of graph.edges) outgoing.set(edgeValue.from, [...(outgoing.get(edgeValue.from) || []), edgeValue.to]);
+  const queue = [startId];
+  const seen = new Set(queue);
+  while (queue.length) {
+    const current = queue.shift();
+    const node = nodeById.get(current);
+    if (node?.kind === "decision") return node;
+    for (const next of outgoing.get(current) || []) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      queue.push(next);
+    }
+  }
+  return null;
+}
+
+function nodeDisplayTitle(node) {
+  if (node.kind === "intent") return "用户任务";
+  if (node.kind === "capability") return node.authorized === false ? "未授权能力" : "意图与能力解析";
+  if (node.kind === "agent") return "Agent 计划";
+  if (node.kind === "action") return "工具动作";
+  if (node.kind === "taint") return "不可信数据";
+  if (node.kind === "secret") return "敏感数据";
+  if (node.kind === "data") return "运行数据";
+  if (node.kind === "sink") return "副作用目标";
+  if (node.kind === "guard") return "玄鉴执行边界";
+  if (node.kind === "decision") return "安全裁决";
+  return node.title || node.kindLabel || "语义节点";
+}
+
+function nodeEvidenceLabel(node, fallback = "") {
+  if (!node) return String(fallback || "未记录");
+  const role = nodeDisplayTitle(node);
+  const title = String(node.title || "").trim();
+  return title && title !== role ? `${role} · ${title}` : role || String(fallback || "未记录");
+}
+
+function selectionTone(session, edgeValue, node) {
+  if (node?.kind === "decision") return node.state === "ALLOW" ? "safe" : node.state === "ASK" ? "warning" : "danger";
+  if (node?.kind === "guard") return session.decision === "allow" ? "safe" : session.decision === "ask" ? "warning" : "danger";
+  if (node?.kind === "taint" || node?.kind === "secret" || node?.authorized === false) return "danger";
+  if (edgeValue?.onPath && session.decision === "deny") return "danger";
+  if (session.decision === "ask") return "warning";
+  return "neutral";
+}
+
+function evidenceBasisLabel(edgeValue) {
+  if (edgeValue.displayOnly || edgeValue.basis === "projection") return "视图投影";
+  if (edgeValue.basis === "decoded") return "解码复现";
+  if (edgeValue.basis === "conservative") return "保守推断";
+  if (edgeValue.basis === "observed") return "运行时观测";
+  return String(edgeValue.basis || "");
+}
+
+function compactFacts(rows) {
+  return rows
+    .map(([label, value]) => ({ label: String(label), value: displayValue(value) }))
+    .filter((item) => item.value);
+}
+
+function displayValue(value) {
+  if (value === undefined || value === null || value === "") return "";
+  if (Array.isArray(value)) return value.map((item) => String(item)).filter(Boolean).join("、").slice(0, 800);
+  if (isObject(value)) {
+    try {
+      return JSON.stringify(value, null, 2).slice(0, 1200);
+    } catch {
+      return String(value).slice(0, 1200);
+    }
+  }
+  return String(value).trim().slice(0, 1200);
+}
+
+function firstString(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
 }
 
 export function nodeKindLabel(kind) {

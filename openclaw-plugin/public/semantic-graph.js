@@ -9,29 +9,42 @@ export class SemanticGraph {
     this.empty = empty;
     this.onSelect = onSelect;
     this.graph = null;
+    this.renderSignature = "";
     this.layout = null;
     this.nodeElements = new Map();
     this.edgeElements = new Map();
     this.transform = { scale: 1, x: 0, y: 0 };
     this.pathFocus = true;
     this.revealRatio = 1;
+    this.revealSequence = Number.POSITIVE_INFINITY;
     this.selectedNodeId = "";
     this.selectedEdgeId = "";
     this.drag = null;
+    this.nodeDrag = null;
+    this.suppressNodeClick = { id: "", until: 0 };
+    this.edgeFrame = null;
+    this.manualLayout = new Map();
     this.resizeTimer = null;
     this.bindViewport();
   }
 
-  setGraph(graph, { selectedNodeId = "", preserveTransform = false } = {}) {
+  setGraph(graph, { selectedNodeId = "", selectedEdgeId = "", preserveTransform = false } = {}) {
     const previousKey = this.graphKey();
+    const previousSignature = this.renderSignature;
     this.graph = graph || null;
     const nextKey = this.graphKey();
-    this.selectedNodeId = selectedNodeId || graph?.selectedNodeId || "";
-    this.selectedEdgeId = "";
-    this.nodeElements.clear();
-    this.edgeElements.clear();
+    const nextSignature = graphRenderSignature(graph);
+    this.selectedEdgeId = graph?.edges?.some((edge) => edge.id === selectedEdgeId) ? selectedEdgeId : "";
+    this.selectedNodeId = !this.selectedEdgeId && graph?.nodes?.some((node) => node.id === selectedNodeId)
+      ? selectedNodeId
+      : !this.selectedEdgeId && graph?.nodes?.some((node) => node.id === graph?.selectedNodeId)
+        ? graph.selectedNodeId
+        : "";
 
     if (!graph || !Array.isArray(graph.nodes) || graph.nodes.length < 2) {
+      this.renderSignature = "";
+      this.nodeElements.clear();
+      this.edgeElements.clear();
       this.nodesLayer.replaceChildren();
       this.svg.replaceChildren();
       this.empty.hidden = false;
@@ -40,8 +53,27 @@ export class SemanticGraph {
       return;
     }
 
+    const canReuse = previousKey === nextKey
+      && previousSignature === nextSignature
+      && this.nodeElements.size === graph.nodes.length
+      && this.edgeElements.size === graph.edges.length;
+    if (canReuse) {
+      this.renderSignature = nextSignature;
+      this.applyVisibility();
+      this.applyFocus();
+      if (!preserveTransform) this.fit();
+      else this.applyTransform();
+      return;
+    }
+
+    this.renderSignature = nextSignature;
+    this.nodeElements.clear();
+    this.edgeElements.clear();
+
     this.empty.hidden = true;
     this.layout = layoutGraph(graph, this.viewport.clientWidth, this.viewport.clientHeight);
+    this.manualLayout = this.loadManualLayout(nextKey);
+    this.applyManualLayout();
     this.world.dataset.traceKind = String(graph.traceKind || "attack");
     this.world.dataset.verdict = String(graph.verdict || "info");
     this.world.style.width = `${this.layout.worldWidth}px`;
@@ -59,7 +91,9 @@ export class SemanticGraph {
 
   graphKey() {
     if (!this.graph) return "";
-    return `${this.graph.traceKind || ""}:${this.graph.risk || ""}:${this.graph.nodes?.map((node) => node.id).join("|") || ""}`;
+    const nodes = this.graph.nodes?.map((node) => node.id).join("|") || "";
+    const edges = this.graph.edges?.map((edge) => `${edge.from}>${edge.to}`).join("|") || "";
+    return `${this.graph.sessionId || "session"}:${this.graph.traceKind || ""}:${this.graph.risk || ""}:${nodes}:${edges}`;
   }
 
   setPathFocus(enabled) {
@@ -69,6 +103,13 @@ export class SemanticGraph {
 
   setRevealRatio(ratio) {
     this.revealRatio = Math.max(0, Math.min(1, Number(ratio) || 0));
+    this.revealSequence = Number.POSITIVE_INFINITY;
+    this.applyVisibility();
+  }
+
+  setRevealSequence(sequence) {
+    const value = Number(sequence);
+    this.revealSequence = Number.isFinite(value) ? Math.max(0, value) : Number.POSITIVE_INFINITY;
     this.applyVisibility();
   }
 
@@ -109,6 +150,7 @@ export class SemanticGraph {
     this.resizeTimer = setTimeout(() => {
       if (!this.graph) return;
       this.layout = layoutGraph(this.graph, this.viewport.clientWidth, this.viewport.clientHeight);
+      this.applyManualLayout();
       this.world.style.width = `${this.layout.worldWidth}px`;
       this.world.style.height = `${this.layout.worldHeight}px`;
       this.svg.setAttribute("viewBox", `0 0 ${this.layout.worldWidth} ${this.layout.worldHeight}`);
@@ -170,8 +212,13 @@ export class SemanticGraph {
       this.nodeElements.set(id, element);
       element.addEventListener("click", (event) => {
         event.stopPropagation();
+        if (this.suppressNodeClick.id === id && Date.now() < this.suppressNodeClick.until) {
+          event.preventDefault();
+          return;
+        }
         this.selectNode(id);
       });
+      this.bindNodeDrag(element, id);
     }
     window.lucide?.createIcons({ attrs: { "stroke-width": 1.8 } });
   }
@@ -189,12 +236,17 @@ export class SemanticGraph {
     if (!this.graph || !this.layout) return;
     this.svg.replaceChildren(createDefinitions(this.graph.traceKind, this.graph.verdict));
     this.edgeElements.clear();
+    const nodeBoxes = new Map(this.graph.nodes
+      .map((node) => [node.id, nodeBox(node.id, this.layout.positions, this.nodeElements)])
+      .filter(([, box]) => Boolean(box)));
+    const labelBoxes = [];
 
     for (const edge of this.graph.edges) {
-      const from = nodeBox(edge.from, this.layout.positions, this.nodeElements);
-      const to = nodeBox(edge.to, this.layout.positions, this.nodeElements);
+      const from = nodeBoxes.get(edge.from);
+      const to = nodeBoxes.get(edge.to);
       if (!from || !to) continue;
       const geometry = edgeGeometry(from, to);
+      const labelPosition = placeEdgeLabel(geometry, [...nodeBoxes.values()], labelBoxes);
       const tone = edgeTone(edge, this.graph);
       const group = document.createElementNS(SVG_NS, "g");
       group.dataset.edgeId = edge.id;
@@ -206,25 +258,43 @@ export class SemanticGraph {
       hit.setAttribute("tabindex", "0");
       hit.setAttribute("role", "button");
       hit.setAttribute("aria-label", `${edge.label}，置信度 ${Math.round(edge.confidence * 100)}%`);
-      hit.addEventListener("click", (event) => {
+      const activateEdge = (event) => {
         event.stopPropagation();
         this.selectEdge(edge.id);
-      });
-      hit.addEventListener("keydown", (event) => {
+      };
+      const reserveEdgePointer = (event) => event.stopPropagation();
+      const activateEdgeByKeyboard = (event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           this.selectEdge(edge.id);
         }
-      });
+      };
+      hit.addEventListener("pointerdown", reserveEdgePointer);
+      hit.addEventListener("click", activateEdge);
+      hit.addEventListener("keydown", activateEdgeByKeyboard);
 
       const path = document.createElementNS(SVG_NS, "path");
       path.setAttribute("d", geometry.path);
       path.setAttribute("class", "semantic-edge");
       path.setAttribute("marker-end", `url(#arrow-${tone})`);
 
+      const labelHit = document.createElementNS(SVG_NS, "rect");
+      labelHit.setAttribute("x", String(labelPosition.x - 48));
+      labelHit.setAttribute("y", String(labelPosition.y - 14));
+      labelHit.setAttribute("width", "96");
+      labelHit.setAttribute("height", "22");
+      labelHit.setAttribute("rx", "3");
+      labelHit.setAttribute("class", "semantic-edge-label-hit");
+      labelHit.setAttribute("tabindex", "0");
+      labelHit.setAttribute("role", "button");
+      labelHit.setAttribute("aria-label", `关系 ${edge.label}：${edge.from} 到 ${edge.to}`);
+      labelHit.addEventListener("pointerdown", reserveEdgePointer);
+      labelHit.addEventListener("click", activateEdge);
+      labelHit.addEventListener("keydown", activateEdgeByKeyboard);
+
       const label = document.createElementNS(SVG_NS, "text");
-      label.setAttribute("x", String(geometry.labelX));
-      label.setAttribute("y", String(geometry.labelY));
+      label.setAttribute("x", String(labelPosition.x));
+      label.setAttribute("y", String(labelPosition.y));
       label.setAttribute("class", "semantic-edge-label");
       label.setAttribute("text-anchor", "middle");
       label.textContent = edge.label;
@@ -232,7 +302,7 @@ export class SemanticGraph {
       const title = document.createElementNS(SVG_NS, "title");
       title.textContent = `${edge.label} · ${edge.basis} · confidence ${Math.round(edge.confidence * 100)}%`;
       path.appendChild(title);
-      group.append(hit, path, label);
+      group.append(hit, path, labelHit, label);
       this.svg.appendChild(group);
       this.edgeElements.set(edge.id, group);
     }
@@ -242,8 +312,9 @@ export class SemanticGraph {
   applyVisibility() {
     if (!this.graph) return;
     const ordered = this.graph.nodes.slice().sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
-    const visibleCount = this.revealRatio >= 1 ? ordered.length : Math.max(1, Math.ceil(ordered.length * this.revealRatio));
-    const visible = new Set(ordered.slice(0, visibleCount).map((node) => node.id));
+    const visible = Number.isFinite(this.revealSequence)
+      ? new Set(ordered.filter((node, index) => node.sequence <= this.revealSequence || (this.revealSequence === 0 && index === 0)).map((node) => node.id))
+      : new Set(ordered.slice(0, this.revealRatio >= 1 ? ordered.length : Math.max(1, Math.ceil(ordered.length * this.revealRatio))).map((node) => node.id));
     for (const [id, element] of this.nodeElements) element.classList.toggle("future", !visible.has(id));
     for (const edge of this.graph.edges) {
       const element = this.edgeElements.get(edge.id);
@@ -334,7 +405,7 @@ export class SemanticGraph {
       this.zoom(event.deltaY < 0 ? 1.1 : 0.9, { x: event.clientX - box.left, y: event.clientY - box.top });
     }, { passive: false });
     this.viewport.addEventListener("pointerdown", (event) => {
-      if (!this.graph || event.button !== 0 || event.target.closest("button") || event.target.closest(".semantic-edge-hit")) return;
+      if (!this.graph || event.button !== 0 || event.target.closest("button") || event.target.closest(".semantic-edge-group")) return;
       this.drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, startX: this.transform.x, startY: this.transform.y };
       this.viewport.setPointerCapture(event.pointerId);
       this.viewport.classList.add("dragging");
@@ -352,6 +423,112 @@ export class SemanticGraph {
     };
     this.viewport.addEventListener("pointerup", endDrag);
     this.viewport.addEventListener("pointercancel", endDrag);
+  }
+
+  bindNodeDrag(element, id) {
+    element.addEventListener("pointerdown", (event) => {
+      if (!this.graph || !this.layout || event.button !== 0 || this.nodeDrag) return;
+      event.stopPropagation();
+      const point = this.layout.positions.get(id);
+      if (!point) return;
+      this.nodeDrag = {
+        id,
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startX: point.x,
+        startY: point.y,
+        moved: false,
+        element,
+      };
+      element.setPointerCapture(event.pointerId);
+      element.classList.add("dragging");
+    });
+    element.addEventListener("pointermove", (event) => {
+      const drag = this.nodeDrag;
+      if (!drag || drag.id !== id || event.pointerId !== drag.pointerId || !this.layout) return;
+      const deltaX = (event.clientX - drag.startClientX) / Math.max(0.32, this.transform.scale || 1);
+      const deltaY = (event.clientY - drag.startClientY) / Math.max(0.32, this.transform.scale || 1);
+      if (!drag.moved && Math.hypot(deltaX, deltaY) < 3) return;
+      drag.moved = true;
+      event.preventDefault();
+      const halfWidth = (element.offsetWidth || 164) / 2;
+      const halfHeight = (element.offsetHeight || 62) / 2;
+      const point = {
+        x: clamp(drag.startX + deltaX, halfWidth + 8, this.layout.worldWidth - halfWidth - 8),
+        y: clamp(drag.startY + deltaY, halfHeight + 8, this.layout.worldHeight - halfHeight - 8),
+      };
+      this.layout.positions.set(id, point);
+      element.style.left = `${point.x}px`;
+      element.style.top = `${point.y}px`;
+      this.scheduleEdgeRedraw();
+    });
+    const finish = (event) => {
+      const drag = this.nodeDrag;
+      if (!drag || drag.id !== id || event.pointerId !== drag.pointerId) return;
+      if (drag.moved) {
+        this.suppressNodeClick = { id, until: Date.now() + 300 };
+        this.saveManualPosition(id);
+        this.drawEdges();
+      }
+      element.classList.remove("dragging");
+      if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
+      this.nodeDrag = null;
+    };
+    element.addEventListener("pointerup", finish);
+    element.addEventListener("pointercancel", finish);
+  }
+
+  scheduleEdgeRedraw() {
+    if (this.edgeFrame !== null) return;
+    this.edgeFrame = window.requestAnimationFrame(() => {
+      this.edgeFrame = null;
+      this.drawEdges();
+    });
+  }
+
+  applyManualLayout() {
+    if (!this.layout || !this.manualLayout.size) return;
+    for (const [id, ratio] of this.manualLayout) {
+      if (!this.layout.positions.has(id)) continue;
+      const element = this.nodeElements.get(id);
+      const halfWidth = (element?.offsetWidth || 164) / 2;
+      const halfHeight = (element?.offsetHeight || 62) / 2;
+      this.layout.positions.set(id, {
+        x: clamp(ratio.x * this.layout.worldWidth, halfWidth + 8, this.layout.worldWidth - halfWidth - 8),
+        y: clamp(ratio.y * this.layout.worldHeight, halfHeight + 8, this.layout.worldHeight - halfHeight - 8),
+      });
+    }
+  }
+
+  saveManualPosition(id) {
+    if (!this.layout) return;
+    const point = this.layout.positions.get(id);
+    if (!point) return;
+    this.manualLayout.set(id, {
+      x: point.x / Math.max(1, this.layout.worldWidth),
+      y: point.y / Math.max(1, this.layout.worldHeight),
+    });
+    const key = this.graphKey();
+    try {
+      window.localStorage.setItem(manualLayoutStorageKey(key), JSON.stringify({
+        graphKey: key,
+        positions: Object.fromEntries(this.manualLayout),
+      }));
+    } catch {
+      // The graph remains draggable when browser storage is unavailable.
+    }
+  }
+
+  loadManualLayout(key) {
+    if (!key) return new Map();
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(manualLayoutStorageKey(key)) || "null");
+      if (parsed?.graphKey !== key || !parsed.positions || typeof parsed.positions !== "object") return new Map();
+      return new Map(Object.entries(parsed.positions).filter(([, point]) => Number.isFinite(point?.x) && Number.isFinite(point?.y)));
+    } catch {
+      return new Map();
+    }
   }
 }
 
@@ -506,8 +683,15 @@ function edgeGeometry(from, to) {
     const start = { x: forward ? from.right : from.left, y: from.y };
     const end = { x: forward ? to.left : to.right, y: to.y };
     const dx = end.x - start.x;
+    const control1 = { x: start.x + dx * 0.46, y: start.y };
+    const control2 = { x: end.x - dx * 0.46, y: end.y };
     return {
-      path: `M${start.x},${start.y} C${start.x + dx * 0.46},${start.y} ${end.x - dx * 0.46},${end.y} ${end.x},${end.y}`,
+      path: `M${start.x},${start.y} C${control1.x},${control1.y} ${control2.x},${control2.y} ${end.x},${end.y}`,
+      start,
+      control1,
+      control2,
+      end,
+      horizontal,
       labelX: (start.x + end.x) / 2,
       labelY: (start.y + end.y) / 2 - 8,
     };
@@ -516,11 +700,71 @@ function edgeGeometry(from, to) {
   const start = { x: from.x, y: downward ? from.bottom : from.top };
   const end = { x: to.x, y: downward ? to.top : to.bottom };
   const dy = end.y - start.y;
+  const control1 = { x: start.x, y: start.y + dy * 0.48 };
+  const control2 = { x: end.x, y: end.y - dy * 0.48 };
   return {
-    path: `M${start.x},${start.y} C${start.x},${start.y + dy * 0.48} ${end.x},${end.y - dy * 0.48} ${end.x},${end.y}`,
+    path: `M${start.x},${start.y} C${control1.x},${control1.y} ${control2.x},${control2.y} ${end.x},${end.y}`,
+    start,
+    control1,
+    control2,
+    end,
+    horizontal,
     labelX: (start.x + end.x) / 2 + 8,
     labelY: (start.y + end.y) / 2 - 4,
   };
+}
+
+function placeEdgeLabel(geometry, nodeBoxes, occupiedBoxes) {
+  const candidates = [0.5, 0.35, 0.65, 0.24, 0.76, 0.18, 0.82, 0.12, 0.88].map((ratio) => {
+    const point = cubicPoint(geometry, ratio);
+    return { x: point.x, y: point.y - (geometry.horizontal ? 8 : 4) };
+  });
+  const midpoint = candidates[0];
+  for (const offset of [-24, 24, -48, 48, -72, 72, -96, 96]) {
+    candidates.push(geometry.horizontal
+      ? { x: midpoint.x, y: midpoint.y + offset }
+      : { x: midpoint.x + offset, y: midpoint.y });
+  }
+
+  for (const candidate of candidates) {
+    const box = edgeLabelBox(candidate);
+    const collidesWithNode = nodeBoxes.some((node) => boxesOverlap(box, {
+      left: node.left - 4,
+      right: node.right + 4,
+      top: node.top - 4,
+      bottom: node.bottom + 4,
+    }));
+    if (collidesWithNode || occupiedBoxes.some((occupied) => boxesOverlap(box, occupied))) continue;
+    occupiedBoxes.push(box);
+    return candidate;
+  }
+
+  const fallback = { x: geometry.labelX, y: geometry.labelY };
+  occupiedBoxes.push(edgeLabelBox(fallback));
+  return fallback;
+}
+
+function cubicPoint(geometry, ratio) {
+  const t = Math.max(0, Math.min(1, ratio));
+  const inverse = 1 - t;
+  return {
+    x: inverse ** 3 * geometry.start.x
+      + 3 * inverse ** 2 * t * geometry.control1.x
+      + 3 * inverse * t ** 2 * geometry.control2.x
+      + t ** 3 * geometry.end.x,
+    y: inverse ** 3 * geometry.start.y
+      + 3 * inverse ** 2 * t * geometry.control1.y
+      + 3 * inverse * t ** 2 * geometry.control2.y
+      + t ** 3 * geometry.end.y,
+  };
+}
+
+function edgeLabelBox(point) {
+  return { left: point.x - 48, right: point.x + 48, top: point.y - 14, bottom: point.y + 8 };
+}
+
+function boxesOverlap(left, right) {
+  return left.left < right.right && left.right > right.left && left.top < right.bottom && left.bottom > right.top;
 }
 
 function createDefinitions(traceKind, verdict) {
@@ -588,7 +832,7 @@ function nodeDisplay(node) {
   if (node.kind === "taint") return { title: "Prompt 注入", subtitle: "指令操纵 / 越权", icon: iconByKind.taint };
   if (node.kind === "secret") return { title: "敏感数据", subtitle: rawTitle, icon: iconByKind.secret };
   if (node.kind === "sink") return { title: "外发/执行", subtitle: rawTitle, icon: iconByKind.sink };
-  if (node.kind === "guard") return { title: "拦截 (OpenClaw)", subtitle: "策略拦截 / 阻断响应", icon: iconByKind.guard };
+  if (node.kind === "guard") return { title: "玄鉴执行边界", subtitle: `${rawTitle} · ${node.state || "EVALUATING"}`, icon: iconByKind.guard };
   if (node.kind === "decision") return { title: "安全裁决", subtitle: rawTitle, icon: iconByKind.decision };
   if (node.kind === "action") {
     const unsafe = node.authorized === false || /BLOCK|DENY|UNSCOPED|REJECT/.test(state);
@@ -612,4 +856,35 @@ function escapeHtml(value) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
+}
+
+function manualLayoutStorageKey(graphKey) {
+  let hash = 2166136261;
+  for (let index = 0; index < graphKey.length; index += 1) {
+    hash ^= graphKey.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `xuanjian:semantic-layout:${(hash >>> 0).toString(36)}`;
+}
+
+function graphRenderSignature(graph) {
+  if (!graph) return "";
+  const nodes = (graph.nodes || []).map((node) => [
+    node.id,
+    node.kind,
+    node.title,
+    node.state,
+    node.onPath,
+    node.displayOnly,
+    node.authorized,
+  ].join(":"));
+  const edges = (graph.edges || []).map((edge) => [
+    edge.id,
+    edge.from,
+    edge.to,
+    edge.label,
+    edge.onPath,
+    edge.displayOnly,
+  ].join(":"));
+  return `${graph.verdict || ""}|${nodes.join("|")}|${edges.join("|")}`;
 }
