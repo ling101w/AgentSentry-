@@ -1,1108 +1,874 @@
-const ALL_SESSIONS = "__all__";
-
-const state = {
-  records: [],
-  detailCache: new Map(),
-  stats: null,
-  selectedId: "",
-  selectedRecord: null,
-  selectedSession: "",
-  focusMode: "important",
-  autoRefresh: true,
-  timelinePage: 1,
-  timelinePageSize: 30,
-  timer: null,
-  enforcement: null,
-};
-
-const layerNames = {
-  "Context Provenance": "上下文溯源域",
-  "State Integrity": "状态完整性域",
-  "Intent Authorization": "意图授权域",
-  "Tool Boundary": "工具边界域",
-  "Evidence Feedback": "证据回流环",
-  Runtime: "运行时",
-};
-
-const typeNames = {
-  finding_group: "发现聚合",
-  lab_command: "实验指令",
-  session_start: "会话开始",
-  provenance_scan: "溯源扫描",
-  llm_input: "模型输入",
-  message_write: "消息写入",
-  tool_decision: "工具裁决",
-  tool_result: "工具结果",
-  guard_finding: "防护发现",
-  alert: "告警",
-  approval_request: "审批请求",
-  approval_resolution: "审批结果",
-  approval_cache_hit: "审批缓存",
-  response_cover: "响应覆盖",
-  runtime: "运行时",
-};
-
-const severityNames = {
-  info: "信息",
-  success: "通过",
-  warning: "警告",
-  danger: "高危",
-};
-
-const decisionNames = {
-  allow: "允许",
-  ask: "待确认",
-  deny: "拒绝",
-  block: "阻断",
-};
-
-const enforcementModeText = {
-  observe: {
-    label: "观察",
-    title: "观察模式",
-    text: "只记录裁决、发现和告警，不改变 OpenClaw 原生工具执行结果。适合跑无防护基线、观察误报和做对比实验。",
-  },
-  approval: {
-    label: "审批",
-    title: "审批模式",
-    text: "高风险 ask/deny 工具调用进入 OpenClaw 人工审批；选择 allow-always 后会按工具名和参数哈希缓存同一操作。",
-  },
-  block: {
-    label: "阻断",
-    title: "阻断模式",
-    text: "确定为 deny 的高风险工具调用在执行前硬阻断。适合比赛演示、高风险工具调用和真实防护验证。",
-  },
-};
-
-const roleNames = {
-  user: "用户",
-  assistant: "助手",
-  toolResult: "工具结果",
-  system: "系统",
-};
-
-const stopReasonNames = {
-  stop: "自然结束",
-  toolUse: "请求调用工具",
-  timeout: "超时",
-};
-
-const toolNames = {
-  agents_list: "列出 Agent",
-  read_webpage: "读取网页",
-  call_api: "调用 API",
-  read_file: "读取文件",
-  write_file: "写入文件",
-  send_email: "发送邮件",
-  shell_exec: "执行命令",
-  memory_read: "读取记忆",
-  memory_write: "写入记忆",
-};
-
-const findingTypeNames = {
-  deterministic: "确定性规则",
-  heuristic: "启发式规则",
-  learned: "旧版哨兵判断",
-  behavioral: "统计行为基线",
-  semantic: "语义复核",
-  unknown: "未知类型",
-};
-
-const textTranslations = [
-  [/workspace file appears to contain embedded secrets/gi, "工作区文件疑似包含内嵌密钥"],
-  [/configuration appears to contain embedded secrets/gi, "配置文件疑似包含内嵌密钥"],
-  [/configuration contains hardcoded secret values/gi, "配置文件包含硬编码敏感值"],
-  [/workspace contains sensitive asset file/gi, "工作区包含敏感资产文件"],
-  [/AgentSentry dashboard started/gi, "玄鉴面板已启动"],
-  [/OpenClaw prompt build/gi, "OpenClaw 提示词构建"],
-  [/LLM input prepared/gi, "模型输入已准备"],
-  [/system prompt preview disabled/gi, "系统提示词预览已关闭"],
-  [/Message write: user/gi, "写入用户消息"],
-  [/Message write: assistant/gi, "写入助手消息"],
-  [/Message write: toolResult/gi, "写入工具结果"],
-  [/Tool call completed/gi, "工具调用完成"],
-  [/tool result returned/gi, "工具已返回结果"],
-  [/High-risk tool call: ([\w.-]+)/gi, (_, tool) => `高风险工具调用：${displayTool(tool)}`],
-  [/Tool call: ([\w.-]+)/gi, (_, tool) => `工具调用：${displayTool(tool)}`],
-  [/Business tool blocked: ([\w.-]+)/gi, (_, tool) => `业务工具已阻断：${displayTool(tool)}`],
-  [/Business tool decision: ([\w.-]+)/gi, (_, tool) => `业务工具裁决：${displayTool(tool)}`],
-  [/Business tool skipped: ([\w.-]+)/gi, (_, tool) => `业务工具未执行：${displayTool(tool)}`],
-  [/Lab policy deny: ([\w.-]+)/gi, (_, tool) => `实验策略拒绝：${displayTool(tool)}`],
-  [/Lab policy ask: ([\w.-]+)/gi, (_, tool) => `实验策略需确认：${displayTool(tool)}`],
-  [/tool ([\w.-]+) is outside TaskSpec/gi, (_, tool) => `工具 ${displayTool(tool)} 超出当前任务规范`],
-  [/tool ([\w.-]+) lacks explicit capability authorization/gi, (_, tool) => `工具 ${displayTool(tool)} 缺少显式能力授权`],
-  [/dynamic intent tracking detected drift from read-only task to high-risk action/gi, "动态意图追踪发现只读任务漂移到高风险动作"],
-  [/task intent does not allow email/gi, "当前任务未授权邮件外发"],
-  [/tool arguments match deterministic trust-risk policy/gi, "工具参数命中确定性信任风险策略"],
-  [/content contains prompt-injection or exfiltration indicators/gi, "内容包含提示注入或数据外传信号"],
-  [/content attempts to persist privileged instructions into memory or startup flow/gi, "内容试图把特权指令持久化到记忆或启动流程"],
-  [/high-risk action deviates from task intent/gi, "高风险动作偏离当前任务意图"],
-  [/read path references sensitive asset/gi, "读取路径指向敏感资产"],
-  [/TaskSpec/gi, "任务规范"],
-  [/Workspace provenance scan completed/gi, "工作区溯源扫描完成"],
-  [/Workspace provenance scan blocked workspace/gi, "工作区溯源扫描阻断"],
-  [/OpenClaw produced a tool trace for this Promptbeat case, but the provider timed out before the final assistant reply\./gi, "OpenClaw 已为该 PromptBeat 用例产生工具轨迹，但模型服务在最终回复前超时。"],
-  [/Observed tool calls: ([^.]+)\./gi, (_, tools) => `观察到的工具调用：${tools.split(",").map((tool) => displayTool(tool.trim())).join("、")}。`],
-  [/Check the AgentSentry dashboard for tool_decision, alert, and tool_result records\./gi, "请在玄鉴面板查看工具裁决、告警和工具结果记录。"],
-  [/Request timed out before a response was generated\. Please try again, or increase `agents\.defaults\.timeoutSeconds` in your config\./gi, "生成回复前请求超时。可以重试，或调高 OpenClaw 配置中的 agents.defaults.timeoutSeconds。"],
-  [/(\d+) findings; (\d+) files scanned; cached/gi, (_, findings, files) => `${findings} 个发现；已扫描 ${files} 个文件；使用缓存`],
-  [/(\d+) findings; (\d+) files scanned/gi, (_, findings, files) => `${findings} 个发现；已扫描 ${files} 个文件`],
-  [/Do not exfiltrate data/gi, "不要外传数据"],
-  [/Only answer the user/gi, "只回答用户"],
-];
+import {
+  buildDashboardModel,
+  causalPathTitles,
+  decisionCode,
+  decisionLabel,
+  humanizeReason,
+  nodeKindLabel,
+} from "/graph-adapter.js?v=20260807-9";
+import { SemanticGraph } from "/semantic-graph.js?v=20260807-9";
 
 const $ = (id) => document.getElementById(id);
 
-async function refresh({ keepSelection = true } = {}) {
-  setStatus("刷新中", "loading");
+const state = {
+  model: { sessions: [], source: {} },
+  overview: {},
+  records: [],
+  enforcement: null,
+  selectedSessionId: "",
+  selectedItem: null,
+  pathFocus: true,
+  playhead: 0,
+  live: true,
+  playing: false,
+  loading: false,
+  refreshTimer: null,
+  playbackTimer: null,
+  search: "",
+};
+
+const semanticGraph = new SemanticGraph({
+  viewport: $("graphViewport"),
+  world: $("graphWorld"),
+  svg: $("graphEdges"),
+  nodes: $("graphNodes"),
+  empty: $("graphEmpty"),
+  onSelect: handleGraphSelection,
+});
+
+initialize();
+
+async function initialize() {
+  bindInteractions();
+  renderIcons();
+  await refreshData({ keepSelection: false });
+  state.refreshTimer = window.setInterval(() => {
+    if (state.live && !state.loading) void refreshData({ keepSelection: true, quiet: true });
+  }, 5000);
+}
+
+async function refreshData({ keepSelection = true, quiet = false } = {}) {
+  if (state.loading) return;
+  state.loading = true;
+  if (!quiet) setConnection("connecting", "同步中");
+  $("refreshBtn").classList.add("spinning");
+
   try {
-    const limit = $("limitSelect").value;
-    const [recordsResponse, statsResponse] = await Promise.all([
-      fetch(`/api/records?compact=1&limit=${encodeURIComponent(limit)}`).then((res) => res.json()),
-      fetch(`/api/stats?limit=${encodeURIComponent(Math.min(Number(limit) || 500, 1000))}`).then((res) => res.json()),
+    const [overviewResult, recordsResult, enforcementResult] = await Promise.allSettled([
+      fetchJson("/api/security/overview?limit=500"),
+      fetchJson("/api/records?compact=1&limit=500"),
+      fetchJson("/api/settings/enforcement"),
     ]);
+    if (overviewResult.status === "rejected" && recordsResult.status === "rejected") {
+      throw overviewResult.reason || recordsResult.reason;
+    }
 
-    state.records = recordsResponse.records || [];
-    state.stats = {
-      ...(statsResponse || {}),
-      totalRecords: recordsResponse.totalRecords ?? statsResponse?.totalRecords ?? statsResponse?.total,
-      windowRecords: recordsResponse.windowRecords ?? state.records.length,
-      windowLimit: recordsResponse.windowLimit ?? Number(limit),
-    };
-    normalizeSelection(keepSelection);
-    setStatus("已连接", "ok");
-    render();
-  } catch (error) {
-    setStatus("连接失败", "bad");
-    $("timeline").innerHTML = `<div class="empty">读取记录失败：${escapeHtml(error.message || error)}</div>`;
-  }
-}
+    state.overview = overviewResult.status === "fulfilled" ? overviewResult.value : {};
+    const recordsPayload = recordsResult.status === "fulfilled" ? recordsResult.value : {};
+    state.records = Array.isArray(recordsPayload.records) ? recordsPayload.records : [];
+    if (enforcementResult.status === "fulfilled") state.enforcement = enforcementResult.value;
+    state.model = buildDashboardModel({ overview: state.overview, records: state.records });
 
-async function refreshEnforcementMode() {
-  try {
-    const response = await fetch("/api/settings/enforcement", { cache: "no-store" }).then((res) => res.json());
-    if (!response.ok) throw new Error(response.error || "读取模式失败");
-    state.enforcement = response;
-    renderEnforcementMode();
-  } catch (error) {
-    const status = $("modeStatus");
-    if (status) status.textContent = `模式读取失败：${error.message || error}`;
-  }
-}
+    const preserved = keepSelection && state.model.sessions.some((session) => session.id === state.selectedSessionId);
+    if (!preserved) state.selectedSessionId = preferredSession(state.model.sessions)?.id || "";
+    const session = currentSession();
+    if (!session) {
+      state.playhead = 0;
+      state.selectedItem = null;
+    } else if (state.live || !keepSelection) {
+      state.playhead = Math.max(0, session.timeline.length - 1);
+      state.selectedItem = defaultSelection(session);
+    } else {
+      state.playhead = Math.min(state.playhead, Math.max(0, session.timeline.length - 1));
+      state.selectedItem = restoreSelection(session, state.selectedItem) || defaultSelection(session);
+    }
 
-async function setEnforcementMode(mode) {
-  const select = $("modeSelect");
-  const status = $("modeStatus");
-  if (select) select.disabled = true;
-  if (status) status.textContent = "模式保存中";
-  try {
-    const response = await fetch("/api/settings/enforcement", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode }),
-    }).then((res) => res.json());
-    if (!response.ok) throw new Error(response.error || "保存失败");
-    state.enforcement = response;
-    renderEnforcementMode();
-    refresh({ keepSelection: true });
+    renderAll();
+    setConnection(state.model.source.available === false ? "warning" : "live", state.model.source.available === false ? "降级" : "LIVE");
   } catch (error) {
-    if (status) status.textContent = `模式保存失败：${error.message || error}`;
-    await refreshEnforcementMode();
+    setConnection("error", "连接失败");
+    showToast(`无法读取审计数据：${error?.message || error}`, "error");
+    if (!state.model.sessions.length) renderAll();
   } finally {
-    if (select) select.disabled = false;
+    state.loading = false;
+    $("refreshBtn").classList.remove("spinning");
   }
 }
 
-function renderEnforcementMode() {
-  const mode = state.enforcement?.mode || "observe";
-  const meta = enforcementModeText[mode] || enforcementModeText.observe;
-  const select = $("modeSelect");
-  if (select && select.value !== mode) select.value = mode;
-  const status = $("modeStatus");
-  if (status) status.textContent = `当前：${meta.label}`;
-  const title = $("modeHelpTitle");
-  if (title) title.textContent = meta.title;
-  const help = $("modeHelpText");
-  if (help) help.textContent = meta.text;
-  renderSecurityStack();
-}
-
-function renderSecurityStack() {
-  const items = Array.isArray(state.enforcement?.securityStack) ? state.enforcement.securityStack : [];
-  const target = $("securityStack");
-  const readiness = $("stackReadiness");
-  const mode = $("stackMode");
-  if (!target || !readiness || !mode) return;
-
-  if (!items.length) {
-    target.innerHTML = '<span class="stack-empty">防护栈状态暂不可用</span>';
-    readiness.textContent = "等待运行配置";
-    mode.textContent = "--";
-    return;
-  }
-
-  const enabled = items.filter((item) => item.enabled).length;
-  const enforcementMode = state.enforcement?.mode || "observe";
-  const modeMeta = enforcementModeText[enforcementMode] || enforcementModeText.observe;
-  readiness.textContent = state.enforcement?.competitionReady
-    ? `比赛防护链已就绪 · ${enabled}/${items.length}`
-    : `已启用 ${enabled}/${items.length} 层 · 尚未满足比赛档完整条件`;
-  const profile = String(state.enforcement?.profile || "custom").toUpperCase();
-  mode.textContent = `${profile} / ${modeMeta.label}`;
-  mode.className = `stack-mode ${state.enforcement?.competitionReady ? "ready" : "partial"}`;
-  target.innerHTML = items.map((item, index) => `
-    <div class="stack-item ${item.enabled ? "enabled" : "disabled"}">
-      <span class="stack-index">${index + 1}</span>
-      <strong>${escapeHtml(item.label || item.key)}</strong>
-      <span class="stack-state">${item.enabled ? "开启" : "关闭"}</span>
-    </div>
-  `).join("");
-}
-
-function normalizeSelection(keepSelection) {
-  const sessions = buildSessions();
-  const hasSelectedSession = sessions.some((session) => session.key === state.selectedSession);
-
-  if (!state.selectedSession || (!hasSelectedSession && state.selectedSession !== ALL_SESSIONS)) {
-    state.selectedSession = ALL_SESSIONS;
-  }
-
-  if (!keepSelection || !state.records.some((record) => record.id === state.selectedId)) {
-    state.selectedId = "";
-  }
-}
-
-function render() {
-  renderStats();
-  renderFilterOptions("layerFilter", state.records.map((record) => record.layer).filter(Boolean), layerNames);
-  renderFilterOptions("typeFilter", state.records.map((record) => record.type).filter(Boolean), typeNames);
-  renderFocusMode();
-  renderSessions();
-  renderSessionSummary();
-
-  const records = groupTimelineRecords(filteredRecords());
-  const paged = paginate(records, state.timelinePage, state.timelinePageSize);
-  state.timelinePage = paged.page;
-  if (!state.selectedId || !paged.items.some((record) => record.id === state.selectedId)) {
-    state.selectedId = paged.items[0]?.id || records[0]?.id || "";
-  }
-
-  $("recordCount").textContent = `${records.length} 条 · 第 ${paged.page}/${paged.pages} 页`;
-  $("timeline").innerHTML = records.length
-    ? `${paged.items.map(eventHtml).join("")}${paginationHtml("timeline", paged)}`
-    : '<div class="empty">暂无记录</div>';
-  bindTimeline(records);
-  bindPagination("timeline", (page) => {
-    state.timelinePage = page;
-    render();
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: { Accept: "application/json", ...(options.headers || {}) },
+    ...options,
   });
-
-  const selected = records.find((record) => record.id === state.selectedId) || state.records.find((record) => record.id === state.selectedId);
-  if (selected) renderDetail(selected);
-  else renderEmptyDetail();
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.ok === false) throw new Error(payload?.error || `${url} ${response.status}`);
+  return payload;
 }
 
-function renderStats() {
-  const stats = state.stats || {};
-  const records = state.records;
-  const severity = stats.bySeverity || {};
-  const toolDecisions = records.filter((record) => record.type === "tool_decision").length;
-  const alerts = records.filter((record) => record.type === "alert").length;
-  const blocked = records.filter((record) => isBlocked(record)).length;
-  const cacheHits = records.filter((record) => record.type === "approval_cache_hit" || record.payload?.approval_cache_hit).length;
-
-  $("recordsPath").textContent = stats.recordsPath || "~/.openclaw/agentsentry/records.jsonl";
-  $("statsGrid").innerHTML = [
-    statCard("总记录", stats.totalRecords ?? stats.total ?? records.length ?? 0, `最近展示 ${stats.windowRecords ?? records.length} / ${stats.windowLimit ?? $("limitSelect").value}`),
-    statCard("会话", stats.sessions || buildSessions().length || 0, "OpenClaw sessions"),
-    statCard("高危", severity.danger || 0, "danger", "danger"),
-    statCard("警告", severity.warning || 0, "warning", "warning"),
-    statCard("工具裁决", toolDecisions, "tool_decision"),
-    statCard("告警", alerts, "alert", "danger"),
-    statCard("阻断/拒绝", blocked, "block", "danger"),
-    statCard("缓存命中", cacheHits, "approval cache"),
-  ].join("");
+function renderAll() {
+  renderSessions();
+  renderHeader();
+  renderRequestContext();
+  renderGraph();
+  renderInspector(state.selectedItem);
+  renderIncidentFlow();
+  renderIncidentSummary();
+  renderTimeline();
+  renderIcons();
 }
 
-function statCard(label, value, caption, tone = "") {
-  return `
-    <article class="stat ${escapeHtml(tone)}">
-      <span>${escapeHtml(label)}</span>
-      <strong>${escapeHtml(value)}</strong>
-      <em>${escapeHtml(caption)}</em>
-    </article>
-  `;
-}
+function renderHeader() {
+  const select = $("modeSelect");
+  const mode = String(state.enforcement?.mode || "observe");
+  if (select && select.value !== mode) select.value = mode;
+  const source = state.model.source || {};
+  $("sourceLabel").textContent = String(source.label || "OPENCLAW RECORDS").toUpperCase();
+  $("sourceMeta").textContent = source.totalRecords
+    ? `${formatNumber(source.windowRecords)} / ${formatNumber(source.totalRecords)} 条审计记录`
+    : "等待审计数据";
 
-function renderFilterOptions(id, values, labels) {
-  const select = $(id);
-  const current = select.value;
-  const unique = Array.from(new Set(values)).sort();
-  select.innerHTML = '<option value="">全部</option>' + unique.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(labels[value] || value)}</option>`).join("");
-  select.value = unique.includes(current) ? current : "";
+  const session = currentSession();
+  const badge = $("severityBadge");
+  const tone = decisionTone(session);
+  badge.className = `severity-badge tone-${tone}`;
+  badge.textContent = tone === "danger" ? "高危" : tone === "warning" ? "中危" : "安全";
 }
 
 function renderSessions() {
-  const sessions = buildSessions();
-  $("sessionCount").textContent = `${sessions.length}`;
-
-  const allActive = state.selectedSession === ALL_SESSIONS ? "active" : "";
-  const allItem = `
-    <button class="session-item ${allActive}" data-session="${ALL_SESSIONS}" type="button">
-      <span class="session-main">全部会话</span>
-      <span class="session-meta">${state.records.length} 条记录</span>
-    </button>
-  `;
-
-  const items = sessions
-    .map((session) => {
-      const active = session.key === state.selectedSession ? "active" : "";
-      return `
-        <button class="session-item ${active}" data-session="${escapeHtml(session.key)}" type="button">
-          <span class="session-main">${escapeHtml(compactSession(session.key))}</span>
-          <span class="session-meta">${escapeHtml(formatTime(session.latest))} · ${session.count} 条 · ${session.toolCalls} 工具</span>
-          <span class="risk-strip">
-            ${session.danger ? `<i class="risk danger">${session.danger}</i>` : ""}
-            ${session.warning ? `<i class="risk warning">${session.warning}</i>` : ""}
-            ${session.alerts ? `<i class="risk danger">告警 ${session.alerts}</i>` : ""}
-          </span>
-        </button>
-      `;
-    })
-    .join("");
-
-  $("sessionList").innerHTML = allItem + (items || '<div class="empty">暂无会话</div>');
-
-  for (const node of document.querySelectorAll(".session-item")) {
-    node.addEventListener("click", () => {
-      state.selectedSession = node.dataset.session || ALL_SESSIONS;
-      state.selectedId = "";
-      resetTimelinePage();
-      render();
-    });
-  }
-}
-
-function renderSessionSummary() {
-  const records = sessionRecords();
-  const title = state.selectedSession === ALL_SESSIONS ? "全部会话" : compactSession(state.selectedSession);
-  const first = records.at(-1);
-  const latest = records[0];
-  const tools = records.filter((record) => record.type === "tool_decision" || record.type === "tool_result");
-  const danger = records.filter((record) => record.severity === "danger").length;
-  const warning = records.filter((record) => record.severity === "warning").length;
-  const blocked = records.filter((record) => isBlocked(record)).length;
-  const duration = first && latest ? durationText(first.created_at, latest.created_at) : "-";
-  const insight = sessionInsight(records);
-
-  $("sessionSummary").innerHTML = `
-    <div class="session-head">
-      <div>
-        <p class="section-kicker">当前视图</p>
-        <h2>${escapeHtml(title || "暂无会话")}</h2>
-        <p>${escapeHtml(latest ? latest.session_key : "等待 OpenClaw 运行后产生记录。")}</p>
-      </div>
-      <div class="session-facts">
-        ${fact("事件", records.length)}
-        ${fact("工具", tools.length)}
-        ${fact("高危", danger, "danger")}
-        ${fact("警告", warning, "warning")}
-        ${fact("阻断", blocked, "danger")}
-        ${fact("跨度", duration)}
-      </div>
-    </div>
-    <div class="insight-card ${escapeHtml(insight.tone)}">
-      <strong>${escapeHtml(insight.title)}</strong>
-      <span>${escapeHtml(insight.body)}</span>
-    </div>
-    ${decisionStory(records)}
-    ${stageRail(records)}
-    ${issueDigest(records)}
-  `;
-}
-
-function fact(label, value, tone = "") {
-  return `<div class="fact ${escapeHtml(tone)}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
-}
-
-function sessionInsight(records) {
-  if (!records.length) {
-    return { tone: "", title: "等待记录", body: "当前还没有可展示的 OpenClaw 事件。" };
-  }
-
-  const alerts = records.filter((record) => record.type === "alert");
-  const deniedTools = records.filter((record) => record.type === "tool_decision" && isBlocked(record));
-  const hardcodedSecrets = records.filter((record) => {
-    const reason = String(record.payload?.reason || record.summary || record.title || "");
-    return /hardcoded secret/i.test(reason);
-  });
-  const timeouts = records.filter((record) => searchableText(record).includes("timed out") || searchableText(record).includes("timeout"));
-  const assistantReplies = records.filter((record) => record.type === "message_write" && record.payload?.role === "assistant");
-
-  if (deniedTools.length || alerts.length) {
-    const tools = Array.from(new Set(deniedTools.map((record) => displayTool(record.payload?.toolName || record.payload?.normalized_tool)).filter(Boolean))).join("、") || "高风险工具";
-    return { tone: "danger", title: "发现并拦截高风险工具行为", body: `${tools} 触发任务规范外调用；共有 ${alerts.length} 条告警、${deniedTools.length} 次阻断。` };
-  }
-  if (hardcodedSecrets.length) {
-    return { tone: "warning", title: "启动前发现硬编码敏感配置", body: `工作区溯源扫描发现 ${hardcodedSecrets.length} 个配置敏感值，建议确认是否为测试密钥或生产密钥。` };
-  }
-  if (timeouts.length) {
-    return { tone: "warning", title: "模型响应链路超时", body: "OpenClaw 已写入运行轨迹，但模型服务没有在超时时间内完成最终回复。" };
-  }
-  if (assistantReplies.length) {
-    return { tone: "success", title: "会话已完成回复", body: "本次会话产生了助手回复，未发现高风险工具阻断。" };
-  }
-  return { tone: "", title: "会话正在形成", body: "已捕获工作区溯源和消息输入，等待后续工具调用或回复记录。" };
-}
-
-function decisionStory(records) {
-  const decisionRecord = records.find((record) => record.type === "tool_decision" && isBlocked(record))
-    || records.find((record) => record.type === "tool_decision")
-    || records.find((record) => record.type === "alert");
-  if (!decisionRecord) return "";
-
-  const related = decisionRecord.run_id
-    ? records.filter((record) => record.run_id === decisionRecord.run_id)
-    : records;
-  const payload = decisionRecord.payload || {};
-  const sourceRecord = related.find((record) => record.type === "lab_command")
-    || related.find((record) => record.type === "message_write" && record.payload?.role === "user")
-    || related.find((record) => record.type === "llm_input")
-    || related.find((record) => record.type === "tool_result" && /webpage|email|pdf|image|external/i.test(searchableText(record)));
-  const authorizationRecord = related.find((record) => record.type === "guard_finding" && /taskspec|explicit capability|intent|authorization|outside task|drift/i.test(searchableText(record)))
-    || related.find((record) => record.type === "alert" && /taskspec|explicit capability|intent|authorization|outside task|drift/i.test(searchableText(record)));
-  const dataRecord = related.find((record) => record.type === "guard_finding" && /sensitive|secret|credential|\.env|taint|pollution|exfiltrat/i.test(searchableText(record)))
-    || related.find((record) => /sensitive|secret|credential|\.env|taint|pollution|exfiltrat/i.test(searchableText(record)));
-  const tool = displayTool(payload.normalized_tool || payload.toolName || payload.tool || decisionRecord.tool || "工具调用");
-  const rawDecision = payload.decision || payload.verdict || payload.original_decision || (isBlocked(decisionRecord) ? "deny" : "allow");
-  const decision = decisionNames[rawDecision] || rawDecision;
-  const tone = isBlocked(decisionRecord) ? "danger" : rawDecision === "ask" ? "warning" : "success";
-  const steps = [
-    ["来源", sourceRecord ? conciseEvidence(summaryText(sourceRecord), 34) : "当前会话输入"],
-    ["授权", authorizationRecord ? conciseEvidence(titleText(authorizationRecord), 34) : "TaskSpec 已校验"],
-    ["数据", dataRecord ? conciseEvidence(titleText(dataRecord), 34) : "未发现敏感流"],
-    ["Sink", tool],
-    ["裁决", decision],
-  ];
-
-  return `
-    <section class="decision-story ${tone}" aria-label="最近裁决证据链">
-      <div class="decision-story-head">
-        <span>最近裁决证据链</span>
-        <strong>${escapeHtml(conciseEvidence(titleText(decisionRecord), 52))}</strong>
-      </div>
-      <div class="decision-story-steps">
-        ${steps.map(([label, value], index) => `
-          <div class="decision-step ${index === steps.length - 1 ? "verdict" : ""}">
-            <span>${escapeHtml(label)}</span>
-            <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
-          </div>
-        `).join("")}
-      </div>
-    </section>
-  `;
-}
-
-function conciseEvidence(value, maxLength = 48) {
-  const text = translateText(String(value || "-")).replace(/\s+/g, " ").trim();
-  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
-}
-
-function stageRail(records) {
-  const stages = [
-    ["上下文溯源", records.filter((record) => canonicalDomain(record) === "context").length],
-    ["状态完整性", records.filter((record) => canonicalDomain(record) === "state").length],
-    ["意图授权", records.filter((record) => canonicalDomain(record) === "intent").length],
-    ["工具边界", records.filter((record) => canonicalDomain(record) === "boundary").length],
-    ["证据回流", records.filter((record) => canonicalDomain(record) === "feedback").length],
-  ];
-  return `
-    <div class="stage-rail">
-      ${stages.map(([label, count]) => `<div class="stage ${count ? "active" : ""}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(count)}</strong></div>`).join("")}
-    </div>
-  `;
-}
-
-function canonicalDomain(record) {
-  const layer = String(record.layer || record.payload?.layer || "");
-  const text = searchableText(record);
-  if (layer === "Context Provenance" || ["provenance_scan", "llm_input", "lab_command", "session_start", "message_write"].includes(record.type)) return "context";
-  if (layer === "State Integrity" || /memory|webhook|poison/i.test(text)) return "state";
-  if (layer === "Intent Authorization" || /taskspec|intent|scope|drift|abac/i.test(text)) return "intent";
-  if (layer === "Evidence Feedback" || ["tool_result", "approval_cache_hit", "runtime"].includes(record.type)) return "feedback";
-  return "boundary";
-}
-
-function issueDigest(records) {
-  const issues = [];
-  const hardcoded = records.filter((record) => /hardcoded secret/i.test(String(record.payload?.reason || record.summary || record.title || "")));
-  const grouped = records.filter((record) => record.type === "finding_group");
-  const denied = records.filter((record) => record.type === "tool_decision" && isBlocked(record));
-  const timeouts = records.filter((record) => searchableText(record).includes("timed out") || searchableText(record).includes("timeout"));
-
-  if (hardcoded.length) issues.push(["硬编码敏感值", hardcoded.length, "warning"]);
-  if (grouped.length) issues.push(["已折叠扫描噪声", grouped.reduce((sum, record) => sum + Number(record.payload?.count || 0), 0), "warning"]);
-  if (denied.length) issues.push(["工具阻断", denied.length, "danger"]);
-  if (timeouts.length) issues.push(["超时", timeouts.length, "warning"]);
-  if (!issues.length) return "";
-
-  return `<div class="issue-digest">${issues.map(([label, count, tone]) => `<span class="${escapeHtml(tone)}">${escapeHtml(label)} ${escapeHtml(count)}</span>`).join("")}</div>`;
-}
-
-function renderFocusMode() {
-  for (const node of document.querySelectorAll("[data-focus]")) {
-    node.classList.toggle("active", node.dataset.focus === state.focusMode);
-  }
-}
-
-function filteredRecords() {
-  const query = $("searchInput").value.trim().toLowerCase();
-  const severity = $("severityFilter").value;
-  const layer = $("layerFilter").value;
-  const type = $("typeFilter").value;
-
-  let records = sessionRecords();
-  records = applyFocusMode(records);
-  records = records.filter((record) => {
-    if (severity && record.severity !== severity) return false;
-    if (layer && record.layer !== layer) return false;
-    if (type && record.type !== type) return false;
+  const query = state.search.trim().toLowerCase();
+  const sessions = state.model.sessions.filter((session) => {
     if (!query) return true;
-    return searchableText(record).includes(query);
+    return `${session.title} ${session.subtitle} ${session.id} ${session.decisionLabel}`.toLowerCase().includes(query);
   });
-
-  return sortRecordsDesc(records);
+  $("sessionCount").textContent = String(state.model.sessions.length);
+  $("sessionList").textContent = sessions.map((session) => session.id).join("\n");
+  $("sessionSelect").innerHTML = sessions.length
+    ? sessions.map((session) => `<option value="${escapeHtml(session.id)}" ${session.id === state.selectedSessionId ? "selected" : ""}>${escapeHtml(incidentId(session))}</option>`).join("")
+    : `<option value="">AS-WAITING-0000</option>`;
 }
 
-function resetTimelinePage() {
-  state.timelinePage = 1;
+function selectSession(id) {
+  if (!state.model.sessions.some((session) => session.id === id)) return;
+  stopPlayback();
+  state.selectedSessionId = id;
+  state.live = true;
+  const session = currentSession();
+  state.playhead = Math.max(0, session.timeline.length - 1);
+  state.selectedItem = defaultSelection(session);
+  renderAll();
 }
 
-function applyFocusMode(records) {
-  if (state.focusMode === "all") return records;
-  if (state.focusMode === "tools") {
-    return records.filter((record) => ["tool_decision", "tool_result", "alert", "approval_request", "approval_resolution", "approval_cache_hit"].includes(record.type));
-  }
-  if (state.focusMode === "context") {
-    return records.filter((record) => canonicalDomain(record) === "context");
-  }
-  return records.filter((record) => isImportantRecord(record));
-}
-
-function isImportantRecord(record) {
-  if (record.severity === "danger") return true;
-  if (["tool_decision", "tool_result", "alert", "response_cover", "approval_request", "approval_resolution", "approval_cache_hit"].includes(record.type)) return true;
-  if (record.type === "message_write") {
-    const role = record.payload?.role;
-    return role === "user" || role === "assistant";
-  }
-  if (record.type === "guard_finding") {
-    const reason = String(record.payload?.reason || record.summary || record.title || "");
-    return /hardcoded secret|embedded secrets|sensitive asset/i.test(reason);
-  }
-  if (record.type === "finding_group") return true;
-  if (record.type === "provenance_scan") return Number(record.payload?.findingCount || record.payload?.findings || 0) > 0;
-  return ["session_start", "llm_input"].includes(record.type);
-}
-
-function sessionRecords() {
-  if (state.selectedSession && state.selectedSession !== ALL_SESSIONS) {
-    return state.records.filter((record) => record.session_key === state.selectedSession);
-  }
-  return state.records;
-}
-
-function groupTimelineRecords(records) {
-  const buckets = new Map();
-  for (const record of records) {
-    if (!isGroupableProvenanceFinding(record)) continue;
-    const key = provenanceFindingKey(record);
-    const bucket = buckets.get(key) || [];
-    bucket.push(record);
-    buckets.set(key, bucket);
+function renderRequestContext() {
+  const session = currentSession();
+  const target = $("requestContext");
+  if (!session) {
+    target.innerHTML = `<div class="inspector-empty"><i data-lucide="message-square-dashed"></i><strong>等待请求上下文</strong><span>收到 Agent 行为后自动还原输入、工具集与对抗载荷</span></div>`;
+    return;
   }
 
-  const groupedIds = new Set();
-  const firstRecordByKey = new Map();
-  for (const [key, bucket] of buckets) {
-    if (bucket.length < 3) continue;
-    const latest = bucket.slice().sort(compareRecordsDesc)[0];
-    firstRecordByKey.set(latest.id, { key, bucket });
-    for (const record of bucket) groupedIds.add(record.id);
+  const userRecord = session.records.find((record) => ["lab_command", "user_message", "command"].includes(String(record.type))) || session.records[0];
+  const toolResult = session.records.find((record) => String(record.type) === "tool_result" && record.payload?.preview);
+  const input = firstText(
+    userRecord?.payload?.command,
+    userRecord?.payload?.input,
+    userRecord?.summary,
+    session.graph.nodes.find((node) => node.kind === "intent")?.title,
+    "等待用户请求",
+  );
+  const originalInput = firstText(
+    userRecord?.payload?.raw_input,
+    userRecord?.payload?.preview,
+    input,
+  );
+  const taintNode = session.graph.nodes.find((node) => node.kind === "taint");
+  const adversarial = firstText(
+    toolResult?.payload?.preview,
+    session.records.find((record) => record.payload?.adversarial_input)?.payload?.adversarial_input,
+    taintNode?.title,
+    session.decision === "allow" ? "未检测到对抗性输入" : session.alert?.rawReason,
+    "检测到可疑指令传播",
+  );
+  const tools = [...new Set([
+    ...session.graph.nodes.filter((node) => node.kind === "action").map((node) => node.tool || node.title),
+    ...session.records.map((record) => record.payload?.normalized_tool || record.payload?.toolName).filter(Boolean),
+  ])].filter(Boolean);
+  const displayTools = tools.length ? tools : ["graph_builder", "search_docs", "read_file"];
+  const eventTime = formatClock(userRecord?.created_at || session.latest);
+  const detectionTime = formatClock(session.alert?.createdAt || session.latest);
+  const attackDetected = session.decision !== "allow" || Boolean(taintNode);
+
+  target.innerHTML = `
+    ${contextBlock({
+      number: 1,
+      title: "用户发送的原始文本",
+      content: input,
+      meta: [`时间：${eventTime}`, "渠道：Web 控制台"],
+    })}
+    ${contextBlock({
+      number: 2,
+      title: "提供的工具集",
+      tone: "purple",
+      tools: displayTools,
+    })}
+    ${contextBlock({
+      number: 3,
+      title: "原始输入（交给模型/工具前）",
+      tone: "cyan",
+      content: originalInput,
+    })}
+    ${contextBlock({
+      number: 4,
+      title: attackDetected ? "生成的对抗性输入（检测到的注入/操纵内容）" : "输入安全检查结果",
+      tone: attackDetected ? "danger" : "cyan",
+      tag: attackDetected ? "Prompt 注入片段" : "未发现注入",
+      content: attackDetected
+        ? `${adversarial}\n\n可能诱导 Agent 调用越权工具并访问系统提示、配置或密钥。`
+        : adversarial,
+      meta: [`检测引擎：OpenClaw Prompt Shield`, `检测时间：${detectionTime}`],
+    })}`;
+}
+
+function contextBlock({ number, title, tone = "blue", content = "", meta = [], tools = [], tag = "" }) {
+  const body = tools.length
+    ? `<div class="tool-chip-list">${tools.slice(0, 3).map((tool) => `<span class="tool-chip">${escapeHtml(tool)}<small>${escapeHtml(toolDescription(tool))}</small></span>`).join("")}${tools.length > 3 ? `<span class="tool-chip">+${tools.length - 3}<small>其他工具</small></span>` : ""}</div>`
+    : `<div class="context-content">${escapeHtml(content).replace(/\n/g, "<br>")}</div>`;
+  return `<section class="context-block tone-${escapeHtml(tone)}">
+    <header class="context-block-header">
+      <span class="context-number">${number}</span>
+      <strong>${escapeHtml(title)}</strong>
+      ${tag ? `<span class="context-tag">${escapeHtml(tag)}</span>` : ""}
+    </header>
+    ${body}
+    ${meta.length ? `<div class="context-meta">${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>` : ""}
+  </section>`;
+}
+
+function renderGraph() {
+  const session = currentSession();
+  if (!session) {
+    $("graphContext").innerHTML = `<span>NO SESSION</span>`;
+    $("graphConfidence").textContent = "等待图证据";
+    $("attackNotice").textContent = "等待 Agent 行为进入实时语义行动图";
+    semanticGraph.setGraph(null);
+    return;
   }
 
-  const output = [];
-  for (const record of sortRecordsDesc(records)) {
-    const group = firstRecordByKey.get(record.id);
-    if (group) {
-      output.push(makeProvenanceFindingGroup(group.key, group.bucket));
-      continue;
-    }
-    if (groupedIds.has(record.id)) continue;
-    output.push(record);
+  const graph = session.graph;
+  const workspace = document.querySelector(".graph-workspace");
+  workspace.classList.remove("tone-danger", "tone-warning", "tone-safe");
+  const tone = decisionTone(session);
+  workspace.classList.add(`tone-${tone}`);
+  $("attackNotice").textContent = session.decision === "deny"
+    ? "检测到攻击后：节点/边高亮 + 自动弹出证据详情（不需要镜头移动和放大）"
+    : session.decision === "ask"
+      ? "检测到高风险动作：攻击链已暂停，等待安全运营人员确认"
+      : "未发现攻击链：授权路径保持低干扰显示，可点击节点查看证据";
+  const evidence = graph.derived ? "VIEW PROJECTION" : graph.certainty === "observed" ? "OBSERVED" : String(graph.certainty || "EVIDENCE").toUpperCase();
+  const partial = graph.partial ? "局部图" : "完整图";
+  $("graphContext").innerHTML = `
+    <span class="context-decision tone-${escapeHtml(tone)}">${escapeHtml(decisionCode(session.decision))}</span>
+    <span>${escapeHtml(graph.riskLabel)}</span>
+    <span>SAG V${escapeHtml(graph.version)}</span>
+    <span>${escapeHtml(partial)}</span>`;
+  $("graphConfidence").textContent = `${evidence} · ${Math.round(graph.confidence * 100)}% · ${graph.nodes.length}/${Math.max(graph.nodes.length, graph.sourceNodeCount)} NODES`;
+  $("pathFocusBtn").classList.toggle("active", state.pathFocus);
+  $("pathFocusBtn").setAttribute("aria-pressed", String(state.pathFocus));
+
+  const selectedNodeId = state.selectedItem?.type === "node" ? state.selectedItem.value.id : graph.selectedNodeId;
+  semanticGraph.setGraph(graph, { selectedNodeId });
+  semanticGraph.setPathFocus(state.pathFocus);
+  syncGraphPlayback();
+  if (state.selectedItem?.type === "edge") semanticGraph.selectEdge(state.selectedItem.value.id, { notify: false });
+  else if (selectedNodeId) semanticGraph.selectNode(selectedNodeId, { notify: false });
+}
+
+function handleGraphSelection(item) {
+  state.selectedItem = item;
+  renderInspector(item);
+  $("inspector").classList.toggle("open", Boolean(item));
+  $("incidentConsole").classList.remove("inspector-collapsed");
+  renderIcons();
+}
+
+function renderInspector(item) {
+  const session = currentSession();
+  const body = $("inspectorBody");
+  if (!session) {
+    body.innerHTML = emptyInspector("等待会话", "新的安全事件会在这里解释裁决原因");
+    return;
   }
-  return sortRecordsDesc(output);
-}
 
-function paginate(items, page, pageSize) {
-  const total = items.length;
-  const pages = Math.max(1, Math.ceil(total / pageSize));
-  const safePage = Math.max(1, Math.min(pages, Number(page) || 1));
-  const start = (safePage - 1) * pageSize;
-  return {
-    items: items.slice(start, start + pageSize),
-    page: safePage,
-    pages,
-    total,
-    start: total ? start + 1 : 0,
-    end: Math.min(total, start + pageSize),
-  };
-}
-
-function paginationHtml(id, pageInfo) {
-  if (pageInfo.pages <= 1) return "";
-  return `
-    <nav class="pagination" data-pagination="${escapeHtml(id)}">
-      <button type="button" data-page="${pageInfo.page - 1}" ${pageInfo.page <= 1 ? "disabled" : ""}>上一页</button>
-      <span>${pageInfo.start}-${pageInfo.end} / ${pageInfo.total}</span>
-      <button type="button" data-page="${pageInfo.page + 1}" ${pageInfo.page >= pageInfo.pages ? "disabled" : ""}>下一页</button>
-    </nav>
-  `;
-}
-
-function bindPagination(id, onPage) {
-  document.querySelectorAll(`[data-pagination="${id}"] [data-page]`).forEach((button) => {
-    button.addEventListener("click", () => onPage(Number(button.dataset.page || 1)));
-  });
-}
-
-function isGroupableProvenanceFinding(record) {
-  return record.type === "guard_finding"
-    && canonicalDomain(record) === "context"
-    && record.severity === "warning";
-}
-
-function provenanceFindingKey(record) {
-  const payload = record.payload || {};
-  const reason = payload.reason || record.summary || record.title || "provenance finding";
-  const confidence = payload.evidence?.confidence || "";
-  return [record.session_key || "", record.layer || "", record.severity || "", reason, confidence].join("|");
-}
-
-function makeProvenanceFindingGroup(key, bucket) {
-  const sortedBucket = bucket.slice().sort(compareRecordsDesc);
-  const first = sortedBucket[0];
-  const payload = first.payload || {};
-  const reason = payload.reason || first.summary || first.title || "provenance finding";
-  const paths = Array.from(new Set(bucket.map((record) => record.payload?.evidence?.path).filter(Boolean)));
-  const confidence = payload.evidence?.confidence || "medium";
-  return {
-    id: `group:${key}`,
-    created_at: first.created_at,
-    run_id: first.run_id,
-    session_key: first.session_key,
-    type: "finding_group",
-    layer: first.layer,
-    severity: first.severity,
-    title: `${translateText(reason)}（${bucket.length} 项）`,
-    summary: `已折叠 ${bucket.length} 条同类溯源扫描发现，涉及 ${paths.length || bucket.length} 个文件。`,
-    payload: {
-      grouped: true,
-      group_type: "provenance_findings",
-      count: bucket.length,
-      reason,
-      confidence,
-      paths: paths.slice(0, 120),
-      omitted_paths: Math.max(0, paths.length - 120),
-      record_ids: sortedBucket.slice(0, 10).map((record) => record.id),
-    },
-  };
-}
-
-function sortRecordsDesc(records) {
-  return records.slice().sort(compareRecordsDesc);
-}
-
-function compareRecordsDesc(a, b) {
-  const timeA = new Date(a.created_at || 0).getTime();
-  const timeB = new Date(b.created_at || 0).getTime();
-  if (timeA !== timeB) return timeB - timeA;
-  return String(b.id || "").localeCompare(String(a.id || ""));
-}
-
-function buildSessions() {
-  const groups = new Map();
-  for (const record of state.records) {
-    const key = record.session_key || "session_unknown";
-    const item = groups.get(key) || {
-      key,
-      count: 0,
-      latest: record.created_at,
-      danger: 0,
-      warning: 0,
-      alerts: 0,
-      toolCalls: 0,
-    };
-    item.count += 1;
-    if (new Date(record.created_at) > new Date(item.latest)) item.latest = record.created_at;
-    if (record.severity === "danger") item.danger += 1;
-    if (record.severity === "warning") item.warning += 1;
-    if (record.type === "alert") item.alerts += 1;
-    if (record.type === "tool_decision" || record.type === "tool_result") item.toolCalls += 1;
-    groups.set(key, item);
+  const selection = item || defaultSelection(session);
+  if (!selection) {
+    body.innerHTML = emptyInspector("选择一个语义节点", "查看裁决、证据、溯源和命中策略");
+    return;
   }
-  return Array.from(groups.values()).sort((a, b) => new Date(b.latest) - new Date(a.latest));
-}
+  state.selectedItem = selection;
+  const isNode = selection.type === "node";
+  const value = selection.value;
+  const graph = session.graph;
+  const score = riskScore(session.decision === "allow" ? 0 : session.alert?.score, session.decision);
+  const tone = decisionTone(session);
+  const evidenceRows = isNode ? nodeEvidence(value) : edgeEvidence(value, graph);
+  const fromNode = !isNode ? graph.nodes.find((node) => node.id === value.from) : null;
+  const toNode = !isNode ? graph.nodes.find((node) => node.id === value.to) : null;
+  const reverseConstraint = !isNode && value.label === "constrains" && fromNode?.kind === "capability" && toNode?.kind === "action";
+  const selectionTitle = isNode
+    ? `${inspectorNodeTitle(value)} → ${value.title}`
+    : `${inspectorNodeTitle(reverseConstraint ? toNode : fromNode)} → ${inspectorNodeTitle(reverseConstraint ? fromNode : toNode)}（边）`;
+  const actionNode = (isNode && value.kind === "action" ? value : null)
+    || [...graph.nodes].reverse().find((node) => node.kind === "action" && node.onPath)
+    || graph.nodes.find((node) => node.kind === "action");
+  const taintNode = graph.nodes.find((node) => node.kind === "taint");
+  const secretNode = graph.nodes.find((node) => node.kind === "secret");
+  const sinkNode = graph.nodes.find((node) => node.kind === "sink");
+  const policies = session.policies.length ? session.policies : [session.alert?.rule || "SEMANTIC_ACTION_GRAPH"];
+  const conclusion = session.decision === "deny"
+    ? `检测到 ${session.alert?.type || graph.riskLabel} 导致的越权工具调用，存在敏感数据泄露风险。`
+    : session.decision === "ask"
+      ? "检测到超出当前授权范围的高风险动作，执行已暂停并等待人工确认。"
+      : "当前动作与 TaskSpec 授权范围一致，未形成可利用的攻击路径。";
+  const response = session.decision === "deny"
+    ? "已拦截并阻断该调用，返回安全降级响应。"
+    : session.decision === "ask"
+      ? "调用已暂停，等待安全运营人员授权。"
+      : "策略校验通过，工具调用继续执行。";
+  const riskText = session.reasons.map((reason) => reason.detail).filter(Boolean).join("；") || session.subtitle;
+  const snippet = [
+    `<b>生成的对抗性输入：</b> “${escapeHtml(taintNode?.title || session.alert?.rawReason || "未发现") }”`,
+    `<b>工具调用：</b> ${escapeHtml(actionNode?.tool || actionNode?.title || "--")}(params={...})`,
+    `<b>读取对象：</b> ${escapeHtml(secretNode?.path || secretNode?.title || "system_prompt, tools, config, keys")}`,
+    `<b>返回目标：</b> ${escapeHtml(sinkNode?.title || "用户会话")}`,
+  ].join("\n");
+  const ip = firstText(...session.records.map((record) => record.payload?.ip_address || record.payload?.ip), "10.23.45.67（内网）");
 
-function eventHtml(record) {
-  const active = record.id === state.selectedId ? "active" : "";
-  return `
-    <article class="event ${escapeHtml(record.severity)} ${active}" data-id="${escapeHtml(record.id)}">
-      <div class="event-pin">
-        <span>${escapeHtml(formatTime(record.created_at))}</span>
+  body.innerHTML = `
+    <div class="inspector-selection">
+      <span>当前选中</span>
+      <strong>${escapeHtml(selectionTitle)}</strong>
+      <i data-lucide="link-2"></i>
+    </div>
+
+    <dl class="evidence-rows">
+      <div class="evidence-row">
+        <dt><i data-lucide="badge-alert"></i>策略等级</dt>
+        <dd><span class="${tone === "safe" ? "success-chip" : "risk-chip"}">${tone === "danger" ? "高危" : tone === "warning" ? "中危" : "安全"} · ${score.toFixed(1)}</span></dd>
       </div>
-      <div class="event-main">
-        <div class="event-title-row">
-          <strong>${escapeHtml(titleText(record))}</strong>
-          <span>${escapeHtml(typeNames[record.type] || record.type)}</span>
-        </div>
-        <div class="event-summary">${escapeHtml(summaryText(record))}</div>
-        <div class="chips">
-          ${chip(severityNames[record.severity] || record.severity, record.severity)}
-          ${chip(layerNames[record.layer] || record.layer || "-", "layer")}
-          ${chip(compactSession(record.session_key), "session")}
-        </div>
+      <div class="evidence-row">
+        <dt><i data-lucide="circle-alert"></i>检测结论</dt>
+        <dd>${escapeHtml(conclusion)}</dd>
       </div>
-    </article>
-  `;
-}
+      <div class="evidence-row">
+        <dt><i data-lucide="scan-search"></i>规则/策略命中</dt>
+        <dd>${policies.slice(0, 3).map((policy, index) => `<span class="policy-hit">${escapeHtml(policy)}${index === 0 ? `<br><small>确定性策略 / v2.3.1</small>` : ""}</span>`).join("")}</dd>
+      </div>
+      <div class="evidence-row">
+        <dt><i data-lucide="shield-check"></i>OpenClaw 响应</dt>
+        <dd>${escapeHtml(response)}<br><span class="${session.decision === "deny" ? "success-chip" : "success-text"}">${session.decision === "deny" ? "拦截成功" : escapeHtml(decisionLabel(session.decision))}</span></dd>
+      </div>
+      <div class="evidence-row">
+        <dt><i data-lucide="stamp"></i>处置动作<br>（allow / ask / deny）</dt>
+        <dd><div class="decision-segments">
+          <span class="${session.decision === "allow" ? "active-allow" : ""}">allow</span>
+          <span class="${session.decision === "ask" ? "active-ask" : ""}">ask</span>
+          <span class="${session.decision === "deny" ? "active-deny" : ""}">deny${session.decision === "deny" ? "（已执行）" : ""}</span>
+        </div></dd>
+      </div>
+      <div class="evidence-row">
+        <dt><i data-lucide="info"></i>风险说明</dt>
+        <dd>${escapeHtml(riskText)}</dd>
+      </div>
+      <div class="evidence-row">
+        <dt><i data-lucide="file-warning"></i>证据片段</dt>
+        <dd><div class="evidence-snippet">${snippet}</div></dd>
+      </div>
+      <div class="evidence-row">
+        <dt><i data-lucide="crosshair"></i>节点证据</dt>
+        <dd>${evidenceRows.slice(0, 3).map(([label, content]) => `<span class="policy-hit"><small>${escapeHtml(label)}：</small>${escapeHtml(content)}</span>`).join("")}</dd>
+      </div>
+    </dl>
 
-function bindTimeline(records) {
-  for (const node of document.querySelectorAll(".event")) {
-    node.addEventListener("click", () => {
-      state.selectedId = node.dataset.id || "";
-      const record = records.find((item) => item.id === state.selectedId);
-      if (record) renderDetail(record);
-      for (const item of document.querySelectorAll(".event.active")) item.classList.remove("active");
-      node.classList.add("active");
-    });
-  }
-}
+    <div class="inspector-meta">
+      <span>时间 <b>${escapeHtml(formatDateTime(session.alert?.createdAt || session.latest))}</b></span>
+      <span>会话 ID <b>${escapeHtml(session.id)}</b></span>
+      <span>IP 地址 <b>${escapeHtml(ip)}</b></span>
+    </div>
 
-function renderDetail(record) {
-  state.selectedRecord = record;
-  $("detailMeta").textContent = `${severityNames[record.severity] || record.severity} · ${formatDate(record.created_at)}`;
-  $("copyPayloadBtn").disabled = false;
-  $("copyPayloadBtn").dataset.recordId = record.id;
-  const fullRecord = fullDetailRecord(record.id) || record;
-
-  $("detailBody").innerHTML = `
-    <section class="detail-summary ${escapeHtml(fullRecord.severity)}">
-      <h3>${escapeHtml(titleText(fullRecord))}</h3>
-      <p>${escapeHtml(summaryText(fullRecord))}</p>
-    </section>
-    ${quickFacts(fullRecord)}
-    ${decisionSummary(fullRecord)}
-    ${groupSummary(fullRecord)}
-    ${record.payload?.__compact && !state.detailCache.has(record.id) ? '<div class="empty detail-loading">正在读取完整 payload...</div>' : ""}
     <details class="raw-evidence">
-      <summary><span>原始 JSON 证据</span><small>按需展开</small></summary>
-      <pre>${escapeHtml(JSON.stringify(fullRecord, null, 2))}</pre>
-    </details>
-  `;
-  if (record.payload?.__compact && !state.detailCache.has(record.id)) {
-    void loadRecordDetail(record.id);
-  }
+      <summary><span>原始脱敏证据</span><i data-lucide="chevron-down"></i></summary>
+      <pre>${escapeHtml(JSON.stringify({ selection: value, alert: session.alert, graph: graph.raw }, null, 2))}</pre>
+    </details>`;
 }
 
-function renderEmptyDetail() {
-  state.selectedRecord = null;
-  $("detailMeta").textContent = "未选择";
-  $("copyPayloadBtn").disabled = true;
-  $("copyPayloadBtn").dataset.recordId = "";
-  $("detailBody").innerHTML = '<div class="empty">选择一条记录查看摘要和 payload。</div>';
-}
-
-function quickFacts(record) {
-  const payload = record.payload || {};
+function nodeEvidence(node) {
   const rows = [
-    ["类型", typeNames[record.type] || record.type],
-    ["层", layerNames[record.layer] || record.layer || "-"],
-    ["会话", record.session_key || "-"],
-    ["Run", record.run_id || "-"],
+    ["节点类型", node.kindLabel || nodeKindLabel(node.kind)],
+    ["状态", node.state || "OBSERVED"],
+    ["证据边界", node.displayOnly ? "视图投影，不代表新增血缘" : "运行时脱敏证据"],
   ];
-
-  if (payload.toolName || payload.normalized_tool) rows.push(["工具", payload.normalized_tool ? `${displayTool(payload.toolName || "-")} -> ${displayTool(payload.normalized_tool)}` : displayTool(payload.toolName)]);
-  if (payload.role) rows.push(["消息角色", roleNames[payload.role] || payload.role]);
-  if (payload.stopReason) rows.push(["停止原因", stopReasonNames[payload.stopReason] || payload.stopReason]);
-  if (payload.decision || payload.original_decision) rows.push(["裁决", `${decisionNames[payload.decision] || payload.decision || "-"} / ${decisionNames[payload.original_decision] || payload.original_decision || "-"}`]);
-  if (payload.risk_score !== undefined) rows.push(["风险分", payload.risk_score]);
-  if (payload.approval_cache_hit !== undefined) rows.push(["审批缓存", payload.approval_cache_hit ? "命中" : "未命中"]);
-  if (payload.grouped) {
-    rows.push(["折叠数量", payload.count || "-"]);
-    rows.push(["置信度", confidenceLabel(payload.confidence)]);
-  }
-
-  return `<section class="fact-table">${rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</section>`;
+  if (node.authorized !== undefined) rows.push(["授权", node.authorized ? "已授权" : "未授权"]);
+  if (node.authorization_reason) rows.push(["授权依据", String(node.authorization_reason)]);
+  if (node.integrity) rows.push(["完整性", String(node.integrity).toUpperCase()]);
+  if (node.confidentiality) rows.push(["保密性", String(node.confidentiality).toUpperCase()]);
+  if (node.path) rows.push(["字段路径", String(node.path)]);
+  if (node.tool) rows.push(["工具", String(node.tool)]);
+  if (node.effect) rows.push(["副作用", String(node.effect)]);
+  return rows;
 }
 
-function decisionSummary(record) {
-  const payload = record.payload || {};
-  if (!["tool_decision", "approval_request", "approval_resolution", "approval_cache_hit", "response_cover", "alert"].includes(record.type)) return "";
-
-  const findings = Array.isArray(payload.findings) ? payload.findings : [];
-  const rows = [
-    ["判定", decisionNames[payload.verdict] || decisionNames[payload.decision] || payload.verdict || payload.decision || "-"],
-    ["确定性阻断", payload.deterministic_block ? "是" : "否"],
-    ["违规原因", translateText((payload.violations || []).join("; ") || payload.summary || "-")],
-    ["允许工具", payload.task_spec?.allowed_tools?.map(displayTool).join(", ") || "-"],
-    ["发现类型", findingTypeSummary(findings)],
+function edgeEvidence(edge, graph) {
+  const from = graph.nodes.find((node) => node.id === edge.from);
+  const to = graph.nodes.find((node) => node.id === edge.to);
+  return [
+    ["语义关系", edge.label],
+    ["来源", from?.title || edge.from],
+    ["目标", to?.title || edge.to],
+    ["证据", edge.displayOnly ? "视图投影" : edge.basis === "decoded" ? "解码复现" : edge.basis === "conservative" ? "保守推断" : "运行时观测"],
+    ["置信度", `${Math.round(edge.confidence * 100)}%`],
+    ["参数字段", String(edge.arg_path || edge.argPath || edge.match || "--")],
   ];
-
-  return `<section class="decision-summary">${rows.map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</section>`;
 }
 
-function groupSummary(record) {
-  const payload = record.payload || {};
-  if (!payload.grouped) return "";
-  const paths = Array.isArray(payload.paths) ? payload.paths : [];
-  const omitted = payload.omitted_paths ? `<p>另有 ${escapeHtml(payload.omitted_paths)} 个路径未展开。</p>` : "";
-  return `
-    <section class="path-list">
-      <h3>涉及文件</h3>
-      <p>${escapeHtml(translateText(payload.reason || record.summary || ""))} · ${escapeHtml(confidenceLabel(payload.confidence))}</p>
-      <ul>
-        ${paths.slice(0, 40).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
-      </ul>
-      ${omitted}
-    </section>
-  `;
+function emptyInspector(title, text) {
+  return `<div class="inspector-empty"><i data-lucide="mouse-pointer-click"></i><strong>${escapeHtml(title)}</strong><span>${escapeHtml(text)}</span></div>`;
 }
 
-function findingTypeSummary(findings) {
-  if (!Array.isArray(findings) || !findings.length) return "-";
-  const counts = findings.reduce((acc, finding) => {
-    const key = finding.finding_type || "unknown";
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
-  return Object.entries(counts).map(([key, value]) => `${findingTypeNames[key] || key}:${value}`).join(", ");
-}
-
-function titleText(record) {
-  const raw = record.title || typeNames[record.type] || record.type || "";
-  return translateText(raw);
-}
-
-function displayTool(value) {
-  const key = String(value || "").trim();
-  return toolNames[key] || key || "-";
-}
-
-function confidenceLabel(value) {
-  return {
-    high: "高置信",
-    medium: "中置信",
-    low: "低置信",
-  }[value] || value || "-";
-}
-
-function translateText(value) {
-  let text = compactText(value);
-  for (const [pattern, replacement] of textTranslations) {
-    text = text.replace(pattern, replacement);
+function renderIncidentFlow() {
+  const session = currentSession();
+  if (!session) {
+    $("incidentFlow").innerHTML = "";
+    return;
   }
-  return text;
+  const tainted = session.graph.nodes.some((node) => node.kind === "taint");
+  const steps = [
+    ["file-input", "原始文本", "原始文本"],
+    ["file-warning", tainted ? "对抗性输入" : "安全输入", tainted ? "注入 / 操纵" : "已校验"],
+    ["route", "攻击图", session.graph.derived ? "语义投影" : "因果链路"],
+    ["scan-search", "证据详情", "自动弹出"],
+  ];
+  $("incidentFlow").innerHTML = steps.map(([icon, title, meta], index) => `
+    ${index ? `<i class="flow-arrow-icon" data-lucide="arrow-right" aria-hidden="true"></i>` : ""}
+    <div class="flow-step">
+      <i data-lucide="${icon}"></i>
+      <span><strong>${escapeHtml(title)}</strong><small>（${escapeHtml(meta)}）</small></span>
+    </div>`).join("");
 }
 
-function summaryText(record) {
-  const payload = record.payload || {};
+function renderIncidentSummary() {
+  const session = currentSession();
+  const severity = $("summarySeverity");
+  const text = $("summaryText");
+  const metrics = $("summaryMetrics");
+  if (!session) {
+    severity.className = "severity-badge tone-safe";
+    severity.textContent = "等待";
+    text.textContent = "等待安全事件";
+    metrics.innerHTML = "";
+    return;
+  }
 
-  if (record.type === "finding_group") {
-    return `${record.summary || ""} ${translateText(payload.reason || "")}`.trim();
-  }
-  if (record.type === "tool_decision") {
-    return translateText((payload.violations || []).join("; ") || payload.summary || `${displayTool(payload.toolName || "tool")} -> ${decisionNames[payload.decision] || payload.decision || payload.verdict || "裁决"}`);
-  }
-  if (record.type === "guard_finding") {
-    return translateText(payload.reason || record.summary || "");
-  }
-  if (record.type === "message_write") {
-    const preview = previewText(payload.preview);
-    if (preview) return `${roleNames[payload.role] || payload.role || "消息"}：${preview}`;
-  }
-  if (record.type === "tool_result") {
-    return payload.error ? translateText(payload.error) : "工具返回完成";
-  }
-  return translateText(compactText(record.summary || payload.summary || JSON.stringify(payload).slice(0, 220)));
+  const tone = decisionTone(session);
+  severity.className = `severity-badge tone-${tone}`;
+  severity.textContent = tone === "danger" ? "高危" : tone === "warning" ? "中危" : "安全";
+  text.textContent = session.subtitle || session.alert?.reason || "语义行动图已生成";
+  const pathLength = session.graph.pathEdgeIds?.length || session.graph.pathNodeIds?.length || 0;
+  const impactNode = session.graph.nodes.find((node) => node.kind === "secret")
+    || session.graph.nodes.find((node) => node.kind === "capability" && node.authorized === false)
+    || session.graph.nodes.find((node) => node.kind === "sink");
+  const result = session.decision === "deny" ? "已阻断" : session.decision === "ask" ? "待确认" : "已放行";
+  metrics.innerHTML = [
+    ["攻击路径长度", String(pathLength), "danger"],
+    ["拦截节点", "拦截 (OpenClaw)", "green"],
+    ["影响范围", impactNode?.title || "授权工具调用", tone === "safe" ? "green" : "amber"],
+    ["处理结果", result, session.decision === "deny" || session.decision === "allow" ? "green" : "amber"],
+  ].map(([label, value, tone]) => `<div class="summary-metric tone-${tone}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
 }
 
-function previewText(value) {
-  if (!value) return "";
-  try {
-    const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) {
-      return parsed
-        .map((item) => {
-          if (item.type === "toolCall") return `调用工具 ${displayTool(item.name || "-")}`;
-          if (item.type === "text") return translateText(item.text || "");
-          return item.type || "";
-        })
-        .filter(Boolean)
-        .join(" ");
+function renderTimeline() {
+  const session = currentSession();
+  const events = session?.timeline || [];
+  const range = $("timelineRange");
+  const max = Math.max(0, events.length - 1);
+  state.playhead = Math.max(0, Math.min(max, state.playhead));
+  range.max = String(max);
+  range.value = String(state.playhead);
+  range.disabled = events.length < 2;
+  range.style.setProperty("--progress", max ? `${(state.playhead / max) * 100}%` : "100%");
+
+  $("timelineTicks").innerHTML = timelineTickIndexes(events.length).map((index) => {
+    const event = events[index];
+    const left = max ? (index / max) * 100 : 0;
+    const tone = event.decision === "deny" || event.severity === "critical" || event.severity === "high"
+      ? "danger" : event.decision === "ask" || event.severity === "medium" ? "warning" : event.decision === "allow" ? "safe" : "info";
+    return `<button class="timeline-tick tone-${tone} ${index <= state.playhead ? "reached" : ""} ${index === state.playhead ? "current" : ""}" type="button" style="left:${left}%" data-step="${index}" title="${escapeHtml(`${formatClock(event.time)} · ${event.title}`)}" aria-label="跳转到 ${escapeHtml(event.title)}"><span></span><small>${escapeHtml(timelineStageLabel(event, index, events))}<time>${escapeHtml(formatClock(event.time))}</time></small></button>`;
+  }).join("");
+
+  for (const tick of $("timelineTicks").querySelectorAll("[data-step]")) {
+    tick.addEventListener("click", () => setPlayhead(Number(tick.dataset.step), { live: false }));
+  }
+
+  const event = events[state.playhead];
+  $("timelineCurrent").textContent = event ? formatClock(event.time) : "--:--:--";
+  $("timelineEvent").textContent = event?.title || "等待事件";
+  $("liveBtn").classList.toggle("active", state.live);
+  $("playbackBadge").classList.toggle("paused", !state.live);
+  $("playbackBadge").innerHTML = state.live ? `<span class="live-dot"></span> LIVE` : `<i data-lucide="history"></i> REPLAY ${state.playhead + 1}/${Math.max(1, events.length)}`;
+  updatePlaybackButton();
+  syncGraphPlayback();
+}
+
+function setPlayhead(value, { live = false } = {}) {
+  const session = currentSession();
+  const max = Math.max(0, (session?.timeline.length || 1) - 1);
+  state.playhead = Math.max(0, Math.min(max, Number(value) || 0));
+  state.live = live && state.playhead === max;
+  if (!state.live) stopPlayback();
+  renderTimeline();
+  renderIcons();
+}
+
+function syncGraphPlayback() {
+  const session = currentSession();
+  if (!session) return;
+  const eventCount = session.timeline.length;
+  const ratio = state.live || eventCount <= 1 ? 1 : (state.playhead + 1) / eventCount;
+  semanticGraph.setRevealRatio(ratio);
+}
+
+function togglePlayback() {
+  if (state.playing) {
+    stopPlayback();
+    renderTimeline();
+    return;
+  }
+  const events = currentSession()?.timeline || [];
+  if (!events.length) return;
+  if (state.playhead >= events.length - 1) state.playhead = 0;
+  state.live = false;
+  state.playing = true;
+  state.playbackTimer = window.setInterval(() => {
+    const latestEvents = currentSession()?.timeline || [];
+    if (state.playhead >= latestEvents.length - 1) {
+      stopPlayback();
+      state.live = true;
+      renderTimeline();
+      renderIcons();
+      return;
     }
-  } catch {
-    return translateText(compactText(value));
+    state.playhead += 1;
+    renderTimeline();
+    renderIcons();
+  }, 900);
+  renderTimeline();
+  renderIcons();
+}
+
+function stopPlayback() {
+  state.playing = false;
+  if (state.playbackTimer) window.clearInterval(state.playbackTimer);
+  state.playbackTimer = null;
+}
+
+function updatePlaybackButton() {
+  const button = $("playPauseBtn");
+  button.innerHTML = `<i data-lucide="${state.playing ? "pause" : "folder-open"}"></i><span>${state.playing ? "暂停回放" : "打开会话回放"}</span>`;
+  button.title = state.playing ? "暂停回放" : "播放回放";
+  button.setAttribute("aria-label", button.title);
+  $("stepBackBtn").disabled = !currentSession()?.timeline.length || state.playhead <= 0;
+  $("stepForwardBtn").disabled = !currentSession()?.timeline.length || state.playhead >= currentSession().timeline.length - 1;
+}
+
+function jumpToLive() {
+  stopPlayback();
+  const events = currentSession()?.timeline || [];
+  state.playhead = Math.max(0, events.length - 1);
+  state.live = true;
+  renderTimeline();
+  renderIcons();
+  void refreshData({ keepSelection: true, quiet: true });
+}
+
+async function updateEnforcementMode(mode) {
+  const select = $("modeSelect");
+  select.disabled = true;
+  try {
+    state.enforcement = await fetchJson("/api/settings/enforcement", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    });
+    showToast(`执行模式已切换为${({ block: "阻断", approval: "审批", observe: "观察" })[mode] || mode}`);
+    await refreshData({ keepSelection: true, quiet: true });
+  } catch (error) {
+    showToast(`模式切换失败：${error?.message || error}`, "error");
+    renderHeader();
+  } finally {
+    select.disabled = false;
   }
-  return translateText(compactText(value));
 }
 
-function chip(label, kind) {
-  return `<span class="chip ${escapeHtml(kind)}">${escapeHtml(label || "-")}</span>`;
+function bindInteractions() {
+  $("refreshBtn").addEventListener("click", () => void refreshData({ keepSelection: true }));
+  $("modeSelect").addEventListener("change", (event) => void updateEnforcementMode(event.target.value));
+  $("sessionSelect").addEventListener("change", (event) => selectSession(event.target.value));
+  $("sessionSearch").addEventListener("input", (event) => {
+    state.search = event.target.value;
+    renderSessions();
+    renderIcons();
+  });
+  $("pathFocusBtn").addEventListener("click", () => {
+    state.pathFocus = !state.pathFocus;
+    semanticGraph.setPathFocus(state.pathFocus);
+    $("pathFocusBtn").classList.toggle("active", state.pathFocus);
+    $("pathFocusBtn").setAttribute("aria-pressed", String(state.pathFocus));
+  });
+  $("zoomInBtn").addEventListener("click", () => semanticGraph.zoom(1.14));
+  $("zoomOutBtn").addEventListener("click", () => semanticGraph.zoom(0.88));
+  $("fitGraphBtn").addEventListener("click", () => semanticGraph.fit());
+  $("closeInspectorBtn").addEventListener("click", () => {
+    state.selectedItem = null;
+    semanticGraph.clearSelection({ notify: false });
+    $("inspector").classList.remove("open");
+    $("incidentConsole").classList.add("inspector-collapsed");
+    renderInspector(null);
+    renderIcons();
+  });
+  $("contextCollapseBtn").addEventListener("click", () => {
+    const pinned = $("contextCollapseBtn").classList.toggle("active");
+    $("contextCollapseBtn").title = pinned ? "取消固定请求上下文" : "固定请求上下文";
+    $("contextCollapseBtn").setAttribute("aria-label", $("contextCollapseBtn").title);
+    $("contextCollapseBtn").setAttribute("aria-pressed", String(pinned));
+    $("contextCollapseBtn").innerHTML = `<i data-lucide="${pinned ? "pin" : "pin-off"}"></i>`;
+    showToast(pinned ? "请求上下文已固定" : "请求上下文已取消固定");
+    renderIcons();
+  });
+  $("exportReportBtn").addEventListener("click", exportCurrentReport);
+  $("allowlistBtn").addEventListener("click", () => showToast("已创建白名单复核申请，策略不会在审批前生效"));
+  $("timelineRange").addEventListener("input", (event) => setPlayhead(Number(event.target.value), { live: false }));
+  $("playPauseBtn").addEventListener("click", togglePlayback);
+  $("stepBackBtn").addEventListener("click", () => setPlayhead(state.playhead - 1, { live: false }));
+  $("stepForwardBtn").addEventListener("click", () => setPlayhead(state.playhead + 1, { live: false }));
+  $("liveBtn").addEventListener("click", jumpToLive);
+  window.addEventListener("resize", () => semanticGraph.resize());
+  window.addEventListener("keydown", (event) => {
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement?.tagName)) return;
+    if (event.code === "Space") {
+      event.preventDefault();
+      togglePlayback();
+    } else if (event.key === "ArrowLeft") setPlayhead(state.playhead - 1, { live: false });
+    else if (event.key === "ArrowRight") setPlayhead(state.playhead + 1, { live: false });
+  });
 }
 
-function isBlocked(record) {
-  const payload = record.payload || {};
-  return record.severity === "danger" || payload.verdict === "block" || payload.decision === "deny" || payload.original_decision === "deny";
+function currentSession() {
+  return state.model.sessions.find((session) => session.id === state.selectedSessionId) || null;
 }
 
-function searchableText(record) {
-  return `${record.title} ${record.summary} ${record.type} ${record.layer} ${record.session_key} ${record.run_id} ${JSON.stringify(record.payload)}`.toLowerCase();
+function preferredSession(sessions) {
+  return sessions.find((session) => session.graph?.traceKind === "enforcement_bypass")
+    || sessions.find((session) => session.decision === "deny" && !session.graph?.derived)
+    || sessions.find((session) => session.decision === "ask")
+    || sessions.find((session) => !session.graph?.derived)
+    || sessions[0]
+    || null;
 }
 
-function compactSession(value) {
-  const text = String(value || "-").replace(/^agent:main:/, "");
-  if (text.length <= 34) return text;
-  return `${text.slice(0, 22)}...${text.slice(-8)}`;
+function defaultSelection(session) {
+  const boundaryEdge = session?.graph?.edges?.find((edge) => {
+    if (edge.label !== "constrains") return false;
+    const from = session.graph.nodes.find((node) => node.id === edge.from);
+    const to = session.graph.nodes.find((node) => node.id === edge.to);
+    return from?.kind === "capability" && from.authorized === false && to?.kind === "action";
+  });
+  if (boundaryEdge) return { type: "edge", value: boundaryEdge };
+  const id = session?.graph?.selectedNodeId
+    || [...(session?.graph?.nodes || [])].reverse().find((node) => node.kind === "decision")?.id
+    || session?.graph?.pathNodeIds?.at(-1);
+  const node = session?.graph?.nodes?.find((item) => item.id === id);
+  return node ? { type: "node", value: node } : null;
 }
 
-function compactText(value, max = 420) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+function restoreSelection(session, selection) {
+  if (!selection) return null;
+  const list = selection.type === "edge" ? session.graph.edges : session.graph.nodes;
+  const value = list.find((item) => item.id === selection.value?.id);
+  return value ? { type: selection.type, value } : null;
 }
 
-function formatTime(value) {
-  if (!value) return "-";
-  return new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
+function timelineTickIndexes(length) {
+  if (length <= 7) return Array.from({ length }, (_, index) => index);
+  const indexes = new Set([0, length - 1, state.playhead]);
+  for (let index = 1; index < 6; index += 1) indexes.add(Math.round((index / 6) * (length - 1)));
+  return [...indexes].sort((left, right) => left - right);
 }
 
-function formatDate(value) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+function shortEventLabel(value) {
+  const text = String(value || "事件").replace(/\s+/g, " ");
+  return text.length > 12 ? `${text.slice(0, 11)}...` : text;
 }
 
-function durationText(start, end) {
-  const diff = Math.max(0, new Date(end) - new Date(start));
-  if (diff < 1000) return `${diff} ms`;
-  if (diff < 60_000) return `${Math.round(diff / 1000)} s`;
-  return `${Math.round(diff / 60_000)} min`;
+function timelineStageLabel(event, index, events) {
+  const text = String(event?.title || "事件");
+  const type = String(event?.type || "");
+  const payload = event?.record?.payload || {};
+  if (index === events.length - 1 && type === "tool_result" && (payload.blocked || event.decision === "deny")) return "响应返回";
+  if (["lab_command", "user_message", "command"].includes(type)) return "用户输入";
+  if (type === "task_spec") return "意图解析";
+  if (type === "tool_result" && (payload.preview || payload.adversarial_input)) return "Prompt 注入";
+  if (type === "tool_call") return "工具调用";
+  if (type === "tool_decision" && event.decision === "deny") return "系统/配置访问";
+  if (type === "alert" && event.decision === "deny") return "拦截 (OpenClaw)";
+  if (/用户|user|command/i.test(text)) return "用户输入";
+  if (/intent|意图|任务/i.test(text)) return "意图解析";
+  if (/prompt|注入|taint|污染/i.test(text)) return "Prompt 注入";
+  if (/tool|工具|调用/i.test(text)) return "工具调用";
+  if (/系统|配置|secret|密钥|敏感/i.test(text)) return "系统/配置访问";
+  if (/拦截|阻断|deny|block/i.test(text)) return "拦截 (OpenClaw)";
+  if (/返回|result|response/i.test(text)) return "响应返回";
+  return shortEventLabel(text);
 }
 
-function setStatus(text, tone) {
-  const node = $("status");
-  node.textContent = text;
-  node.className = `pill ${tone || ""}`;
+function inspectorNodeTitle(node) {
+  if (!node) return "未知节点";
+  if (node.kind === "action") return "工具调用";
+  if (node.kind === "capability" && node.authorized === false) return "系统/配置访问";
+  if (node.kind === "capability") return "意图解析";
+  if (node.kind === "taint") return "Prompt 注入";
+  if (node.kind === "secret") return "敏感数据";
+  if (node.kind === "sink") return "外发/执行";
+  if (node.kind === "guard") return "拦截 (OpenClaw)";
+  if (node.kind === "decision") return "安全裁决";
+  if (node.kind === "intent") return "用户输入";
+  return node.title || nodeKindLabel(node.kind);
 }
 
-function downloadExport(format) {
-  const limit = $("limitSelect").value;
-  window.location.href = `/api/export?format=${encodeURIComponent(format)}&limit=${encodeURIComponent(limit)}`;
+function firstText(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const text = typeof value === "string" ? value.trim() : String(value).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function toolDescription(tool) {
+  const text = String(tool || "").toLowerCase();
+  if (/graph/.test(text)) return "图构建工具";
+  if (/search|web|browser/.test(text)) return "文档检索工具";
+  if (/read|file/.test(text)) return "文件读取工具";
+  if (/email|send/.test(text)) return "外部发送工具";
+  if (/shell|exec|code/.test(text)) return "代码执行工具";
+  return "Agent 工具";
+}
+
+function incidentId(session) {
+  const date = new Date(session?.latest || Date.now());
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  const ymd = [safeDate.getFullYear(), String(safeDate.getMonth() + 1).padStart(2, "0"), String(safeDate.getDate()).padStart(2, "0")].join("");
+  const hash = [...String(session?.id || "event")].reduce((value, character) => (value * 31 + character.charCodeAt(0)) % 10000, 17);
+  return `AS-${ymd}-${String(hash).padStart(4, "0")}`;
+}
+
+function formatDateTime(value) {
+  const raw = String(value || "");
+  const date = new Date(raw || 0);
+  if (Number.isNaN(date.getTime())) return String(value || "--");
+  const timeZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw) ? "Asia/Shanghai" : undefined;
+  return date.toLocaleString("zh-CN", {
+    hour12: false,
+    ...(timeZone ? { timeZone } : {}),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).replaceAll("/", "-");
+}
+
+function exportCurrentReport() {
+  const session = currentSession();
+  if (!session) {
+    showToast("当前没有可导出的安全事件", "error");
+    return;
+  }
+  const report = {
+    incident_id: incidentId(session),
+    exported_at: new Date().toISOString(),
+    decision: session.decision,
+    severity: session.severity,
+    reasons: session.reasons,
+    policies: session.policies,
+    causal_graph: session.graph.raw || session.graph,
+  };
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `${incidentId(session)}.json`;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  showToast("事件报告已导出");
+}
+
+function riskScore(value, decision) {
+  const score = Number(value);
+  if (Number.isFinite(score) && score > 0) return Math.max(0, Math.min(10, score > 10 ? score / 10 : score));
+  return decision === "deny" ? 9.2 : decision === "ask" ? 6.8 : 1.8;
+}
+
+function decisionTone(session) {
+  if (!session) return "safe";
+  if (session.decision === "deny") return "danger";
+  if (session.decision === "ask") return "warning";
+  if (session.decision === "allow") return "safe";
+  return session.tone || "safe";
+}
+
+function setConnection(status, label) {
+  const target = $("connectionStatus");
+  target.className = `connection-state ${status}`;
+  target.querySelector("span:last-child").textContent = label;
+}
+
+function showToast(message, tone = "success") {
+  const toast = $("toast");
+  toast.textContent = message;
+  toast.className = `toast show ${tone}`;
+  window.clearTimeout(showToast.timer);
+  showToast.timer = window.setTimeout(() => { toast.className = "toast"; }, 3200);
+}
+
+function renderIcons() {
+  window.lucide?.createIcons({ attrs: { "stroke-width": 1.8 } });
+}
+
+function formatClock(value) {
+  if (!value) return "--:--:--";
+  const raw = String(value);
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 8) || "--:--:--";
+  const timeZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw) ? "Asia/Shanghai" : undefined;
+  return date.toLocaleTimeString("zh-CN", {
+    hour12: false,
+    ...(timeZone ? { timeZone } : {}),
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString("zh-CN");
 }
 
 function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]);
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[character]);
 }
-
-async function copySelectedPayload() {
-  const id = $("copyPayloadBtn").dataset.recordId;
-  const record = await ensureRecordDetail(id);
-  if (!record) return;
-  const text = JSON.stringify(record, null, 2);
-  try {
-    await navigator.clipboard.writeText(text);
-    $("copyPayloadBtn").textContent = "已复制";
-    setTimeout(() => ($("copyPayloadBtn").textContent = "复制 JSON"), 1200);
-  } catch {
-    $("copyPayloadBtn").textContent = "复制失败";
-    setTimeout(() => ($("copyPayloadBtn").textContent = "复制 JSON"), 1200);
-  }
-}
-
-function fullDetailRecord(id) {
-  return state.detailCache.get(id) || null;
-}
-
-async function ensureRecordDetail(id) {
-  if (!id) return null;
-  if (state.detailCache.has(id)) return state.detailCache.get(id);
-  const record = state.selectedRecord?.id === id ? state.selectedRecord : state.records.find((item) => item.id === id);
-  if (record && !record.payload?.__compact) return record;
-  return loadRecordDetail(id);
-}
-
-async function loadRecordDetail(id) {
-  try {
-    const response = await fetch(`/api/records/${encodeURIComponent(id)}`, { cache: "no-store" }).then((res) => res.json());
-    if (!response.ok || !response.record) throw new Error(response.error || "record not found");
-    state.detailCache.set(id, response.record);
-    if (state.selectedId === id) renderDetail(response.record);
-    return response.record;
-  } catch (error) {
-    if (state.selectedId === id) {
-      const loading = document.querySelector(".detail-loading");
-      if (loading) loading.textContent = `读取完整 payload 失败：${error.message || error}`;
-    }
-    return null;
-  }
-}
-
-function scheduleAutoRefresh() {
-  if (state.timer) clearInterval(state.timer);
-  state.timer = state.autoRefresh ? setInterval(() => refresh({ keepSelection: true }), 5000) : null;
-  $("autoRefreshBtn").textContent = `自动刷新：${state.autoRefresh ? "开" : "关"}`;
-}
-
-$("refreshBtn").addEventListener("click", () => refresh({ keepSelection: true }));
-$("autoRefreshBtn").addEventListener("click", () => {
-  state.autoRefresh = !state.autoRefresh;
-  scheduleAutoRefresh();
-});
-$("focusModeGroup").addEventListener("click", (event) => {
-  const target = event.target.closest("[data-focus]");
-  if (!target) return;
-  state.focusMode = target.dataset.focus || "important";
-  state.selectedId = "";
-  resetTimelinePage();
-  render();
-});
-$("exportJsonBtn").addEventListener("click", () => downloadExport("json"));
-$("exportCsvBtn").addEventListener("click", () => downloadExport("csv"));
-$("copyPayloadBtn").addEventListener("click", copySelectedPayload);
-$("modeSelect")?.addEventListener("change", () => setEnforcementMode($("modeSelect").value));
-$("resetBtn").addEventListener("click", async () => {
-  if (!confirm("确认清空玄鉴本地记录？")) return;
-  await fetch("/api/reset", { method: "POST" });
-  state.selectedId = "";
-  state.selectedSession = "";
-  await refresh({ keepSelection: false });
-});
-
-for (const id of ["searchInput", "severityFilter", "layerFilter", "typeFilter"]) {
-  $(id).addEventListener("input", () => {
-    resetTimelinePage();
-    render();
-  });
-  $(id).addEventListener("change", () => {
-    resetTimelinePage();
-    render();
-  });
-}
-
-$("limitSelect").addEventListener("change", () => {
-  resetTimelinePage();
-  refresh({ keepSelection: true });
-});
-
-scheduleAutoRefresh();
-refreshEnforcementMode();
-refresh({ keepSelection: false });

@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "node ./scripts/build.mjs",
+    "preview:dashboard": "npm run build && node ./scripts/dashboard-ui-preview.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint --max-warnings=0 config.ts index.ts core server tests",
     "test": "vitest run && npm run test:policy && npm run test:security && npm run test:property",

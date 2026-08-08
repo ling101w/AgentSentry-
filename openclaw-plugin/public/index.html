@@ -3,150 +3,207 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>玄鉴运行记录与风险观测</title>
+    <meta name="theme-color" content="#030b13" />
+    <title>玄鉴 AgentSentry · 攻击事件详情</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=20260711-1" />
+    <link rel="stylesheet" href="/styles.css?v=20260807-8" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <p class="eyebrow">玄鉴 for OpenClaw</p>
-        <h1>运行记录与风险观测</h1>
-        <p class="subtitle">按会话追踪 OpenClaw 提示、工具调用、拦截决策和响应结果。</p>
-      </div>
-      <div class="actions">
-        <div class="mode-control" aria-label="玄鉴运行模式">
-          <label for="modeSelect">模式</label>
-          <select id="modeSelect">
-            <option value="block">阻断</option>
-            <option value="approval">审批</option>
-            <option value="observe">观察</option>
-          </select>
-          <button class="help-dot" type="button" aria-label="查看模式说明">?</button>
-          <div class="help-popover" role="tooltip">
-            <strong id="modeHelpTitle">运行模式</strong>
-            <span id="modeHelpText">读取当前运行配置中。</span>
-          </div>
+    <div class="app-shell">
+      <header class="app-header">
+        <a class="brand-lockup" href="/" aria-label="玄鉴 AgentSentry 首页">
+          <img src="/favicon.svg" width="38" height="38" alt="" />
+          <span>
+            <strong>AgentSentry / OpenClaw</strong>
+            <small>智能体安全监控平台</small>
+          </span>
+        </a>
+
+        <div class="incident-heading">
+          <i class="header-notch" data-lucide="chevron-right" aria-hidden="true"></i>
+          <h1>攻击事件详情</h1>
+          <label class="event-selector" for="sessionSelect">
+            <span>事件 ID:</span>
+            <select id="sessionSelect" aria-label="切换攻击事件"></select>
+          </label>
+          <span id="severityBadge" class="severity-badge">高危</span>
         </div>
-        <span id="modeStatus" class="mode-status">模式读取中</span>
-        <a class="button-link primary-link" href="/security-screen">安全态势大屏</a>
-        <a class="button-link" href="/command-lab">命令实验室</a>
-        <button id="refreshBtn" type="button">刷新</button>
-        <button id="autoRefreshBtn" class="ghost" type="button">自动刷新：开</button>
-        <button id="exportJsonBtn" class="ghost" type="button">导出 JSON</button>
-        <button id="exportCsvBtn" class="ghost" type="button">导出 CSV</button>
-        <button id="resetBtn" class="ghost danger-action" type="button">清空</button>
-      </div>
-    </header>
 
-    <main class="page-shell">
-      <section class="defense-stack-panel" aria-label="当前运行防护栈">
-        <div class="defense-stack-heading">
-          <div>
-            <span>当前运行防护栈</span>
-            <strong id="stackReadiness">配置读取中</strong>
-          </div>
-          <span id="stackMode" class="stack-mode">--</span>
+        <div class="header-controls">
+          <label class="protection-control" for="modeSelect" title="切换执行模式">
+            <i data-lucide="shield-check"></i>
+            <select id="modeSelect" aria-label="执行模式">
+              <option value="block">实时防护已开启</option>
+              <option value="approval">人工审批模式</option>
+              <option value="observe">仅观察模式</option>
+            </select>
+            <span id="connectionStatus" class="connection-state connecting" role="status">
+              <span class="live-dot" aria-hidden="true"></span>
+              <span>连接中</span>
+            </span>
+          </label>
+          <button id="refreshBtn" class="header-icon-button" type="button" title="刷新数据" aria-label="刷新数据">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+          <button class="header-icon-button notification-button" type="button" title="查看告警" aria-label="查看告警">
+            <i data-lucide="bell"></i><b>99+</b>
+          </button>
+          <button class="operator-menu" type="button" aria-label="安全运营团队菜单">
+            <span class="operator-avatar"><i data-lucide="user-round"></i></span>
+            <span>安全运营团队</span>
+            <i data-lucide="chevron-down"></i>
+          </button>
         </div>
-        <div id="securityStack" class="security-stack"></div>
-      </section>
+      </header>
 
-      <section class="stats-grid" id="statsGrid" aria-label="记录概览"></section>
+      <div class="app-body">
+        <aside class="side-navigation" aria-label="主导航">
+          <nav>
+            <a href="/security-screen"><i data-lucide="house"></i><span>总览</span></a>
+            <a class="active" href="/" aria-current="page"><i data-lucide="siren"></i><span>攻击监控</span><i class="nav-active-marker" data-lucide="chevron-right"></i></a>
+            <a href="/security-screen#agents"><i data-lucide="bot"></i><span>智能体资产</span></a>
+            <a href="/security-screen#policies"><i data-lucide="shield-check"></i><span>策略管理</span></a>
+            <a href="/security-screen#tools"><i data-lucide="circle-gauge"></i><span>工具管理</span></a>
+            <a href="/security-screen#alerts" class="nav-alert"><i data-lucide="bell-ring"></i><span>告警中心</span><b>23</b></a>
+            <a href="/security-screen#audit"><i data-lucide="notebook-tabs"></i><span>审计日志</span></a>
+            <a href="/security-screen#settings"><i data-lucide="settings"></i><span>系统设置</span></a>
+          </nav>
+          <div class="side-footer">
+            <strong><i data-lucide="shield-check"></i>OpenClaw</strong>
+            <span>v1.2.0</span>
+          </div>
+        </aside>
 
-      <section class="workbench">
-        <aside class="sidebar">
-          <section class="panel filters">
-            <div class="panel-title">
-              <h2>筛选</h2>
-              <span id="status" class="pill">连接中</span>
+        <main id="incidentConsole" class="incident-console">
+          <section class="request-panel panel-frame" aria-labelledby="requestTitle">
+            <header class="panel-titlebar">
+              <h2 id="requestTitle">对话 / 请求上下文</h2>
+              <button id="contextCollapseBtn" class="panel-icon-button active" type="button" title="取消固定请求上下文" aria-label="取消固定请求上下文" aria-pressed="true">
+                <i data-lucide="pin"></i>
+              </button>
+            </header>
+            <div id="requestContext" class="request-context" aria-live="polite"></div>
+          </section>
+
+          <section class="graph-workspace panel-frame" aria-labelledby="graphTitle">
+            <header class="panel-titlebar graph-titlebar">
+              <div>
+                <h2 id="graphTitle">攻击因果图 / 语义行动图</h2>
+                <span class="info-mark" title="展示 Agent 行为的语义因果关系">i</span>
+              </div>
+              <div class="graph-tools" aria-label="图谱工具">
+                <button id="pathFocusBtn" class="compact-button active" type="button" aria-pressed="true" title="聚焦攻击路径">
+                  <i data-lucide="route"></i><span>路径聚焦</span>
+                </button>
+                <button id="fitGraphBtn" class="compact-button" type="button" title="适配画布">
+                  <i data-lucide="maximize"></i><span>全屏</span>
+                </button>
+                <button id="zoomOutBtn" class="visually-hidden-control" type="button" aria-label="缩小图谱"></button>
+                <button id="zoomInBtn" class="visually-hidden-control" type="button" aria-label="放大图谱"></button>
+              </div>
+            </header>
+
+            <div class="graph-legend" aria-label="图例">
+              <span><i class="legend-dot normal"></i>正常节点</span>
+              <span><i class="legend-dot intermediate"></i>中间节点</span>
+              <span><i class="legend-arrow-icon" data-lucide="arrow-right"></i>攻击路径</span>
+              <span><i class="legend-guard">+</i>拦截点</span>
+              <span id="graphConfidence" class="legend-confidence">等待图证据</span>
             </div>
-            <label>
-              搜索
-              <input id="searchInput" type="search" placeholder="工具 / 会话 / 原因 / payload" />
-            </label>
-            <div class="filter-block">
-              <span>视图重点</span>
-              <div class="segmented" id="focusModeGroup">
-                <button class="segment active" type="button" data-focus="important">重点</button>
-                <button class="segment" type="button" data-focus="all">全量</button>
-                <button class="segment" type="button" data-focus="tools">工具</button>
-                <button class="segment" type="button" data-focus="context">溯源</button>
+
+            <div id="attackNotice" class="attack-notice">
+              检测到攻击后：节点/边高亮 + 自动弹出证据详情（不需要镜头移动和放大）
+            </div>
+
+            <div id="graphViewport" class="graph-viewport" tabindex="0" aria-label="实时语义动作图">
+              <div class="graph-grid" aria-hidden="true"></div>
+              <div id="graphWorld" class="graph-world">
+                <svg id="graphEdges" class="graph-edges" aria-hidden="true"></svg>
+                <div id="graphNodes" class="graph-nodes"></div>
+              </div>
+              <div id="graphEmpty" class="graph-empty">
+                <i data-lucide="radio-tower"></i>
+                <strong>等待 Agent 行为</strong>
+                <span>新的工具调用会在这里形成攻击因果图</span>
+              </div>
+              <div id="playbackBadge" class="playback-badge"><span class="live-dot"></span> LIVE</div>
+            </div>
+            <div id="graphContext" class="graph-context" aria-live="polite"></div>
+          </section>
+
+          <aside id="inspector" class="inspector panel-frame open" aria-labelledby="inspectorTitle">
+            <header class="panel-titlebar inspector-titlebar">
+              <h2 id="inspectorTitle">证据详情</h2>
+              <div>
+                <span class="auto-popout">自动弹出</span>
+                <button id="closeInspectorBtn" class="panel-icon-button" type="button" title="关闭证据详情" aria-label="关闭证据详情">
+                  <i data-lucide="x"></i>
+                </button>
+              </div>
+            </header>
+            <div id="inspectorBody" class="inspector-body">
+              <div class="inspector-empty">
+                <i data-lucide="mouse-pointer-click"></i>
+                <strong>选择一个语义节点</strong>
+                <span>查看裁决、证据、溯源和命中策略</span>
               </div>
             </div>
-            <div class="field-grid">
-              <label>
-                严重级别
-                <select id="severityFilter">
-                  <option value="">全部</option>
-                  <option value="danger">高危</option>
-                  <option value="warning">警告</option>
-                  <option value="success">通过</option>
-                  <option value="info">信息</option>
-                </select>
-              </label>
-              <label>
-                记录类型
-                <select id="typeFilter">
-                  <option value="">全部</option>
-                </select>
-              </label>
-            </div>
-            <label>
-              安全域
-              <select id="layerFilter">
-                <option value="">全部</option>
-              </select>
-            </label>
-            <label>
-              读取数量
-              <select id="limitSelect">
-                <option value="200" selected>200</option>
-                <option value="500">500</option>
-                <option value="1000">1000</option>
-                <option value="2000">2000</option>
-                <option value="5000">5000</option>
-              </select>
-            </label>
-            <div class="hint">
-              <span>记录文件</span>
-              <strong id="recordsPath">~/.openclaw/agentsentry/records.jsonl</strong>
-            </div>
-          </section>
+          </aside>
 
-          <section class="panel sessions-panel">
-            <div class="panel-title">
-              <h2>会话</h2>
-              <span id="sessionCount">0</span>
-            </div>
-            <div id="sessionList" class="session-list"></div>
-          </section>
-        </aside>
+          <section id="incidentFlow" class="incident-flow" aria-label="事件证据流"></section>
 
-        <section class="timeline-column">
-          <section class="panel session-summary" id="sessionSummary"></section>
+          <footer class="incident-footer">
+            <section class="incident-summary panel-frame" aria-labelledby="summaryTitle">
+              <header class="summary-heading">
+                <h2 id="summaryTitle">事件摘要</h2>
+                <span id="summarySeverity" class="severity-badge">高危</span>
+                <p id="summaryText">等待安全事件</p>
+              </header>
+              <div id="summaryMetrics" class="summary-metrics"></div>
+            </section>
 
-          <section class="panel">
-            <div class="panel-title">
-              <h2>事件时间线</h2>
-              <span id="recordCount">0 条</span>
-            </div>
-            <div id="timeline" class="timeline"></div>
-          </section>
-        </section>
+            <section class="timeline-console panel-frame" aria-labelledby="timelineTitle">
+              <header class="timeline-heading">
+                <div>
+                  <h2 id="timelineTitle">事件时间线</h2>
+                  <span>（关键步骤）</span>
+                </div>
+                <div class="timeline-actions">
+                  <button id="exportReportBtn" class="compact-button" type="button"><i data-lucide="download"></i><span>导出报告</span></button>
+                  <button id="allowlistBtn" class="compact-button" type="button"><i data-lucide="circle-plus"></i><span>加入白名单</span></button>
+                  <button id="playPauseBtn" class="compact-button" type="button"><i data-lucide="folder-open"></i><span>打开会话回放</span></button>
+                </div>
+              </header>
+              <div class="timeline-track-wrap">
+                <div class="timeline-step-controls">
+                  <button id="stepBackBtn" class="panel-icon-button" type="button" title="上一步" aria-label="上一步"><i data-lucide="skip-back"></i></button>
+                  <button id="stepForwardBtn" class="panel-icon-button" type="button" title="下一步" aria-label="下一步"><i data-lucide="skip-forward"></i></button>
+                </div>
+                <div id="timelineTicks" class="timeline-ticks"></div>
+                <input id="timelineRange" class="timeline-range" type="range" min="0" max="0" value="0" aria-label="执行时间轴" />
+                <div class="timeline-meta">
+                  <span id="timelineCurrent">--:--:--</span>
+                  <span id="timelineEvent">等待事件</span>
+                  <button id="liveBtn" class="live-button active" type="button"><span class="live-dot"></span> LIVE</button>
+                </div>
+              </div>
+            </section>
+          </footer>
 
-        <aside class="panel detail">
-          <div class="panel-title detail-title">
-            <div>
-              <h2>详情</h2>
-              <span id="detailMeta">未选择</span>
-            </div>
-            <button id="copyPayloadBtn" class="ghost small" type="button" disabled>复制 JSON</button>
+          <div class="data-hooks" aria-hidden="true">
+            <span id="sessionCount">0</span>
+            <input id="sessionSearch" tabindex="-1" />
+            <div id="sessionList"></div>
+            <span id="sourceLabel">OPENCLAW RECORDS</span>
+            <span id="sourceMeta">等待审计数据</span>
           </div>
-          <div id="detailBody" class="empty">选择一条记录查看摘要和 payload。</div>
-        </aside>
-      </section>
-    </main>
+        </main>
+      </div>
+    </div>
 
-    <script src="/app.js?v=20260711-1"></script>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="/vendor/lucide.min.js?v=0.468.0"></script>
+    <script type="module" src="/app.js?v=20260807-10"></script>
   </body>
 </html>

@@ -80,8 +80,8 @@ applyEffects(state, effects);
 2. 打开 `/agentsentry` 返回的认证 URL。裸 `http://127.0.0.1:8765/` 在全新浏览器中按设计返回 `401`；bootstrap token 写入安全 session cookie 后立即从地址栏移除。
 3. 进入 `/command-lab`，先运行一个普通文件写入或健康检查，证明系统不是一刀切。
 4. 再运行隐藏指令、敏感数据外发或记忆投毒样例，观察动作在执行前进入 `deny` 或 `ask`。
-5. 打开 `/security-screen` 的“因果”视图，查看 `intent -> capability -> data -> action -> sink` 路径和命中的边界。
-6. 回到首页查看 `tool_decision`、`guard_finding`、`alert`、`tool_result`，并导出 JSON/CSV 审计记录。
+5. 回到首页查看实时生长的 `intent -> capability -> data -> action -> sink -> guard -> decision` 语义动作图。
+6. 点击高亮攻击路径和右侧 Inspector，回放污染数据如何影响危险参数并在执行前被阻断；需要全局统计时再进入 `/security-screen`。
 
 更完整的演示话术和复现顺序见 [演示与复现实验指南](reports/demo_and_reproduction.md)。
 
@@ -167,9 +167,9 @@ $env:AGENTSENTRY_API_KEY="YOUR_JUDGE_KEY"
 
 认证后可使用三个主视图：
 
-- `/`：实时记录、裁决详情、JSON/CSV 导出和运行配置。
+- `/`：主产品入口，按会话展示实时语义动作图、攻击路径、可读裁决依据和执行回放。
 - `/command-lab`：受控业务工具与公开攻击样例的逐条复测入口。
-- `/security-screen`：安全态势、四域一环指标、告警时间线和 Live Causal Graph。
+- `/security-screen`：全局安全态势、四域一环指标、告警时间线和 3D 拓扑补充视图。
 
 Dashboard 默认只允许 loopback。若要绑定 `0.0.0.0`，必须显式启用远程访问并配置认证 token；不要为了容器部署直接暴露未认证端口。
 

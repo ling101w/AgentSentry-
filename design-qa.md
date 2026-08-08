@@ -1,42 +1,53 @@
-# Security Screen DAG Design QA
+# Attack Incident Detail Design QA
 
-- source visual truth path: `.tmp/graph-v2-1920x1080.png` and `.tmp/graph-v2-1366x768.png`
-- implementation URL: `http://127.0.0.1:8766/security-screen`
-- implementation screenshot path: unavailable; the primary in-app Browser failed before capture because the shared automation runtime omitted its sandbox metadata
-- viewport: intended checks at 1920x1080 and 1366x768
-- state: causal graph view with a real attack trace; authorized and enforcement-bypass traces covered by projection tests
-- full-view comparison evidence: blocked because a current implementation screenshot could not be captured
-- focused region comparison evidence: an independent Chromium pass verified the live 1366x768 layout and interactions, but did not retain a screenshot artifact for source-to-implementation comparison
+- source visual truth path: `E:\weix\xwechat_files\wxid_qb9bpbg86nc222_5bd3\temp\RWTemp\2026-08\0aded3c3359cb22b61fecbb3abf4660c.png`
+- implementation URL: `http://127.0.0.1:8766/?access_token=agentsentry-local-preview-token-2026`
+- implementation screenshot path: `artifacts/design-qa/implementation-1680x944.png`
+- primary viewport: `1680x944`
+- responsive evidence: `artifacts/design-qa/implementation-1366x768.png`, `artifacts/design-qa/implementation-390x844.png`
+- state: sensitive-data exfiltration selected, attack-path focus enabled, high-risk authorization boundary edge selected, evidence inspector open, timeline at LIVE
+- browser-rendered evidence: captured from the running local dashboard
+- primary interactions tested: session switching across allow/ask/deny; node and edge inspection; path focus; inspector close and graph-driven reopen; context pin; timeline playback; step controls; LIVE return; responsive navigation
+- console errors checked: 0 errors, 0 warnings
+
+## Full-view Comparison Evidence
+
+- Side-by-side comparison: `artifacts/design-qa/comparison-reference-left-implementation-right.png`
+- Reference and implementation use the same `1680x944` crop and the same attack-detail state.
+- The implementation matches the source's five-region composition: narrow security navigation, incident header, request context, causal graph, evidence inspector, plus the attached summary/timeline footer.
+- No actionable P0, P1, or P2 full-view mismatch remains.
+
+## Focused Region Comparison Evidence
+
+- Request context: `artifacts/design-qa/comparison-focused-context.png`
+- Causal graph: `artifacts/design-qa/comparison-focused-graph.png`
+- Evidence inspector: `artifacts/design-qa/comparison-focused-inspector.png`
+- Focused comparisons confirm matching panel boundaries, semantic status colors, compact node density, inspector row rhythm, and readable evidence hierarchy.
+
+## Required Fidelity Surfaces
+
+- Fonts and typography: Segoe UI / Microsoft YaHei UI matches the compact Chinese operations-console character of the source. Heading, body, metadata, and monospace evidence sizes remain readable without clipped controls or negative letter spacing.
+- Spacing and layout rhythm: desktop column boundaries align to approximately `410 / 657 / 435px`; the top graph/context panels, attached evidence-flow strip, 10px footer break, and 156px footer match the source composition.
+- Colors and visual tokens: blue navigation/normal state, amber intermediate state, red attack path, and green OpenClaw interception are isolated to their semantic roles on a near-black neutral base.
+- Image and icon fidelity: the existing AgentSentry shield asset is reused with a blue treatment; all interface symbols use the vendored Lucide bundle. No placeholder imagery, handcrafted SVG, or emoji is present.
+- Copy and content: fixed labels match the source hierarchy. Session-specific request text, policies, tools, evidence, IDs, and timestamps intentionally come from live records rather than being hard-coded to the screenshot.
+- Accessibility and responsiveness: visible focus states, semantic buttons/labels, reduced-motion support, and no page-level horizontal overflow at `1680x944`, `1366x768`, or `390x844`.
+
+## Comparison History
+
+1. Initial shell comparison found P1 composition drift from the supplied incident-detail screen. Fixed by replacing the session-list dashboard with the source's navigation/header/context/graph/inspector/footer structure.
+2. First rendered comparison found P2 request-step colors, context-card height, a 10px graph-to-flow gap, and wrapped `deny（已执行）` text. Fixed with semantic number colors, measured card minima, attached row tracks, and a wider deny segment.
+3. Focused graph comparison found P1 node placement drift from the source. Fixed with role-aware coordinates for user, intent, injection, tool, system, secret, guard, decision, and sink nodes. Post-fix evidence: `artifacts/design-qa/comparison-focused-graph.png`.
+4. Responsive comparison found P2 right-inspector overflow at `1366px` and a distracting mobile navigation scrollbar. Fixed desktop breakpoint tracks and hid only the navigation scrollbar while retaining touch scrolling. Post-fix evidence: the responsive screenshots above.
+5. Interaction QA found P1 context collapse without a visible restore control and P2 contradictory `allow` plus high-risk coloring. Replaced collapse with a reversible pin state and made the screen's primary tone follow the current allow/ask/deny decision. Browser retest passed all primary interactions.
 
 ## Findings
 
-- P1: A source-to-implementation visual comparison is not available. The HTML module parses, the live endpoint serves the new markup, and the 1366x768 live pass found no overflow or console errors, but a retained current screenshot is still required for formal comparison at both target viewports.
+No actionable P0, P1, or P2 findings remain.
 
-## Patches Made Since Previous QA
+## Follow-up Polish
 
-- Preserved the existing security-screen palette, panel layout, and Three.js topology.
-- Replaced the causal view's serpentine coordinates with a topological rank layout.
-- Added connected display-only collapse nodes for long paths.
-- Added fit, zoom, pan, keyboard tabs, node/edge inspection, directed focus, stable alert selection, dynamic evidence legend, and partial-graph counters.
-- Added attack, authorized, and enforcement-bypass trace presentations.
-- Added a six-step causal story in both the graph header and evidence bar: authorization actor, authorization result, data field, tool chain, destination, and verdict.
-- Made the first real graph open automatically while preserving a user's manual topology/causal view choice across polling refreshes.
-- Verified the rebuilt `8766` endpoint serves the six-step markup and currently exposes 4 real causal graphs across 66 overview alerts.
-- Bound authorization evidence to the final Sink action so an earlier authorized read cannot be presented as authorization for a later unapproved external send.
-- Separated graph-path verdict from the final merged enforcement decision; the sixth step now follows the actual alert action.
-- Added two frontend regression tests for those security invariants.
-- Consolidated the three crowded left-column cards and the attack-chain card into one four-tab `态势侧舱`; hidden panes continue receiving live render updates.
-- Converted the attack chain to a vertical side-panel sequence and expanded the bottom row from three cramped columns to two wider evidence panels.
-- Replaced the generic competition-ready banner with `玄鉴已启动 · 全域戒备` and live protection-layer wording.
-- Added keyboard tab navigation (`ArrowLeft`, `ArrowRight`, `Home`, `End`) and stable per-tab live summaries.
+- P3: the source uses a very subtle dotted graph-canvas texture; the implementation keeps a solid low-noise canvas so live labels and attack edges remain clearer.
+- P3: source and implementation show different request/tool text because the implementation intentionally renders real session evidence.
 
-## Implementation Checklist
-
-- Capture both target viewports from the current `8766` build.
-- Check node and edge-label collisions with 6, 12, and 16 projected nodes.
-- Verify node selection, edge selection, inspector close, wheel zoom, drag pan, reset, Tab, and arrow-key view switching.
-- Compare the current screenshots against the two source screenshots in one combined visual input.
-- Reconfirm all six story cells at 1920x1080 and retain both current screenshots for comparison.
-- Capture the new four-tab side console at 1920x1080 and 1366x768; verify every tab, focus state, vertical attack-chain layout, and two-column bottom row without overlap.
-
-final result: blocked
+final result: passed
