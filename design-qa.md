@@ -62,3 +62,20 @@ No actionable P0, P1, or P2 findings remain.
 - P3: the default primary-path graph uses a deliberately quiet background compared with the source so relation labels remain legible during replay.
 
 final result: passed
+
+## Operations Workspace QA (2026-08-08)
+
+- implementation URL: `http://127.0.0.1:8767`
+- routes verified: `/overview`, `/agents`, `/policies`, `/tools`, `/alerts`, `/audit`, `/settings`
+- desktop evidence: `artifacts/design-qa/workspace-*-1680.png`
+- mobile evidence: `artifacts/design-qa/workspace-*-390.png`
+- data contracts verified: security overview, records, stats, policy config, tool manifests, alerts, health, enforcement, and checkpoints
+- browser state: every route reached `LIVE` and rendered backend fixture data without a synchronization error
+- interaction checks: tool detail and revoke-confirmation dialog, tool filtering, policy dirty state, alert detail, audit filtering and detail, agent detail, mode inventory, and security-stack inventory
+- navigation check: overview and agent session links select the requested attack-monitor session through `?session=...`
+- branding check: dynamic backend labels display `玄鉴`; internal API field names remain unchanged
+- runtime errors observed during the interaction pass: 0
+
+The workspace reuses the attack-monitor shell, density, color semantics, navigation, and responsive behavior. The QA pass corrected native button backgrounds in alert and identity-risk rows, removed danger color from zero-value attack metrics, and constrained long section metadata on mobile.
+
+No actionable P0, P1, or P2 workspace finding remains.

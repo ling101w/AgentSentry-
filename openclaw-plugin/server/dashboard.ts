@@ -617,6 +617,8 @@ async function handleRequest(
       ? "/security-screen.html"
       : url.pathname === "/lab" || url.pathname === "/command-lab"
         ? "/command-lab.html"
+        : ["/overview", "/agents", "/policies", "/tools", "/alerts", "/audit", "/settings"].includes(url.pathname)
+          ? "/workspace.html"
         : url.pathname;
   const filePath = normalize(join(publicDir, requested));
   if (!filePath.startsWith(normalize(publicDir)) || !existsSync(filePath)) {

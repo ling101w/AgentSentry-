@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#030b13" />
+    <meta name="description" content="玄鉴智能体行为安全裁决系统运营工作台。" />
+    <title>玄鉴 · 安全运营</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css?v=20260808-14" />
+    <link rel="stylesheet" href="/workspace.css?v=20260808-14" />
+  </head>
+  <body>
+    <div class="app-shell workspace-shell">
+      <header class="app-header">
+        <a class="brand-lockup" href="/overview">
+          <img src="/favicon.svg" width="38" height="38" alt="" />
+          <span>
+            <strong>玄鉴</strong>
+            <small>智能体行为安全裁决系统</small>
+          </span>
+        </a>
+
+        <div class="incident-heading workspace-heading">
+          <i class="header-notch" data-lucide="chevron-right" aria-hidden="true"></i>
+          <h1 id="workspaceTitle">安全运营</h1>
+          <span class="workspace-source"><i data-lucide="database"></i><span>真实后端</span></span>
+          <span id="workspaceHeaderMeta" class="workspace-header-meta">同步中</span>
+        </div>
+
+        <div class="header-controls">
+          <label class="protection-control" for="modeSelect" title="切换执行模式">
+            <i data-lucide="shield-check"></i>
+            <select id="modeSelect" aria-label="执行模式">
+              <option value="block">阻断模式</option>
+              <option value="approval">审批模式</option>
+              <option value="observe">观察模式</option>
+            </select>
+            <span id="connectionStatus" class="connection-state connecting" role="status">
+              <span class="live-dot" aria-hidden="true"></span>
+              <span>连接中</span>
+            </span>
+          </label>
+          <button id="refreshBtn" class="header-icon-button" type="button" title="刷新数据" aria-label="刷新数据">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+          <a class="header-icon-button notification-button" href="/alerts" title="查看告警" aria-label="查看告警">
+            <i data-lucide="bell"></i><b id="headerAlertCount" hidden>0</b>
+          </a>
+          <button class="operator-menu" type="button" aria-label="安全运营团队菜单">
+            <span class="operator-avatar"><i data-lucide="user-round"></i></span>
+            <span>安全运营团队</span>
+            <i data-lucide="chevron-down"></i>
+          </button>
+        </div>
+      </header>
+
+      <div class="app-body workspace-body">
+        <aside class="side-navigation" aria-label="主导航">
+          <nav>
+            <a href="/overview" data-nav="overview"><i data-lucide="house"></i><span>总览</span></a>
+            <a href="/" data-nav="monitor"><i data-lucide="siren"></i><span>攻击监控</span></a>
+            <a href="/agents" data-nav="agents"><i data-lucide="bot"></i><span>智能体资产</span></a>
+            <a href="/policies" data-nav="policies"><i data-lucide="shield-check"></i><span>策略管理</span></a>
+            <a href="/tools" data-nav="tools"><i data-lucide="circle-gauge"></i><span>工具管理</span></a>
+            <a href="/alerts" data-nav="alerts" class="nav-alert"><i data-lucide="bell-ring"></i><span>告警中心</span><b id="navAlertCount" hidden>0</b></a>
+            <a href="/audit" data-nav="audit"><i data-lucide="notebook-tabs"></i><span>审计日志</span></a>
+            <a href="/settings" data-nav="settings"><i data-lucide="settings"></i><span>系统设置</span></a>
+          </nav>
+          <div class="side-footer">
+            <strong><i data-lucide="shield-check"></i>玄鉴</strong>
+            <span id="runtimeProfile">连接中</span>
+          </div>
+        </aside>
+
+        <main id="operationsConsole" class="operations-console">
+          <header class="workspace-intro">
+            <div>
+              <span id="workspaceEyebrow" class="workspace-eyebrow">SECURITY OPERATIONS</span>
+              <h2 id="workspacePageTitle">安全运营</h2>
+              <p id="workspaceDescription">正在读取玄鉴运行数据。</p>
+            </div>
+            <div id="workspaceActions" class="workspace-actions"></div>
+          </header>
+          <div id="workspaceContent" class="workspace-content" aria-live="polite">
+            <div class="workspace-loading"><span></span><strong>正在同步安全数据</strong></div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+    <aside id="workspaceDrawer" class="workspace-drawer" aria-labelledby="drawerTitle" aria-hidden="true">
+      <header>
+        <div>
+          <small id="drawerKicker">详情</small>
+          <h2 id="drawerTitle">当前对象</h2>
+        </div>
+        <button id="closeDrawerBtn" class="panel-icon-button" type="button" title="关闭详情" aria-label="关闭详情"><i data-lucide="x"></i></button>
+      </header>
+      <div id="drawerBody" class="workspace-drawer-body"></div>
+    </aside>
+
+    <dialog id="workspaceDialog" class="workspace-dialog" aria-labelledby="dialogTitle">
+      <form id="workspaceDialogForm" method="dialog">
+        <header>
+          <div>
+            <small id="dialogKicker">操作确认</small>
+            <h2 id="dialogTitle">确认操作</h2>
+          </div>
+          <button id="closeDialogBtn" class="panel-icon-button" type="button" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button>
+        </header>
+        <div id="dialogBody" class="workspace-dialog-body"></div>
+        <footer id="dialogActions" class="dialog-actions"></footer>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="/vendor/lucide.min.js?v=0.468.0"></script>
+    <script type="module" src="/workspace.js?v=20260808-14"></script>
+  </body>
+</html>

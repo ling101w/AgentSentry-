@@ -123,7 +123,7 @@ function renderHeader() {
   const mode = String(state.enforcement?.mode || "");
   if (select && mode && select.value !== mode) select.value = mode;
   const source = state.model.source || {};
-  $("sourceLabel").textContent = String(source.label || "玄鉴审计记录").toUpperCase();
+  $("sourceLabel").textContent = brandText(source.label || "玄鉴审计记录").toUpperCase();
   $("sourceMeta").textContent = source.totalRecords
     ? `${formatNumber(source.windowRecords)} / ${formatNumber(source.totalRecords)} 条审计记录`
     : "等待审计数据";
@@ -158,7 +158,7 @@ function renderIncidentConclusion() {
   severity.className = `severity-badge tone-${severityTone}`;
   severity.textContent = conclusion.severity;
   $("conclusionType").textContent = conclusion.attackType;
-  $("conclusionSummary").textContent = conclusion.summary;
+  $("conclusionSummary").textContent = brandText(conclusion.summary);
   const outcome = $("conclusionOutcome");
   outcome.className = `conclusion-outcome tone-${escapeHtml(conclusion.tone)}`;
   outcome.innerHTML = `<i data-lucide="${conclusion.tone === "safe" ? "shield-check" : conclusion.tone === "warning" ? "clock-alert" : conclusion.tone === "danger" ? "triangle-alert" : "activity"}"></i>
@@ -571,8 +571,8 @@ function renderIncidentSummary() {
   }
 
   const conclusion = buildIncidentConclusion(session);
-  text.textContent = conclusion.summary;
-  outcomeTitle.textContent = conclusion.result;
+  text.textContent = brandText(conclusion.summary);
+  outcomeTitle.textContent = brandText(conclusion.result);
   const guardNode = session.graph.nodes.find((node) => node.kind === "guard");
   const secretNode = session.graph.nodes.find((node) => node.kind === "secret");
   const sinkNode = session.graph.nodes.find((node) => node.kind === "sink");
@@ -647,8 +647,8 @@ function renderTimeline() {
 
   const event = events[state.playhead];
   $("timelineCurrent").textContent = event?.time ? formatDateTime(event.time) : "时间未记录";
-  $("timelineEvent").textContent = event ? `${event.stage || timelineStageLabel(event, state.playhead, events)} · ${event.title}` : "等待事件";
-  $("timelineEvent").title = event?.detail || event?.title || "";
+  $("timelineEvent").textContent = event ? brandText(`${event.stage || timelineStageLabel(event, state.playhead, events)} · ${event.title}`) : "等待事件";
+  $("timelineEvent").title = brandText(event?.detail || event?.title || "");
   $("liveBtn").classList.toggle("active", state.live);
   $("playbackBadge").classList.toggle("paused", !state.live);
   $("playbackBadge").innerHTML = state.live ? `<span class="live-dot"></span> LIVE` : `<i data-lucide="history"></i> REPLAY ${state.playhead + 1}/${Math.max(1, events.length)}`;
@@ -842,7 +842,9 @@ function currentSession() {
 }
 
 function preferredSession(sessions) {
-  return sessions.find((session) => session.graph?.traceKind === "enforcement_bypass")
+  const requestedSession = new URLSearchParams(window.location.search).get("session");
+  return sessions.find((session) => requestedSession && session.id === requestedSession)
+    || sessions.find((session) => session.graph?.traceKind === "enforcement_bypass")
     || sessions.find((session) => session.decision === "deny" && !session.graph?.derived)
     || sessions.find((session) => session.decision === "ask")
     || sessions.find((session) => !session.graph?.derived)
@@ -1041,11 +1043,18 @@ function formatNumber(value) {
 }
 
 function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+  return brandText(value).replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
     "\"": "&quot;",
     "'": "&#39;",
   })[character]);
+}
+
+function brandText(value) {
+  return String(value ?? "")
+    .replace(/showing latest\s+(\d+)\s+of\s+(\d+)\s+(?:AgentSentry|OpenClaw)\s+plugin\s+records/gi, "最近 $1 / $2 条玄鉴审计记录")
+    .replace(/\b(?:AgentSentry|OpenClaw)\s+plugin\s+records\b/gi, "玄鉴审计记录")
+    .replace(/\b(?:AgentSentry|OpenClaw)\b/gi, "玄鉴");
 }
