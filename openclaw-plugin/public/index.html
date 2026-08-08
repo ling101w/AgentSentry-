@@ -4,18 +4,19 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#030b13" />
+    <meta name="description" content="玄鉴智能体行为安全裁决系统，实时呈现攻击因果链路、关键证据与执行边界裁决。" />
     <title>玄鉴 · 攻击事件详情</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=20260808-10" />
+    <link rel="stylesheet" href="/styles.css?v=20260808-13" />
   </head>
   <body>
     <div class="app-shell">
       <header class="app-header">
-        <a class="brand-lockup" href="/" aria-label="玄鉴首页">
+        <a class="brand-lockup" href="/">
           <img src="/favicon.svg" width="38" height="38" alt="" />
           <span>
             <strong>玄鉴</strong>
-            <small>Agent 行为安全裁决系统</small>
+            <small>智能体行为安全裁决系统</small>
           </span>
         </a>
 
@@ -75,9 +76,24 @@
         </aside>
 
         <main id="incidentConsole" class="incident-console">
+          <section id="incidentConclusion" class="incident-conclusion panel-frame" aria-labelledby="conclusionTitle">
+            <div class="conclusion-classification">
+              <span id="conclusionSeverity" class="severity-badge">等待</span>
+              <span>
+                <small id="conclusionTitle">核心结论</small>
+                <strong id="conclusionType">等待事件分析</strong>
+              </span>
+            </div>
+            <p id="conclusionSummary" class="conclusion-summary">真实审计事件进入后自动生成攻击结论。</p>
+            <div id="conclusionOutcome" class="conclusion-outcome tone-neutral">
+              <i data-lucide="activity"></i>
+              <span><small>结果</small><strong>等待裁决</strong></span>
+            </div>
+          </section>
+
           <section class="request-panel panel-frame" aria-labelledby="requestTitle">
             <header class="panel-titlebar">
-              <h2 id="requestTitle">对话 / 请求上下文</h2>
+              <h2 id="requestTitle">请求上下文</h2>
               <button id="contextCollapseBtn" class="panel-icon-button active" type="button" title="取消固定请求上下文" aria-label="取消固定请求上下文" aria-pressed="true">
                 <i data-lucide="pin"></i>
               </button>
@@ -92,8 +108,8 @@
                 <span class="info-mark" title="展示 Agent 行为的语义因果关系">i</span>
               </div>
               <div class="graph-tools" aria-label="图谱工具">
-                <button id="pathFocusBtn" class="compact-button active" type="button" aria-pressed="true" title="聚焦攻击路径">
-                  <i data-lucide="route"></i><span>路径聚焦</span>
+                <button id="pathFocusBtn" class="compact-button" type="button" aria-expanded="false" title="展开全部依赖关系">
+                  <i data-lucide="network"></i><span>完整因果图</span>
                 </button>
                 <button id="fitGraphBtn" class="compact-button" type="button" title="适配画布">
                   <i data-lucide="maximize"></i><span>全屏</span>
@@ -104,15 +120,11 @@
             </header>
 
             <div class="graph-legend" aria-label="图例">
-              <span><i class="legend-dot normal"></i>正常节点</span>
-              <span><i class="legend-dot intermediate"></i>中间节点</span>
-              <span><i class="legend-arrow-icon" data-lucide="arrow-right"></i>攻击路径</span>
-              <span><i class="legend-guard">+</i>拦截点</span>
+              <span><i class="legend-dot normal"></i>正常行为</span>
+              <span><i class="legend-dot intermediate"></i>可疑行为</span>
+              <span><i class="legend-dot danger"></i>确认攻击</span>
+              <span><i class="legend-dot control"></i>安全控制</span>
               <span id="graphConfidence" class="legend-confidence">等待图证据</span>
-            </div>
-
-            <div id="attackNotice" class="attack-notice">
-              检测到攻击后：节点/边高亮 + 自动弹出证据详情（不需要镜头移动和放大）
             </div>
 
             <div id="graphViewport" class="graph-viewport" tabindex="0" aria-label="实时语义动作图">
@@ -135,7 +147,7 @@
             <header class="panel-titlebar inspector-titlebar">
               <h2 id="inspectorTitle">证据详情</h2>
               <div>
-                <span class="auto-popout">自动弹出</span>
+                <span class="inspector-mode">随选择更新</span>
                 <button id="closeInspectorBtn" class="panel-icon-button" type="button" title="关闭证据详情" aria-label="关闭证据详情">
                   <i data-lucide="x"></i>
                 </button>
@@ -145,50 +157,68 @@
               <div class="inspector-empty">
                 <i data-lucide="mouse-pointer-click"></i>
                 <strong>选择一个语义节点</strong>
-                <span>查看裁决、证据、溯源和命中策略</span>
+                <span>查看当前发生的行为与关键证据</span>
               </div>
             </div>
           </aside>
 
-          <section id="incidentFlow" class="incident-flow" aria-label="事件证据流"></section>
-
           <footer class="incident-footer">
-            <section class="incident-summary panel-frame" aria-labelledby="summaryTitle">
-              <header class="summary-heading">
-                <h2 id="summaryTitle">事件摘要</h2>
-                <span id="summarySeverity" class="severity-badge">高危</span>
-                <p id="summaryText">等待安全事件</p>
-              </header>
-              <div id="summaryMetrics" class="summary-metrics"></div>
-            </section>
-
-            <section class="timeline-console panel-frame" aria-labelledby="timelineTitle">
-              <header class="timeline-heading">
+            <section class="incident-result panel-frame" aria-labelledby="resultTitle">
+              <header class="result-heading">
                 <div>
-                  <h2 id="timelineTitle">事件时间线</h2>
-                  <span>（关键步骤）</span>
+                  <h2 id="resultTitle">事件处理结果</h2>
+                  <span id="resultSummary">等待真实审计事件</span>
                 </div>
-                <div class="timeline-actions">
-                  <button id="exportReportBtn" class="compact-button" type="button"><i data-lucide="download"></i><span>导出报告</span></button>
-                  <button id="allowlistBtn" class="compact-button" type="button"><i data-lucide="circle-plus"></i><span>加入白名单</span></button>
-                  <button id="playPauseBtn" class="compact-button" type="button"><i data-lucide="folder-open"></i><span>打开会话回放</span></button>
+                <div class="investigation-actions">
+                  <button id="playPauseBtn" class="compact-button primary-action" type="button"><i data-lucide="play"></i><span>查看会话回放</span></button>
+                  <button id="openTraceBtn" class="compact-button" type="button"><i data-lucide="file-json-2"></i><span>查看原始 Trace</span></button>
+                  <button id="exportReportBtn" class="compact-button" type="button"><i data-lucide="download"></i><span>导出调查报告</span></button>
+                  <button id="createRuleBtn" class="compact-button" type="button"><i data-lucide="shield-plus"></i><span>创建处置规则</span></button>
+                  <div class="more-actions">
+                    <button id="moreActionsBtn" class="panel-icon-button" type="button" title="更多操作" aria-label="更多操作" aria-expanded="false"><i data-lucide="ellipsis"></i></button>
+                    <div id="moreActionsMenu" class="more-actions-menu" hidden>
+                      <button id="allowlistBtn" type="button"><i data-lucide="list-plus"></i><span><strong>加入白名单</strong><small>需要二次确认</small></span></button>
+                    </div>
+                  </div>
                 </div>
               </header>
-              <div class="timeline-track-wrap">
-                <div class="timeline-step-controls">
-                  <button id="stepBackBtn" class="panel-icon-button" type="button" title="上一步" aria-label="上一步"><i data-lucide="skip-back"></i></button>
-                  <button id="stepForwardBtn" class="panel-icon-button" type="button" title="下一步" aria-label="下一步"><i data-lucide="skip-forward"></i></button>
+              <div class="result-body">
+                <div class="timeline-story" aria-label="事件时间线">
+                  <div class="timeline-track-wrap">
+                    <div class="timeline-step-controls">
+                      <button id="stepBackBtn" class="panel-icon-button" type="button" title="上一步" aria-label="上一步"><i data-lucide="skip-back"></i></button>
+                      <button id="stepForwardBtn" class="panel-icon-button" type="button" title="下一步" aria-label="下一步"><i data-lucide="skip-forward"></i></button>
+                    </div>
+                    <div id="timelineTicks" class="timeline-ticks"></div>
+                    <input id="timelineRange" class="timeline-range" type="range" min="0" max="0" value="0" aria-label="执行时间轴" />
+                    <div class="timeline-meta">
+                      <span id="timelineCurrent">--:--:--</span>
+                      <span id="timelineEvent">等待事件</span>
+                      <button id="liveBtn" class="live-button active" type="button"><span class="live-dot"></span> LIVE</button>
+                    </div>
+                  </div>
                 </div>
-                <div id="timelineTicks" class="timeline-ticks"></div>
-                <input id="timelineRange" class="timeline-range" type="range" min="0" max="0" value="0" aria-label="执行时间轴" />
-                <div class="timeline-meta">
-                  <span id="timelineCurrent">--:--:--</span>
-                  <span id="timelineEvent">等待事件</span>
-                  <button id="liveBtn" class="live-button active" type="button"><span class="live-dot"></span> LIVE</button>
-                </div>
+                <aside class="result-outcome" aria-labelledby="outcomeTitle">
+                  <header><i data-lucide="shield-check"></i><span><small>最终状态</small><strong id="outcomeTitle">等待裁决</strong></span></header>
+                  <div id="outcomeActions" class="outcome-actions"></div>
+                </aside>
               </div>
             </section>
           </footer>
+
+          <dialog id="allowlistDialog" class="confirmation-dialog" aria-labelledby="allowlistDialogTitle">
+            <form method="dialog">
+              <header>
+                <span class="dialog-icon"><i data-lucide="shield-alert"></i></span>
+                <span><small>高风险操作</small><strong id="allowlistDialogTitle">确认加入白名单？</strong></span>
+              </header>
+              <p>白名单会降低同类目标的后续拦截强度。玄鉴只会生成复核草案，不会直接修改当前策略。</p>
+              <div class="dialog-actions">
+                <button id="cancelAllowlistBtn" class="compact-button" type="button" value="cancel">取消</button>
+                <button id="confirmAllowlistBtn" class="compact-button danger-action" type="button" value="confirm">生成复核草案</button>
+                </div>
+            </form>
+          </dialog>
 
           <div class="data-hooks" aria-hidden="true">
             <span id="sessionCount">0</span>
@@ -204,6 +234,6 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script src="/vendor/lucide.min.js?v=0.468.0"></script>
-    <script type="module" src="/app.js?v=20260808-10"></script>
+    <script type="module" src="/app.js?v=20260808-13"></script>
   </body>
 </html>

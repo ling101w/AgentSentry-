@@ -578,7 +578,16 @@ function buildTimeline(records, alert, graph) {
 
 function bestTimelineNode(event, graph) {
   if (!graph?.nodes?.length) return null;
-  const candidates = graph.nodes.filter((node) => node.recordIds?.includes(event.id));
+  let candidates = graph.nodes.filter((node) => node.recordIds?.includes(event.id));
+  const eventTool = String(event.record?.payload?.normalized_tool || event.record?.payload?.toolName || event.record?.payload?.tool || "").toLowerCase();
+  if (String(event.type || "") === "tool_call" && eventTool) {
+    const toolMatches = graph.nodes.filter((node) => node.kind === "action" && [node.tool, node.original_tool, node.title]
+      .map((value) => String(value || "").toLowerCase())
+      .some((value) => value === eventTool || value.endsWith(`.${eventTool}`)));
+    const linkedToolMatches = candidates.filter((node) => toolMatches.some((match) => match.id === node.id));
+    if (linkedToolMatches.length) candidates = linkedToolMatches;
+    else if (toolMatches.length) candidates = toolMatches;
+  }
   if (!candidates.length) return null;
   const type = String(event.type || "");
   const payload = event.record?.payload || {};
@@ -690,6 +699,10 @@ function buildRequestContext(records, graph, alert) {
     || records.find((record) => record.type === "tool_result" && record.payload?.preview && /prompt.?injection|ignore previous|taint|污染|不可信/i.test(recordText(record)))
     || records.find((record) => record.type === "guard_finding" && /prompt.?injection|taint|污染|不可信/i.test(recordText(record)))
     || null;
+  const detectionRecord = taintRecord
+    || records.find((record) => record.id === alert?.id)
+    || [...records].reverse().find((record) => ["alert", "guard_finding", "tool_decision", "approval_request", "approval_resolution"].includes(String(record.type)))
+    || null;
   const tools = Array.from(new Set([
     ...graph.nodes.filter((node) => node.kind === "action").map((node) => node.tool || node.original_tool),
     ...records.map((record) => record.payload?.normalized_tool || record.payload?.toolName || record.payload?.tool),
@@ -700,6 +713,23 @@ function buildRequestContext(records, graph, alert) {
     alert?.rule,
   ].map((value) => String(value || "").trim()).filter(Boolean)));
   const taintNode = graph.nodes.find((node) => node.kind === "taint");
+  const detectionSignal = [
+    taintRecord ? recordText(taintRecord) : "",
+    taintNode?.title,
+    taintNode?.path,
+    alert?.type,
+    alert?.rawReason,
+    graph.risk,
+  ].filter(Boolean).join(" ");
+  const promptInjectionDetected = /prompt.?injection|ignore previous|override (?:the )?instructions|system prompt|提示注入|注入|越权指令/i.test(detectionSignal);
+  const riskDetected = Boolean(taintNode || taintRecord || graph.verdict === "deny" || graph.verdict === "ask");
+  const detectionType = promptInjectionDetected
+    ? "Prompt Injection"
+    : graph.verdict === "ask"
+      ? "授权范围待确认"
+      : graph.verdict === "deny"
+        ? "未授权工具调用"
+        : taintNode || taintRecord ? "不可信数据流" : "";
   return {
     input: firstString(userRecord?.payload?.command, userRecord?.payload?.input, userRecord?.summary, graph.nodes.find((node) => node.kind === "intent")?.title),
     originalInput: firstString(userRecord?.payload?.raw_input, userRecord?.payload?.preview, userRecord?.payload?.command, userRecord?.summary),
@@ -711,9 +741,11 @@ function buildRequestContext(records, graph, alert) {
       taintNode?.title,
       alert?.rawReason,
     ),
-    attackDetected: Boolean(taintNode || taintRecord || graph.verdict === "deny" || graph.verdict === "ask"),
+    attackDetected: riskDetected,
+    promptInjectionDetected,
+    detectionType,
     eventTime: String(userRecord?.created_at || ""),
-    detectionTime: String(taintRecord?.created_at || alert?.createdAt || ""),
+    detectionTime: String(detectionRecord?.created_at || alert?.createdAt || ""),
     channel: firstString(userRecord?.payload?.channel, userRecord?.payload?.source),
     detectionSources,
   };
@@ -836,20 +868,23 @@ function describeNode(node, records, session) {
   }
   if (node.kind === "capability") {
     return node.authorized === false
-      ? `Agent 请求了“${node.title}”，但该能力没有进入当前 TaskSpec 授权范围。`
+      ? `玄鉴观察到当前任务请求了“${node.title}”，但该能力没有进入 TaskSpec 授权范围。`
       : node.authorized === true
-        ? `玄鉴从用户任务中解析出“${node.title}”，并确认该能力已获授权。`
+        ? `玄鉴把用户任务解析为“${node.title}”，并确认该能力已获授权。`
         : `玄鉴从当前任务中识别出能力请求“${node.title}”，授权状态尚未明确。`;
   }
-  if (node.kind === "agent") return `Agent 在此阶段形成或更新执行计划：${node.title}。`;
+  if (node.kind === "agent") return `玄鉴观察到智能体在此阶段形成或更新执行计划：${node.title}。`;
   if (node.kind === "action") {
     const status = node.state ? `，运行状态为 ${node.state}` : "";
-    return `Agent 请求调用 ${node.tool || node.title}${status}。`;
+    const blocked = /BLOCK|DENY|UNSCOPED|REJECT/.test(String(node.state || "").toUpperCase()) || node.authorized === false;
+    return blocked
+      ? `玄鉴观察到工具调用 ${node.tool || node.title}${status}，并在实际执行前将其阻断。`
+      : `玄鉴观察到工具调用 ${node.tool || node.title}${status}。`;
   }
-  if (node.kind === "taint") return `工具返回或外部内容中的“${node.title}”被标记为不可信数据，并进入后续参数传播。`;
+  if (node.kind === "taint") return `玄鉴在工具返回或外部内容中识别到“${node.title}”，将其标记为不可信数据并追踪后续传播。`;
   if (node.kind === "secret") return `字段“${node.path || node.title}”同时携带敏感性${node.integrity === "tainted" ? "和污染" : ""}标签。`;
   if (node.kind === "data") return `工具产生了数据“${node.path || node.title}”，玄鉴记录了它的来源与完整性标签。`;
-  if (node.kind === "sink") return `Agent 的动作目标指向“${node.sink || node.title}”${node.effect ? `，副作用类型为 ${node.effect}` : ""}。`;
+  if (node.kind === "sink") return `玄鉴观察到动作目标指向“${node.sink || node.title}”${node.effect ? `，副作用类型为 ${node.effect}` : ""}。`;
   if (node.kind === "guard") return `玄鉴在执行边界运行“${node.title}”，状态为 ${node.state || "未记录"}。`;
   if (node.kind === "decision") return `玄鉴根据已观测到的行为链输出最终裁决：${node.state || session.decisionLabel}。`;
   if (node.kind === "collapsed") return "后端返回的因果路径超过视图上限，中间节点在此处按边界信息折叠展示。";
@@ -963,10 +998,13 @@ function nodeEvidenceLabel(node, fallback = "") {
 }
 
 function selectionTone(session, edgeValue, node) {
-  if (node?.kind === "decision") return node.state === "ALLOW" ? "safe" : node.state === "ASK" ? "warning" : "danger";
-  if (node?.kind === "guard") return session.decision === "allow" ? "safe" : session.decision === "ask" ? "warning" : "danger";
-  if (node?.kind === "taint" || node?.kind === "secret" || node?.authorized === false) return "danger";
-  if (edgeValue?.onPath && session.decision === "deny") return "danger";
+  const relation = String(edgeValue?.kind || "").toLowerCase();
+  if (node?.kind === "decision") return node.state === "ASK" ? "warning" : "safe";
+  if (node?.kind === "guard") return session.decision === "ask" ? "warning" : "safe";
+  if (["blocked_by", "approved_by", "decides"].includes(relation)) return session.decision === "ask" ? "warning" : "safe";
+  if (node?.kind === "taint" || ["taints", "consumes"].includes(relation)) return "danger";
+  if (node?.kind === "secret" || node?.kind === "sink" || node?.authorized === false) return "warning";
+  if (edgeValue?.onPath && session.decision === "deny") return "warning";
   if (session.decision === "ask") return "warning";
   return "neutral";
 }
@@ -1057,6 +1095,110 @@ export function causalPathTitles(graph) {
   if (!graph) return [];
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   return graph.pathNodeIds.map((id) => nodeById.get(id)?.title).filter(Boolean);
+}
+
+export function primaryPathGraph(graph) {
+  if (!graph || !Array.isArray(graph.nodes) || graph.nodes.length < 2) return graph;
+  const pathIds = new Set(arrayStrings(graph.pathNodeIds));
+  for (const node of graph.nodes) {
+    // An unauthorized capability explains the denial, but it is supporting context.
+    // Keep it for the expanded graph so the default view stays on the causal attack path.
+    if ((node.onPath && !(node.kind === "capability" && node.authorized === false))
+      || ["taint", "secret", "guard", "decision"].includes(node.kind)) pathIds.add(node.id);
+    if (node.kind === "sink" && String(node.effect || "").toLowerCase() === "external") pathIds.add(node.id);
+  }
+
+  const intent = graph.nodes.find((node) => node.kind === "intent");
+  if (intent) pathIds.add(intent.id);
+  const authorizedCapability = graph.nodes.find((node) => node.kind === "capability" && node.authorized === true);
+  if (authorizedCapability) pathIds.add(authorizedCapability.id);
+
+  const connectingEdges = graph.edges.filter((edgeValue) => {
+    if (pathIds.has(edgeValue.from) && pathIds.has(edgeValue.to)) return true;
+    if (edgeValue.kind !== "constrains" || !pathIds.has(edgeValue.to)) return false;
+    const source = graph.nodes.find((node) => node.id === edgeValue.from);
+    if (source?.kind !== "capability" || source.authorized !== false) pathIds.add(edgeValue.from);
+    return true;
+  });
+  const edges = graph.edges.filter((edgeValue) => pathIds.has(edgeValue.from) && pathIds.has(edgeValue.to)
+    && (edgeValue.onPath || edgeValue.displayOnly || connectingEdges.some((item) => item.id === edgeValue.id)));
+  const nodes = graph.nodes.filter((node) => pathIds.has(node.id));
+  if (nodes.length < 2 || !edges.length) return graph;
+
+  const nodeIdSet = new Set(nodes.map((node) => node.id));
+  const edgeIdSet = new Set(edges.map((edgeValue) => edgeValue.id));
+  return {
+    ...graph,
+    nodes,
+    edges,
+    pathNodeIds: arrayStrings(graph.pathNodeIds).filter((id) => nodeIdSet.has(id)),
+    pathEdgeIds: arrayStrings(graph.pathEdgeIds).filter((id) => edgeIdSet.has(id)),
+    selectedNodeId: nodeIdSet.has(graph.selectedNodeId)
+      ? graph.selectedNodeId
+      : [...nodes].reverse().find((node) => node.kind === "decision")?.id || nodes.at(-1)?.id || "",
+    primaryView: true,
+  };
+}
+
+export function buildIncidentConclusion(session) {
+  if (!session?.graph) {
+    return {
+      severity: "等待",
+      attackType: "等待事件分析",
+      summary: "真实审计事件进入后自动生成攻击结论。",
+      result: "等待裁决",
+      tone: "neutral",
+      policy: "",
+      target: "",
+    };
+  }
+
+  const graph = session.graph;
+  const tainted = graph.nodes.some((node) => node.kind === "taint" || String(node.integrity || "").toLowerCase() === "tainted")
+    || /taint|prompt.?injection|污染|注入/i.test(`${graph.risk || ""} ${session.title || ""} ${session.subtitle || ""}`);
+  const secret = graph.nodes.some((node) => node.kind === "secret" || String(node.confidentiality || "").toLowerCase() === "secret");
+  const sink = graph.nodes.find((node) => node.kind === "sink" && String(node.effect || "").toLowerCase() === "external")
+    || graph.nodes.find((node) => node.kind === "sink");
+  const target = firstString(sink?.rawTarget, sink?.sink, sink?.title).slice(0, 120);
+  const policies = Array.from(new Set([
+    session.alert?.rule,
+    ...(Array.isArray(session.policies) ? session.policies : []),
+    ...(Array.isArray(session.reasons) ? session.reasons.map((reason) => reason?.code) : []),
+  ].map((value) => String(value || "").trim()).filter(Boolean)));
+  const policy = policies.find((value) => /CAPABILITY_RECIPIENT_DENIED/i.test(value))
+    || policies.find((value) => /TAINT_TO_EXTERNAL_SINK/i.test(value))
+    || policies.find((value) => /CAPABILITY|TAINT|SINK|DENIED|BLOCK/i.test(value))
+    || policies[0]
+    || "EXECUTION_BOUNDARY";
+  const bypass = graph.traceKind === "enforcement_bypass" || graph.risk === "execution_after_block";
+  const denied = session.decision === "deny";
+  const attackType = tainted ? "Prompt Injection" : secret && target ? "敏感数据外传" : session.decision === "allow" ? "授权工作流" : "未授权工具调用";
+  const severity = session.decision === "allow"
+    ? "安全"
+    : ["critical", "high", "danger"].includes(String(session.severity || "").toLowerCase()) || denied
+      ? "高危"
+      : "中危";
+  const subject = secret || tainted ? "敏感信息" : "高风险数据";
+  const destination = target ? `发送到外部目标 ${target}` : "传入外部执行目标";
+  const summary = denied
+    ? bypass
+      ? `攻击触发 ${policy} 后仍出现执行迹象，需要立即核查外部副作用。`
+      : `攻击试图将${subject}${destination}，已被 ${policy} 阻断。`
+    : session.decision === "ask"
+      ? `玄鉴发现高风险工具调用，${policy} 已暂停执行并等待人工确认。`
+      : `当前工具调用、参数和目标均处于任务授权范围内。`;
+  const result = denied
+    ? bypass ? "存在阻断后执行迹象" : target ? "未发生数据泄露" : "危险动作未执行"
+    : session.decision === "ask" ? "执行已暂停" : "授权操作已完成";
+  return {
+    severity,
+    attackType,
+    summary,
+    result,
+    tone: denied ? bypass ? "danger" : "safe" : session.decision === "ask" ? "warning" : "safe",
+    policy,
+    target,
+  };
 }
 
 export function formatTool(value) {

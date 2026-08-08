@@ -190,7 +190,8 @@ export class SemanticGraph {
     this.nodesLayer.innerHTML = this.graph.nodes.map((node) => {
       const point = this.layout.positions.get(node.id) || { x: 80, y: 80 };
       const display = nodeDisplay(node);
-      return `<button class="semantic-node kind-${escapeHtml(node.kind)} ${node.onPath ? "on-path" : "support"} ${node.displayOnly ? "display-only" : ""}"
+      const tone = nodeTone(node, this.graph);
+      return `<button class="semantic-node kind-${escapeHtml(node.kind)} tone-${escapeHtml(tone)} ${node.onPath ? "on-path" : "support"} ${node.displayOnly ? "display-only" : ""}"
         type="button"
         data-node-id="${escapeHtml(node.id)}"
         data-kind="${escapeHtml(node.kind)}"
@@ -533,6 +534,7 @@ export class SemanticGraph {
 }
 
 function layoutGraph(graph, viewportWidth, viewportHeight) {
+  if (graph.primaryView) return layoutPrimaryPathGraph(graph, viewportWidth, viewportHeight);
   if (graph.nodes.length <= 12) return layoutNarrativeGraph(graph, viewportWidth, viewportHeight);
 
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -614,6 +616,36 @@ function layoutGraph(graph, viewportWidth, viewportHeight) {
       y: startY + index * gapY,
     }));
   }
+  return { positions, worldWidth, worldHeight };
+}
+
+function layoutPrimaryPathGraph(graph, viewportWidth, viewportHeight) {
+  const worldWidth = Math.max(610, Math.round(viewportWidth || 650));
+  const nodeCount = graph.nodes.length;
+  const columns = Math.min(3, Math.max(1, nodeCount));
+  const rows = Math.max(1, Math.ceil(nodeCount / columns));
+  const paddingX = Math.max(92, Math.min(128, worldWidth / (columns + 1)));
+  const worldHeight = Math.max(420, Math.round(viewportHeight || 470), 132 + (rows - 1) * 132);
+  const usableWidth = Math.max(0, worldWidth - paddingX * 2);
+  const gapX = columns > 1 ? usableWidth / (columns - 1) : 0;
+  const gapY = rows > 1 ? (worldHeight - 132) / (rows - 1) : 0;
+  const ordered = graph.nodes.slice().sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
+  const positions = new Map();
+
+  // Snake through the rows so a causal sequence reads continuously without
+  // forcing all nodes into one narrow horizontal line.
+  ordered.forEach((node, index) => {
+    const row = Math.floor(index / columns);
+    const columnInRow = index % columns;
+    const rowSize = Math.min(columns, nodeCount - row * columns);
+    const reverse = row % 2 === 1;
+    const column = reverse ? rowSize - 1 - columnInRow : columnInRow;
+    const rowOffset = rowSize < columns ? (columns - rowSize) * gapX * 0.5 : 0;
+    positions.set(node.id, {
+      x: paddingX + column * gapX + rowOffset,
+      y: 66 + row * gapY,
+    });
+  });
   return { positions, worldWidth, worldHeight };
 }
 
@@ -796,12 +828,26 @@ function createDefinitions(traceKind, verdict) {
 }
 
 function edgeTone(edge, graph) {
+  const kind = String(edge.kind || "").toLowerCase();
+  if (["blocked_by", "approved_by", "decides"].includes(kind)) return graph.verdict === "ask" ? "review" : "authorized";
+  if (["taints", "consumes"].includes(kind) && graph.verdict !== "allow") return "attack";
+  if (["targets", "requests", "invokes"].includes(kind) && graph.verdict !== "allow") return "review";
   if (edge.displayOnly) return "projection";
-  if (edge.onPath) {
-    if (graph.verdict === "ask") return "review";
-    return graph.traceKind === "authorized" || graph.verdict === "allow" ? "authorized" : "attack";
-  }
+  if (edge.onPath && (graph.traceKind === "authorized" || graph.verdict === "allow")) return "authorized";
   return "evidence";
+}
+
+function nodeTone(node, graph) {
+  const state = String(node.state || "").toUpperCase();
+  if (node.kind === "guard" || node.kind === "decision") {
+    if (state === "ASK" || graph.verdict === "ask") return "suspicious";
+    return "control";
+  }
+  if (node.kind === "taint") return "attack";
+  if (node.kind === "secret" || node.kind === "sink" || node.authorized === false) return "suspicious";
+  if (node.kind === "action" && /BLOCK|DENY|UNSCOPED|REJECT/.test(state)) return "suspicious";
+  if (["intent", "capability", "agent", "data", "action"].includes(node.kind)) return "normal";
+  return "neutral";
 }
 
 function nodeDisplay(node) {
