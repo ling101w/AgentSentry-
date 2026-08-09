@@ -106,3 +106,26 @@ The overview now leads with current safety status, primary risk, and required at
 The causal graph now uses neutral gray for ordinary behavior, amber for sensitive or suspicious data, red for confirmed attack propagation, and green for effective enforcement. Visible relation labels use concise Chinese product language while raw relation kinds remain available in technical details. On mobile, the page has no document-level horizontal overflow; wide tool tables scroll only inside their table container.
 
 No actionable P0, P1, or P2 finding remains after this pass.
+
+## Navigation Brand Mark QA (2026-08-09)
+
+- source visual truth path: `E:\soft\qq记录\Tencent Files\2726640566\nt_qq\nt_data\Pic\2026-08\Ori\c0d3a891f491c1a42bf05aa6e57da686.png`
+- implementation asset path: `openclaw-plugin/public/brand-mark.png`
+- implementation screenshot path: unavailable because the configured in-app browser connection is not exposed in this session
+- intended viewport and state: 1680x944 desktop, shared navigation header on `/` and `/overview`
+- focused asset evidence: the supplied 1024x1024 lockup and the transparent 340x356 shield crop were opened at original resolution; the crop preserves the complete shield silhouette and blue gradient without duplicating the `玄鉴` wordmark
+- runtime evidence: both routes return the new asset reference; `/brand-mark.png?v=20260809-1` returns `200`, `Content-Type: image/png`, and 115999 bytes
+- responsive code evidence: the shared desktop slot is 42x44px and the existing mobile override constrains the mark to the compact header
+- checks: build, typecheck, lint, focused unit tests, source/build asset hash, and `git diff --check` passed
+
+### Findings
+
+No P0/P1/P2 issue was found in the source asset, transparent crop, route integration, MIME response, or responsive sizing rules. A browser-rendered comparison of the final navigation header could not be captured in this session.
+
+### Comparison History
+
+1. Replaced the legacy navigation shield reference with the supplied raster brand mark.
+2. Removed the legacy hue rotation so the supplied blue gradient renders unchanged.
+3. Verified the same shared brand lockup on the attack monitor and operations workspace shells.
+
+final result: blocked

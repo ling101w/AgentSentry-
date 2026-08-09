@@ -11,6 +11,8 @@ const dashboardTs = readFileSync(new URL("../../server/dashboard.ts", import.met
 
 describe("玄鉴 operations workspace", () => {
   it("exposes every operations view through the shared shell", () => {
+    expect(indexHtml).toContain('/brand-mark.png?v=20260809-1');
+    expect(workspaceHtml).toContain('/brand-mark.png?v=20260809-1');
     for (const path of ["/overview", "/agents", "/policies", "/tools", "/alerts", "/audit", "/settings"]) {
       expect(workspaceHtml).toContain(`href="${path}"`);
       expect(workspaceHtml).toContain(`data-nav="${path.slice(1)}"`);

@@ -129,11 +129,10 @@ svg.lucide {
 }
 
 .brand-lockup img {
-  width: 37px;
-  height: 43px;
+  width: 42px;
+  height: 44px;
   flex: none;
   object-fit: contain;
-  filter: hue-rotate(40deg) saturate(1.35) brightness(1.12);
 }
 
 .brand-lockup span,

@@ -202,6 +202,7 @@ describe("semantic action graph homepage", () => {
     expect(indexSource).not.toContain("攻击图</strong>");
     expect(indexSource).not.toContain("自动弹出</span>");
     expect(indexSource).not.toContain("id=\"statsGrid\"");
+    expect(indexSource).toContain('/brand-mark.png?v=20260809-1');
     expect(indexSource).toContain("<strong>玄鉴</strong>");
     expect(indexSource).not.toContain("AgentSentry / OpenClaw");
     expect(indexSource).not.toContain("Agent 行为安全裁决系统");
