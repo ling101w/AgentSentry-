@@ -91,3 +91,18 @@ No actionable P0, P1, or P2 workspace finding remains.
 - responsive result: no horizontal overflow on the verified 1680px and 390px states
 
 No actionable P0, P1, or P2 theme finding remains.
+
+## Production Console Restraint Pass (2026-08-09)
+
+- routes verified: `/overview`, `/`, `/tools`
+- viewports verified: 1680x944 desktop and 390x844 mobile
+- themes verified: 夜航 and 石墨, including persistence across routes
+- data source: the live local dashboard contracts on port 8767; no backend response shape changed
+- interaction checks: attack edge selection, normal-node selection, selection-specific Inspector content, theme switching, and internal table scrolling
+- runtime checks: API state reached `实时`; no browser console errors or warnings were observed
+
+The overview now leads with current safety status, primary risk, and required attention instead of eight equal KPI cards. Secondary metrics use typography and spacing rather than individual frames. Tool trust and boolean properties render as plain attributes, while revocation and signature integrity remain explicit status badges.
+
+The causal graph now uses neutral gray for ordinary behavior, amber for sensitive or suspicious data, red for confirmed attack propagation, and green for effective enforcement. Visible relation labels use concise Chinese product language while raw relation kinds remain available in technical details. On mobile, the page has no document-level horizontal overflow; wide tool tables scroll only inside their table container.
+
+No actionable P0, P1, or P2 finding remains after this pass.

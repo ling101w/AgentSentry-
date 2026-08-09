@@ -64,8 +64,8 @@ describe("semantic action graph homepage", () => {
       "intent", "capability", "secret", "action", "sink", "guard", "decision",
     ]));
     expect(session.graph.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: "uses", onPath: true }),
-      expect.objectContaining({ label: "blocked-by", displayOnly: true }),
+      expect.objectContaining({ label: "使用数据", onPath: true }),
+      expect.objectContaining({ label: "策略阻断", displayOnly: true }),
     ]));
     expect(causalPathTitles(session.graph).at(-1)).toBe("拒绝");
     expect(session.reasons.map((reason: { title: string }) => reason.title)).toEqual(expect.arrayContaining([
@@ -78,7 +78,7 @@ describe("semantic action graph homepage", () => {
       type: "edge",
       id: "uses",
       kindLabel: "语义关系",
-      title: "uses",
+      title: "使用数据",
       state: "攻击路径",
       records: [expect.objectContaining({ id: "decision-1" })],
     });

@@ -13,37 +13,37 @@ const PAGE_BY_PATH = new Map([
 const PAGE_META = {
   overview: {
     title: "安全总览",
-    eyebrow: "SECURITY POSTURE",
-    description: "聚合智能体运行态势、执行裁决、攻击阶段与最近会话。",
+    eyebrow: "实时安全态势",
+    description: "先看当前是否安全，再处理高风险事件与待审批动作。",
   },
   agents: {
     title: "智能体资产",
-    eyebrow: "AGENT INVENTORY",
+    eyebrow: "身份与授权边界",
     description: "核对智能体身份、委托边界、信任等级与最近活动。",
   },
   policies: {
     title: "策略管理",
-    eyebrow: "POLICY CONTROL",
+    eyebrow: "执行边界",
     description: "管理确定性裁决、语义复核、污点回流与资源边界。",
   },
   tools: {
     title: "工具管理",
-    eyebrow: "TOOL TRUST REGISTRY",
+    eyebrow: "工具信任清单",
     description: "检查工具签名、数据来源、副作用、外泄能力与吊销状态。",
   },
   alerts: {
     title: "告警中心",
-    eyebrow: "SECURITY FINDINGS",
+    eyebrow: "风险发现",
     description: "按风险、裁决和工具筛查实时告警并下钻原始证据。",
   },
   audit: {
     title: "审计日志",
-    eyebrow: "AUDIT TRAIL",
+    eyebrow: "完整审计链路",
     description: "检索玄鉴产生的工具调用、策略裁决、审批与执行结果。",
   },
   settings: {
     title: "系统设置",
-    eyebrow: "RUNTIME CONTROL",
+    eyebrow: "运行控制",
     description: "查看执行模式、安全栈、运行隔离、监控状态与回滚检查点。",
   },
 };
@@ -162,7 +162,7 @@ async function refreshData({ quiet = false } = {}) {
     state.data = { ...pageData, overview, enforcement };
     renderHeaderData();
     renderPage();
-    setConnection(overview?.source?.openclaw_available === false ? "warning" : "live", overview?.source?.openclaw_available === false ? "降级" : "LIVE");
+    setConnection(overview?.source?.openclaw_available === false ? "warning" : "live", overview?.source?.openclaw_available === false ? "降级" : "实时");
   } catch (error) {
     setConnection("error", "连接失败");
     renderError(error);
@@ -264,51 +264,68 @@ function renderOverview() {
   const operations = Array.isArray(overview.recentOperations) ? overview.recentOperations.slice(0, 12) : [];
   const runs = Array.isArray(overview.runs) ? overview.runs.slice(0, 8) : [];
   const maxLifecycle = Math.max(1, ...lifecycle.map((item) => Number(item?.[1]) || 0));
+  const metricByKey = new Map(metrics.map((metric) => [String(metric.key), metric]));
+  const secondaryMetrics = ["total", "tools", "taint", "drift"]
+    .map((key) => metricByKey.get(key))
+    .filter(Boolean);
+  const primaryRisks = [...lifecycle]
+    .sort((left, right) => (Number(right?.[1]) || 0) - (Number(left?.[1]) || 0))
+    .slice(0, 3);
+  const protection = protectionStatus(overview.protectionIndex);
+  const blocked = Number(metricByKey.get("blocks")?.num ?? overview.blockedHighRisk) || 0;
+  const pending = Number(metricByKey.get("pending")?.num) || 0;
+  const allowed = Number(metricByKey.get("allowed")?.num) || 0;
+  const windowRecords = Number(overview?.source?.window_records ?? metricByKey.get("total")?.num) || 0;
 
   $("workspaceContent").innerHTML = `
-    <section class="overview-kpi-band" aria-label="核心运行指标">
-      ${metrics.map((metric) => `
-        <div class="overview-kpi tone-${metricTone(metric.type, metric.num)}">
+    <section class="overview-command-center" aria-label="当前安全状态">
+      <div class="posture-primary">
+        <div class="overview-block-heading"><i data-lucide="shield-check"></i><span>当前安全状态</span></div>
+        <div class="posture-value"><strong>${formatNumber(overview.protectionIndex)}</strong><span>/100</span></div>
+        <div><span class="posture-state tone-${protection.tone}">${escapeHtml(protection.label)}</span></div>
+        <p><strong>${formatNumber(blocked)}</strong> 个高危行为已在执行前阻断</p>
+        <a href="/alerts" class="overview-text-link">查看高危事件<i data-lucide="arrow-right"></i></a>
+      </div>
+
+      <div class="posture-risk">
+        <header class="overview-block-header"><div><h3>主要风险</h3><small>${formatNumber(windowRecords)} 条实时记录</small></div></header>
+        <div class="lifecycle-list">
+          ${primaryRisks.map((item) => {
+            const value = Number(item?.[1]) || 0;
+            const total = Number(item?.[2]) || 0;
+            const percent = Math.round((value / maxLifecycle) * 100);
+            const tone = value > 70 ? "danger" : value > 35 ? "warning" : "neutral";
+            return `<div class="lifecycle-row tone-${tone}">
+              <span>${escapeHtml(item?.[0] || "未分类")}</span>
+              <div class="metric-track" style="--value:${percent}%"><span></span></div>
+              <b>${formatNumber(value)}</b><small>${formatNumber(total)} 个事件</small>
+            </div>`;
+          }).join("") || emptyInline("暂无风险数据")}
+        </div>
+      </div>
+
+      <div class="posture-queue">
+        <header class="overview-block-header"><div><h3>需要处理</h3><small>按处置优先级排列</small></div></header>
+        <nav class="attention-list" aria-label="待处理事项">
+          ${attentionRow("高危事件", blocked, "复核已阻断动作", "danger", "/alerts")}
+          ${attentionRow("待审批", pending, pending ? "需要人工裁决" : "当前没有积压", "warning", "/alerts")}
+          ${attentionRow("策略放行", allowed, allowed ? "检查例外范围" : "当前没有例外", "neutral", "/audit")}
+        </nav>
+      </div>
+    </section>
+
+    <section class="overview-metric-strip" aria-label="运行指标">
+      ${secondaryMetrics.map((metric) => `
+        <div class="overview-metric tone-${metricTone(metric.type, metric.num)}">
           <small>${escapeHtml(metric.cn || metric.key)}</small>
           <strong>${formatNumber(metric.num)}</strong>
-          <span>${escapeHtml(metric.en || "REALTIME")}</span>
+          <span>${escapeHtml(metricTrendLabel(metric.trend))}</span>
         </div>
       `).join("") || emptyInline("暂无指标")}
     </section>
 
-    <div class="workspace-grid-two">
-      <section class="workspace-section">
-        ${sectionHeader("shield-check", "综合防护态势", escapeHtml(overview?.source?.window || "实时审计窗口"))}
-        <div class="posture-layout">
-          <div class="posture-score">
-            <small>PROTECTION INDEX</small>
-            <strong>${formatNumber(overview.protectionIndex)}<span>/100</span></strong>
-            <b>${formatNumber(overview.blockedHighRisk)} 次高危动作已阻断</b>
-          </div>
-          <div class="lifecycle-list">
-            ${lifecycle.map((item) => {
-              const value = Number(item?.[1]) || 0;
-              const total = Number(item?.[2]) || 0;
-              const percent = Math.round((value / maxLifecycle) * 100);
-              return `<div class="lifecycle-row">
-                <span>${escapeHtml(item?.[0] || "未分类")}</span>
-                <div class="metric-track ${value > 70 ? "tone-danger" : value > 35 ? "tone-warning" : "tone-safe"}" style="--value:${percent}%"><span></span></div>
-                <b>${value}</b><small>${total} 事件</small>
-              </div>`;
-            }).join("") || emptyInline("暂无生命周期数据")}
-          </div>
-        </div>
-      </section>
-
-      <section class="workspace-section">
-        ${sectionHeader("list-checks", "策略命中排行", `${rules.length} 条规则`)}
-        <div class="rule-list">
-          ${rules.map((item) => `<div class="rule-row"><code title="${escapeHtml(item?.[0])}">${escapeHtml(item?.[0] || "未命名规则")}</code><b>${formatNumber(item?.[1])}</b><small>${formatNumber(item?.[2])}%</small></div>`).join("") || emptyInline("暂无策略命中")}
-        </div>
-      </section>
-    </div>
-
-    <section class="workspace-section">
+    <div class="workspace-grid-two overview-investigation-grid">
+      <section class="workspace-section workspace-section-flat">
       ${sectionHeader("activity", "最近运行事件", `${operations.length} 条`)}
       <div class="workspace-table-wrap">
         <table class="workspace-table">
@@ -328,10 +345,18 @@ function renderOverview() {
           </tbody>
         </table>
       </div>
-    </section>
+      </section>
+
+      <section class="workspace-section workspace-section-flat">
+        ${sectionHeader("list-checks", "策略命中", `${rules.length} 条规则`)}
+        <div class="rule-list">
+          ${rules.map((item) => `<div class="rule-row"><code title="${escapeHtml(item?.[0])}">${escapeHtml(item?.[0] || "未命名规则")}</code><b>${formatNumber(item?.[1])}</b><small>${formatNumber(item?.[2])}%</small></div>`).join("") || emptyInline("暂无策略命中")}
+        </div>
+      </section>
+    </div>
 
     <div class="workspace-grid-equal">
-      <section class="workspace-section">
+      <section class="workspace-section workspace-section-flat">
         ${sectionHeader("route", "最近会话", `${runs.length} 个会话`)}
         <div class="session-list">
           ${runs.map((run) => `<a class="session-row" href="/?session=${encodeURIComponent(run.id)}">
@@ -340,7 +365,7 @@ function renderOverview() {
           </a>`).join("") || emptyInline("暂无会话")}
         </div>
       </section>
-      <section class="workspace-section">
+      <section class="workspace-section workspace-section-flat">
         ${sectionHeader("radar", "当前态势结论", `生成于 ${formatClock(overview.generated_at)}`)}
         <p class="drawer-copy">${escapeHtml(overview.summary || "暂无态势结论。")}</p>
         <div class="settings-kv">
@@ -372,7 +397,7 @@ function renderAgents() {
         ${summaryStat("可接收不可信数据", untrustedReceivers)}
       </div>
       <div class="workspace-toolbar">
-        <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" data-filter="agentSearch" value="${escapeHtml(state.filters.agentSearch)}" placeholder="搜索名称、ID、租户或命名空间" aria-label="搜索智能体" /></label>
+        <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" name="agentSearch" data-filter="agentSearch" value="${escapeHtml(state.filters.agentSearch)}" placeholder="搜索名称、ID、租户或命名空间" aria-label="搜索智能体" /></label>
         <span class="toolbar-spacer"></span><small>${filtered.length} / ${agents.length} 个资产</small>
       </div>
       <div class="workspace-table-wrap">
@@ -474,8 +499,8 @@ function renderTools() {
         ${summaryStat("已吊销", revocations.length)}
       </div>
       <div class="workspace-toolbar">
-        <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" data-filter="toolSearch" value="${escapeHtml(state.filters.toolSearch)}" placeholder="搜索工具、别名、来源或副作用" aria-label="搜索工具" /></label>
-        <select class="workspace-select" data-filter="toolTrust" aria-label="按信任等级筛选"><option value="all">全部信任等级</option>${["trusted", "workspace", "external", "unknown", "revoked"].map((value) => `<option value="${value}" ${trust === value ? "selected" : ""}>${trustLabel(value)}</option>`).join("")}</select>
+        <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" name="toolSearch" data-filter="toolSearch" value="${escapeHtml(state.filters.toolSearch)}" placeholder="搜索工具、别名、来源或副作用" aria-label="搜索工具" /></label>
+        <select class="workspace-select" name="toolTrust" data-filter="toolTrust" aria-label="按信任等级筛选"><option value="all">全部信任等级</option>${["trusted", "workspace", "external", "unknown", "revoked"].map((value) => `<option value="${value}" ${trust === value ? "selected" : ""}>${trustLabel(value)}</option>`).join("")}</select>
         <span class="toolbar-spacer"></span><small>${rows.length} / ${envelopes.length} 个工具</small>
       </div>
       <div class="workspace-table-wrap">
@@ -483,7 +508,7 @@ function renderTools() {
           <thead><tr><th style="width:190px">工具</th><th style="width:110px">信任</th><th style="width:190px">数据来源</th><th style="width:220px">副作用</th><th style="width:100px">敏感数据</th><th style="width:90px">可外泄</th><th>完整性</th></tr></thead>
           <tbody>${rows.map((envelope) => {
             const manifest = envelope.manifest || {};
-            return `<tr data-select="tool" data-id="${escapeHtml(manifest.toolId)}"><td><div class="cell-main"><strong>${escapeHtml(manifest.toolId || "未命名")}</strong><small>${escapeHtml((manifest.aliases || []).join(" · ") || "无别名")}</small></div></td><td>${envelope.revoked ? statusBadge("已吊销", "revoked") : trustBadge(manifest.defaultTrust)}</td><td>${escapeHtml((manifest.dataOrigins || []).join(" · ") || "-")}</td><td>${escapeHtml((manifest.sideEffects || []).join(" · ") || "-")}</td><td>${booleanBadge(manifest.acceptsSensitiveData)}</td><td>${booleanBadge(manifest.canExfiltrate, true)}</td><td>${envelope.signature ? statusBadge("签名有效", "active") : toneBadge("未签名", "warning")}</td></tr>`;
+            return `<tr data-select="tool" data-id="${escapeHtml(manifest.toolId)}"><td><div class="cell-main"><strong>${escapeHtml(manifest.toolId || "未命名")}</strong><small>${escapeHtml((manifest.aliases || []).join(" · ") || "无别名")}</small></div></td><td>${envelope.revoked ? statusBadge("已吊销", "revoked") : plainAttribute(trustLabel(manifest.defaultTrust))}</td><td>${escapeHtml((manifest.dataOrigins || []).join(" · ") || "-")}</td><td>${escapeHtml((manifest.sideEffects || []).join(" · ") || "-")}</td><td>${plainBoolean(manifest.acceptsSensitiveData)}</td><td>${plainBoolean(manifest.canExfiltrate, true)}</td><td>${envelope.signature ? statusBadge("签名有效", "active") : statusBadge("未签名", "unsigned")}</td></tr>`;
           }).join("") || tableEmpty(7, "没有匹配的工具")}</tbody>
         </table>
       </div>
@@ -506,9 +531,9 @@ function renderAlerts() {
   $("workspaceContent").innerHTML = `
     <section class="workspace-section">
       <div class="workspace-toolbar">
-        <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" data-filter="alertSearch" value="${escapeHtml(state.filters.alertSearch)}" placeholder="搜索攻击类型、工具、规则或原因" aria-label="搜索告警" /></label>
-        <select class="workspace-select" data-filter="alertSeverity" aria-label="按风险等级筛选"><option value="all">全部风险</option>${["critical", "high", "medium", "low", "info"].map((value) => `<option value="${value}" ${severity === value ? "selected" : ""}>${severityLabel(value)}</option>`).join("")}</select>
-        <select class="workspace-select" data-filter="alertAction" aria-label="按裁决筛选"><option value="all">全部裁决</option>${["block", "ask", "allow"].map((value) => `<option value="${value}" ${action === value ? "selected" : ""}>${decisionLabel(value)}</option>`).join("")}</select>
+        <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" name="alertSearch" data-filter="alertSearch" value="${escapeHtml(state.filters.alertSearch)}" placeholder="搜索攻击类型、工具、规则或原因" aria-label="搜索告警" /></label>
+        <select class="workspace-select" name="alertSeverity" data-filter="alertSeverity" aria-label="按风险等级筛选"><option value="all">全部风险</option>${["critical", "high", "medium", "low", "info"].map((value) => `<option value="${value}" ${severity === value ? "selected" : ""}>${severityLabel(value)}</option>`).join("")}</select>
+        <select class="workspace-select" name="alertAction" data-filter="alertAction" aria-label="按裁决筛选"><option value="all">全部裁决</option>${["block", "ask", "allow"].map((value) => `<option value="${value}" ${action === value ? "selected" : ""}>${decisionLabel(value)}</option>`).join("")}</select>
         <span class="toolbar-spacer"></span><small>第 ${formatNumber(payload.page)} / ${formatNumber(payload.pages)} 页</small>
       </div>
       <div class="alert-feed">
@@ -552,9 +577,9 @@ function renderAudit() {
         ${summaryStat("当前窗口", stats.windowRecords ?? records.length)}
       </div>
       <div class="workspace-toolbar">
-        <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" data-filter="auditSearch" value="${escapeHtml(state.filters.auditSearch)}" placeholder="搜索记录 ID、标题、工具、路径或规则" aria-label="搜索审计记录" /></label>
-        <select class="workspace-select" data-filter="auditType" aria-label="按记录类型筛选"><option value="all">全部类型</option>${types.map((value) => `<option value="${escapeHtml(value)}" ${type === value ? "selected" : ""}>${escapeHtml(typeLabel(value))}</option>`).join("")}</select>
-        <select class="workspace-select" data-filter="auditSeverity" aria-label="按风险等级筛选"><option value="all">全部等级</option>${["danger", "warning", "info", "success"].map((value) => `<option value="${value}" ${severity === value ? "selected" : ""}>${severityLabel(value)}</option>`).join("")}</select>
+        <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" name="auditSearch" data-filter="auditSearch" value="${escapeHtml(state.filters.auditSearch)}" placeholder="搜索记录 ID、标题、工具、路径或规则" aria-label="搜索审计记录" /></label>
+        <select class="workspace-select" name="auditType" data-filter="auditType" aria-label="按记录类型筛选"><option value="all">全部类型</option>${types.map((value) => `<option value="${escapeHtml(value)}" ${type === value ? "selected" : ""}>${escapeHtml(typeLabel(value))}</option>`).join("")}</select>
+        <select class="workspace-select" name="auditSeverity" data-filter="auditSeverity" aria-label="按风险等级筛选"><option value="all">全部等级</option>${["danger", "warning", "info", "success"].map((value) => `<option value="${value}" ${severity === value ? "selected" : ""}>${severityLabel(value)}</option>`).join("")}</select>
         <span class="toolbar-spacer"></span><small>${filtered.length} / ${records.length} 条</small>
       </div>
       <div class="workspace-table-wrap">
@@ -777,7 +802,7 @@ function openAgentDrawer(id) {
   const agent = (state.data.policy?.agents || []).find((item) => item.id === id);
   if (!agent) return;
   const latest = latestAgentRecord(agent, recordList());
-  openDrawer("AGENT IDENTITY", agent.label || agent.id, `
+  openDrawer("智能体身份", agent.label || agent.id, `
     <section class="drawer-section"><header>身份结论</header><p class="drawer-copy">${escapeHtml(agentBoundary(agent))}。当前信任评分为 ${formatNumber(agent.score)}/100。</p></section>
     <section class="drawer-section"><header>身份属性</header><div class="drawer-kv">
       ${kvRow("Agent ID", agent.id)}${kvRow("信任等级", trustLabel(agent.level))}${kvRow("租户", agent.tenant || "-")}${kvRow("命名空间", agent.namespace || "-")}${kvRow("最近活动", latest ? formatDateTime(latest.created_at) : "未观测")}
@@ -791,7 +816,7 @@ function openToolDrawer(id) {
   if (!envelope) return;
   const manifest = envelope.manifest || {};
   const revocation = findRevocation(id, state.data.tools?.revocations || []);
-  openDrawer("TOOL MANIFEST", id, `
+  openDrawer("工具安全清单", id, `
     <section class="drawer-section"><header>信任结论</header><p class="drawer-copy">${revocation ? `该工具已吊销：${escapeHtml(revocation.reason || "未记录原因")}` : `工具清单由 ${escapeHtml(envelope.issuer || "本地管理员")} 签发，当前信任级别为 ${escapeHtml(trustLabel(manifest.defaultTrust))}。`}</p></section>
     <section class="drawer-section"><header>安全属性</header><div class="drawer-kv">${kvRow("信任等级", trustLabel(manifest.defaultTrust))}${kvRow("数据来源", (manifest.dataOrigins || []).join(", ") || "-")}${kvRow("副作用", (manifest.sideEffects || []).join(", ") || "-")}${kvRow("接收敏感数据", yesNo(manifest.acceptsSensitiveData))}${kvRow("可外泄", yesNo(manifest.canExfiltrate))}${kvRow("要求显式授权", yesNo(manifest.requiresExplicitAuthorization))}</div></section>
     <section class="drawer-section"><header>完整性</header><div class="drawer-kv">${kvRow("Digest", envelope.digest || "-")}${kvRow("签名", envelope.signature ? "有效" : "未签名")}${kvRow("登记时间", formatDateTime(envelope.registeredAt))}${kvRow("别名", (manifest.aliases || []).join(", ") || "无")}</div></section>
@@ -802,7 +827,7 @@ function openToolDrawer(id) {
 async function openAlertDrawer(id) {
   const alert = (state.data.alerts?.alerts || []).find((item) => item.id === id) || (state.data.overview?.alerts || []).find((item) => item.id === id);
   if (!alert) return;
-  openDrawer("SECURITY ALERT", alert.type || "运行风险事件", `
+  openDrawer("安全告警", alert.type || "运行风险事件", `
     <section class="drawer-section"><header>告警结论</header><p class="drawer-copy">${escapeHtml(alert.reason || "未记录告警原因")}</p></section>
     <section class="drawer-section"><header>关键证据</header><div class="drawer-kv">${kvRow("风险等级", alert.severity || "-")}${kvRow("工具", alert.tool || "-")}${kvRow("裁决", decisionLabel(alert.action))}${kvRow("规则", alert.rule || "-")}${kvRow("来源", sourceLabel(alert.source))}${kvRow("时间", alert.time || "-")}</div></section>
     <section class="drawer-section"><header>原始审计</header><p class="drawer-copy" id="alertRecordState">正在读取关联记录...</p></section>
@@ -822,7 +847,7 @@ async function openAlertDrawer(id) {
 }
 
 async function openRecordDrawer(id) {
-  openDrawer("AUDIT RECORD", id, '<div class="workspace-loading"><span></span><strong>正在读取完整记录</strong></div>');
+  openDrawer("审计记录", id, '<div class="workspace-loading"><span></span><strong>正在读取完整记录</strong></div>');
   try {
     const payload = await fetchJson(`/api/records/${encodeURIComponent(id)}`);
     const record = payload.record;
@@ -842,7 +867,7 @@ async function openRecordDrawer(id) {
 
 function openRegisterToolDialog() {
   openDialog({
-    kicker: "TOOL REGISTRATION",
+    kicker: "工具登记",
     title: "登记工具安全清单",
     confirmLabel: "签名并登记",
     body: `<div class="form-grid">
@@ -887,7 +912,7 @@ function openRegisterToolDialog() {
 function openRevokeToolDialog(toolId) {
   if (!toolId) return;
   openDialog({
-    kicker: "TRUST REVOCATION",
+    kicker: "信任吊销",
     title: `吊销 ${toolId}`,
     confirmLabel: "确认吊销",
     danger: true,
@@ -905,7 +930,7 @@ function openRevokeToolDialog(toolId) {
 function openRestoreToolDialog(toolId) {
   if (!toolId) return;
   openDialog({
-    kicker: "TRUST RESTORE",
+    kicker: "恢复信任",
     title: `恢复 ${toolId}`,
     confirmLabel: "恢复信任",
     body: '<p class="drawer-copy">恢复后，工具会重新按其安全清单与当前策略接受执行前裁决。</p>',
@@ -921,7 +946,7 @@ function openRestoreToolDialog(toolId) {
 function openCheckpointDialog(operationKey) {
   if (!operationKey) return;
   openDialog({
-    kicker: "CHECKPOINT RESTORE",
+    kicker: "检查点恢复",
     title: "恢复操作检查点",
     confirmLabel: "确认恢复",
     danger: true,
@@ -1049,6 +1074,14 @@ function summaryStat(label, value) {
   return `<div class="summary-stat"><small>${escapeHtml(label)}</small><strong>${escapeHtml(String(value ?? 0))}</strong></div>`;
 }
 
+function attentionRow(label, value, detail, tone, href) {
+  return `<a class="attention-row tone-${escapeHtml(tone)}" href="${escapeHtml(href)}">
+    <strong>${formatNumber(value)}</strong>
+    <span><b>${escapeHtml(label)}</b><small>${escapeHtml(detail)}</small></span>
+    <i data-lucide="chevron-right"></i>
+  </a>`;
+}
+
 function kvRow(label, value) {
   return `<div class="drawer-kv-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value ?? "-"))}</strong></div>`;
 }
@@ -1082,6 +1115,27 @@ function decisionBadge(value) {
 
 function booleanBadge(value, dangerWhenTrue = false) {
   return value ? toneBadge("是", dangerWhenTrue ? "danger" : "safe") : toneBadge("否", "info");
+}
+
+function plainAttribute(value, tone = "neutral") {
+  return `<span class="plain-attribute tone-${escapeHtml(tone)}">${escapeHtml(String(value ?? "-"))}</span>`;
+}
+
+function plainBoolean(value, dangerWhenTrue = false) {
+  return plainAttribute(value ? "是" : "否", value && dangerWhenTrue ? "danger" : "neutral");
+}
+
+function protectionStatus(value) {
+  const score = Number(value) || 0;
+  if (score >= 80) return { label: "防护稳定", tone: "safe" };
+  if (score >= 60) return { label: "需要关注", tone: "warning" };
+  return { label: "需要加强", tone: "danger" };
+}
+
+function metricTrendLabel(value) {
+  const trend = Number(value) || 0;
+  if (Math.abs(trend) < 0.05) return "与前一窗口持平";
+  return `较前一窗口 ${trend > 0 ? "+" : ""}${Math.round(trend * 10) / 10}%`;
 }
 
 function metricTone(value, count) {

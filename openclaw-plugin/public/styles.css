@@ -1067,7 +1067,7 @@ svg.lucide {
   overflow: hidden;
   margin-top: 4px;
   color: #81939e;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1146,7 +1146,7 @@ svg.lucide {
 .semantic-edge-label {
   fill: #7f909a;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 8px;
+  font-size: 10px;
   opacity: 0.68;
   paint-order: stroke;
   stroke: #06111a;
@@ -1199,7 +1199,7 @@ svg.lucide {
 }
 
 .semantic-edge-group.selected .semantic-edge-label {
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   opacity: 1;
 }
@@ -2782,7 +2782,7 @@ svg.lucide {
 .conclusion-classification small,
 .conclusion-outcome small {
   color: #738b99;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -2881,7 +2881,7 @@ svg.lucide {
   justify-content: space-between;
   gap: 8px;
   color: #7992a1;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -2890,7 +2890,7 @@ svg.lucide {
   overflow: hidden;
   color: #708a98;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2899,7 +2899,7 @@ svg.lucide {
 .request-context-item p {
   margin: 7px 0 0;
   color: #d3dfe5;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
@@ -2932,7 +2932,7 @@ svg.lucide {
   padding: 4px 6px;
   color: #aebfc9;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3004,7 +3004,7 @@ svg.lucide {
 
 .detection-card header small {
   color: #7d929f;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .detection-card header strong {
@@ -3019,7 +3019,7 @@ svg.lucide {
   padding: 3px 5px;
   color: #7794a4;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 7px;
+  font-size: 10px;
 }
 
 .detection-card.tone-danger header b {
@@ -3039,7 +3039,7 @@ svg.lucide {
   padding: 9px 10px;
   color: #dfe8ed;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
@@ -3068,7 +3068,7 @@ svg.lucide {
 
 .attack-intent strong {
   color: #c9d6dd;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
 }
 
@@ -3095,7 +3095,7 @@ svg.lucide {
   margin-top: 8px;
   color: #708a98;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 7px;
+  font-size: 10px;
 }
 
 .graph-workspace {
@@ -3116,14 +3116,14 @@ svg.lucide {
 }
 
 .semantic-node.on-path {
-  border-color: #3a5261;
-  background: #0e1c25;
-  box-shadow: 0 0 12px rgba(51, 111, 141, 0.08);
+  border-color: #46545c;
+  background: #121b21;
+  box-shadow: none;
 }
 
 .semantic-node.tone-normal {
-  border-color: #345469;
-  background: #0c202c;
+  border-color: #3f4c54;
+  background: #111a20;
   color: #d5e1e7;
   box-shadow: none;
 }
@@ -3136,28 +3136,28 @@ svg.lucide {
 }
 
 .semantic-node.tone-suspicious {
-  border-color: #8b642f;
-  background: #261d12;
+  border-color: #7d5d32;
+  background: #211a12;
   color: #efc37d;
-  box-shadow: 0 0 14px rgba(217, 145, 63, 0.1);
+  box-shadow: none;
 }
 
 .semantic-node.tone-attack {
-  border-color: #a83d43;
-  background: #261318;
+  border-color: #963b41;
+  background: #231418;
   color: #ff8b8e;
-  box-shadow: 0 0 16px rgba(255, 77, 82, 0.16);
+  box-shadow: 0 0 12px rgba(255, 77, 82, 0.1);
 }
 
 .semantic-node.tone-control {
-  border-color: #347a5c;
-  background: #0d281e;
+  border-color: #3d725b;
+  background: #12231c;
   color: #59dda9;
-  box-shadow: 0 0 14px rgba(46, 211, 147, 0.1);
+  box-shadow: none;
 }
 
 .semantic-node.tone-normal .node-icon {
-  color: #68a9cf;
+  color: #91a3ad;
 }
 
 .semantic-node.tone-normal.kind-action .node-icon,
@@ -3200,32 +3200,32 @@ svg.lucide {
 .semantic-node.selected,
 .semantic-node.on-path:hover,
 .semantic-node.on-path.selected {
-  border-color: #8ec8e8;
-  box-shadow: 0 0 0 2px rgba(76, 156, 255, 0.38), 0 0 22px rgba(44, 143, 199, 0.28);
+  border-color: #78b7dc;
+  box-shadow: 0 0 0 2px rgba(76, 156, 255, 0.32), 0 0 16px rgba(44, 143, 199, 0.18);
 }
 
 .semantic-edge-group.tone-evidence .semantic-edge {
-  stroke: #4d7d96;
+  stroke: #77858d;
   filter: none;
 }
 
 .semantic-edge-group.tone-evidence .semantic-edge-label {
-  fill: #7092a5;
+  fill: #8d9aa2;
 }
 
 .semantic-edge-group.tone-review .semantic-edge {
   stroke: var(--amber);
-  filter: drop-shadow(0 0 3px rgba(217, 145, 63, 0.24));
+  filter: none;
 }
 
 .semantic-edge-group.tone-attack .semantic-edge {
   stroke: var(--red);
-  filter: drop-shadow(0 0 4px rgba(255, 77, 82, 0.36));
+  filter: drop-shadow(0 0 3px rgba(255, 77, 82, 0.24));
 }
 
 .semantic-edge-group.tone-authorized .semantic-edge {
   stroke: var(--green);
-  filter: drop-shadow(0 0 3px rgba(46, 211, 147, 0.25));
+  filter: none;
 }
 
 .inspector {
@@ -3246,7 +3246,7 @@ svg.lucide {
   background: #0a1923;
   padding: 4px 7px;
   color: #78909d;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .inspector-body {
@@ -3312,7 +3312,7 @@ svg.lucide {
 
 .inspector-conclusion small {
   color: #718997;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .inspector-conclusion h3 {
@@ -3325,7 +3325,7 @@ svg.lucide {
 .inspector-conclusion p {
   margin-top: 6px;
   color: #aebfc8;
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -3354,7 +3354,7 @@ svg.lucide {
 .key-evidence-list dt,
 .key-evidence-list dd {
   margin: 0;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -3378,7 +3378,7 @@ svg.lucide {
   justify-content: space-between;
   min-height: 42px;
   color: #91a5b0;
-  font-size: 10px;
+  font-size: 12px;
   list-style: none;
 }
 
@@ -3448,7 +3448,7 @@ svg.lucide {
   min-width: 0;
   overflow: hidden;
   color: #8296a2;
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3520,13 +3520,13 @@ svg.lucide {
 }
 
 .more-actions-menu strong {
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .more-actions-menu small {
   margin-top: 3px;
   color: #718793;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .result-body {
@@ -3581,7 +3581,7 @@ svg.lucide {
 
 .result-outcome header small {
   color: #6f8794;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .result-outcome header strong {
@@ -3641,7 +3641,7 @@ svg.lucide {
 .outcome-action strong {
   overflow: hidden;
   color: #c9d7dd;
-  font-size: 9px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3650,7 +3650,7 @@ svg.lucide {
   overflow: hidden;
   margin-top: 2px;
   color: #78909d;
-  font-size: 7px;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3709,7 +3709,7 @@ svg.lucide {
 
 .confirmation-dialog header small {
   color: #b2854b;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .confirmation-dialog header strong {

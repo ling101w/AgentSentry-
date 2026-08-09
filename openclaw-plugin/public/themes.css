@@ -89,7 +89,7 @@ html[data-theme="graphite"] .workspace-intro,
 html[data-theme="graphite"] .workspace-loading,
 html[data-theme="graphite"] .workspace-empty,
 html[data-theme="graphite"] .workspace-error,
-html[data-theme="graphite"] .overview-kpi-band,
+html[data-theme="graphite"] .overview-command-center,
 html[data-theme="graphite"] .incident-flow {
   background: var(--panel-deep);
 }
@@ -104,6 +104,11 @@ html[data-theme="graphite"] .panel-frame,
 html[data-theme="graphite"] .incident-footer {
   border-color: var(--line);
   background: var(--panel);
+}
+
+html[data-theme="graphite"] .workspace-section.workspace-section-flat {
+  border-color: var(--line);
+  background: transparent;
 }
 
 html[data-theme="graphite"] .workspace-section h3,
@@ -151,6 +156,31 @@ html[data-theme="graphite"] .semantic-node {
   border-color: #555a70;
   background: #242632;
   color: var(--text);
+}
+
+html[data-theme="graphite"] .semantic-node.tone-normal,
+html[data-theme="graphite"] .semantic-node.tone-neutral {
+  border-color: #555a64;
+  background: #24262d;
+  color: var(--text);
+}
+
+html[data-theme="graphite"] .semantic-node.tone-suspicious {
+  border-color: #80643c;
+  background: #2b251b;
+  color: #ebc681;
+}
+
+html[data-theme="graphite"] .semantic-node.tone-attack {
+  border-color: #984a53;
+  background: #2c1d22;
+  color: #f2989c;
+}
+
+html[data-theme="graphite"] .semantic-node.tone-control {
+  border-color: #487761;
+  background: #1d2b25;
+  color: #70d7aa;
 }
 
 html[data-theme="graphite"] .semantic-node.selected {

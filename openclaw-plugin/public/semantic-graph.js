@@ -805,7 +805,7 @@ function createDefinitions(traceKind, verdict) {
     attack: "#ff5d6c",
     authorized: "#4bd39b",
     review: "#f3b95f",
-    evidence: "#46d6e7",
+    evidence: "#84929b",
     projection: "#7e8990",
   };
   if (traceKind === "authorized" || verdict === "allow") colors.attack = colors.authorized;
@@ -829,9 +829,13 @@ function createDefinitions(traceKind, verdict) {
 
 function edgeTone(edge, graph) {
   const kind = String(edge.kind || "").toLowerCase();
+  const from = graph.nodes.find((node) => node.id === edge.from);
+  const to = graph.nodes.find((node) => node.id === edge.to);
   if (["blocked_by", "approved_by", "decides"].includes(kind)) return graph.verdict === "ask" ? "review" : "authorized";
-  if (["taints", "consumes"].includes(kind) && graph.verdict !== "allow") return "attack";
-  if (["targets", "requests", "invokes"].includes(kind) && graph.verdict !== "allow") return "review";
+  if (kind === "reviewed_by" || graph.verdict === "ask" && edge.onPath) return "review";
+  if (kind === "taints" && graph.verdict !== "allow") return "attack";
+  if (kind === "consumes" && graph.verdict !== "allow" && ["taint", "secret"].includes(from?.kind)) return "attack";
+  if (kind === "targets" && graph.verdict !== "allow" && (to?.kind === "sink" || to?.effect === "external")) return "attack";
   if (edge.displayOnly) return "projection";
   if (edge.onPath && (graph.traceKind === "authorized" || graph.verdict === "allow")) return "authorized";
   return "evidence";
@@ -844,8 +848,10 @@ function nodeTone(node, graph) {
     return "control";
   }
   if (node.kind === "taint") return "attack";
-  if (node.kind === "secret" || node.kind === "sink" || node.authorized === false) return "suspicious";
-  if (node.kind === "action" && /BLOCK|DENY|UNSCOPED|REJECT/.test(state)) return "suspicious";
+  if (node.kind === "secret") return "suspicious";
+  if (node.kind === "sink" && graph.verdict !== "allow") return "attack";
+  if (node.kind === "action" && (/BLOCK|DENY|UNSCOPED|REJECT/.test(state) || node.authorized === false)) return "attack";
+  if (node.authorized === false) return "suspicious";
   if (["intent", "capability", "agent", "data", "action"].includes(node.kind)) return "normal";
   return "neutral";
 }

@@ -1066,29 +1066,29 @@ export function edgeLabel(edgeValue, fromNode, toNode) {
   const kind = String(edgeValue?.kind || edgeValue || "").toLowerCase();
   if (kind === "targets") {
     const tool = String(fromNode?.tool || fromNode?.title || "").toLowerCase();
-    if (tool.includes("email")) return "sends-to";
-    if (tool.includes("file") || toNode?.effect === "persistent") return "writes-to";
-    if (tool.includes("shell")) return "executes-at";
+    if (tool.includes("email")) return "尝试外发";
+    if (tool.includes("file") || toNode?.effect === "persistent") return "尝试写入";
+    if (tool.includes("shell")) return "尝试执行";
   }
   return ({
-    declares: "authorizes",
-    governs: "governs",
-    authorizes: "permits",
-    constrains: "constrains",
-    requests: "invokes",
-    invokes: "invokes",
-    consumes: "uses",
-    produces: "returns",
-    derives: "derived-from",
-    taints: "taints",
-    targets: "targets",
-    blocked_by: "blocked-by",
-    reviewed_by: "reviewed-by",
-    approved_by: "approved-by",
-    decides: "decides",
-    summary: "collapsed-path",
-    flows: "flows-to",
-  })[kind] || kind.replaceAll("_", "-") || "flows-to";
+    declares: "声明授权",
+    governs: "任务约束",
+    authorizes: "能力授权",
+    constrains: "授权约束",
+    requests: "发起任务",
+    invokes: "调用工具",
+    consumes: "使用数据",
+    produces: "返回数据",
+    derives: "数据派生",
+    taints: "检测到污染",
+    targets: "指向目标",
+    blocked_by: "策略阻断",
+    reviewed_by: "人工复核",
+    approved_by: "通过校验",
+    decides: "最终裁决",
+    summary: "省略支撑关系",
+    flows: "流向",
+  })[kind] || kind.replaceAll("_", " ") || "流向";
 }
 
 export function causalPathTitles(graph) {

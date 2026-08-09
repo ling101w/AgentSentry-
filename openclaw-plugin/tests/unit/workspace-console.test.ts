@@ -45,6 +45,17 @@ describe("玄鉴 operations workspace", () => {
     }
   });
 
+  it("prioritizes current posture and keeps tool attributes visually restrained", () => {
+    for (const label of ["当前安全状态", "主要风险", "需要处理", "最近运行事件"]) {
+      expect(workspaceJs).toContain(label);
+    }
+    expect(workspaceJs).toContain('class="overview-command-center"');
+    expect(workspaceJs).toContain('const secondaryMetrics = ["total", "tools", "taint", "drift"]');
+    expect(workspaceJs).not.toContain('metric.en || "REALTIME"');
+    expect(workspaceJs).toContain("plainBoolean(manifest.acceptsSensitiveData)");
+    expect(workspaceJs).toContain("plainAttribute(trustLabel(manifest.defaultTrust))");
+  });
+
   it("keeps drawer actions delegated and allows a requested session to open", () => {
     expect(workspaceJs).toContain('$("drawerBody").addEventListener("click", handleContentClick)');
     expect(workspaceJs).toContain('data-action="revoke-tool"');
@@ -54,8 +65,8 @@ describe("玄鉴 operations workspace", () => {
 
   it("exposes a persistent theme switch on both investigation shells", () => {
     expect(workspaceHtml).toContain("data-theme-toggle");
-    expect(workspaceHtml).toContain('/themes.css?v=20260808-15');
-    expect(workspaceHtml).toContain('/theme.js?v=20260808-15');
+    expect(workspaceHtml).toContain('/themes.css?v=20260809-2');
+    expect(workspaceHtml).toContain('/theme.js?v=20260809-2');
     expect(indexHtml).toContain("data-theme-toggle");
     expect(themeJs).toContain("agentsentry-console-theme");
     expect(themeJs).toContain("localStorage.setItem");

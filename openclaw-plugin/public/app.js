@@ -4,8 +4,8 @@ import {
   buildSelectionEvidence,
   decisionCode,
   primaryPathGraph,
-} from "/graph-adapter.js?v=20260808-13";
-import { SemanticGraph } from "/semantic-graph.js?v=20260808-13";
+} from "/graph-adapter.js?v=20260809-2";
+import { SemanticGraph } from "/semantic-graph.js?v=20260809-2";
 
 const $ = (id) => document.getElementById(id);
 
@@ -84,7 +84,7 @@ async function refreshData({ keepSelection = true, quiet = false } = {}) {
     }
 
     renderAll();
-    setConnection(state.model.source.available === false ? "warning" : "live", state.model.source.available === false ? "降级" : "LIVE");
+    setConnection(state.model.source.available === false ? "warning" : "live", state.model.source.available === false ? "降级" : "实时");
   } catch (error) {
     setConnection("error", "连接失败");
     showToast(`无法读取审计数据：${error?.message || error}`, "error");
@@ -249,7 +249,7 @@ function renderRequestContext() {
 function renderGraph() {
   const session = currentSession();
   if (!session) {
-    $("graphContext").innerHTML = `<span>NO SESSION</span>`;
+    $("graphContext").innerHTML = `<span>暂无会话</span>`;
     $("graphConfidence").textContent = "等待图证据";
     semanticGraph.setGraph(null);
     return;
@@ -273,7 +273,7 @@ function renderGraph() {
     <span>${escapeHtml(graph.riskLabel)}</span>
     <span>SAG V${escapeHtml(graph.version)}</span>
     <span>${escapeHtml(partial)}</span>`;
-  $("graphConfidence").textContent = `${state.pathFocus ? "PRIMARY PATH" : evidence} · ${Math.round(graph.confidence * 100)}% · ${displayGraph.nodes.length}/${Math.max(graph.nodes.length, graph.sourceNodeCount)} NODES`;
+  $("graphConfidence").textContent = `${state.pathFocus ? "攻击主路径" : evidence} · ${Math.round(graph.confidence * 100)}% · ${displayGraph.nodes.length}/${Math.max(graph.nodes.length, graph.sourceNodeCount)} 个节点`;
   updateGraphModeButton();
 
   const selectedNodeId = state.selectedItem?.type === "node" && displayGraph.nodes.some((node) => node.id === state.selectedItem.value.id)
@@ -651,7 +651,7 @@ function renderTimeline() {
   $("timelineEvent").title = brandText(event?.detail || event?.title || "");
   $("liveBtn").classList.toggle("active", state.live);
   $("playbackBadge").classList.toggle("paused", !state.live);
-  $("playbackBadge").innerHTML = state.live ? `<span class="live-dot"></span> LIVE` : `<i data-lucide="history"></i> REPLAY ${state.playhead + 1}/${Math.max(1, events.length)}`;
+  $("playbackBadge").innerHTML = state.live ? `<span class="live-dot"></span> 实时` : `<i data-lucide="history"></i> 回放 ${state.playhead + 1}/${Math.max(1, events.length)}`;
   updatePlaybackButton();
   syncGraphPlayback();
 }
