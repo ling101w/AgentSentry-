@@ -1,4 +1,6 @@
 const DECISION_ORDER = { deny: 4, ask: 3, allow: 2, info: 1 };
+import { normalizeVerdict, verdictCode as sharedVerdictCode, verdictLabel as sharedVerdictLabel } from "./verdict.js";
+
 const SEVERITY_ORDER = { critical: 5, high: 4, danger: 4, medium: 3, warning: 3, info: 1, success: 0 };
 
 const TOOL_LABELS = {
@@ -579,8 +581,10 @@ function buildTimeline(records, alert, graph) {
 function bestTimelineNode(event, graph) {
   if (!graph?.nodes?.length) return null;
   let candidates = graph.nodes.filter((node) => node.recordIds?.includes(event.id));
+  const type = String(event.type || "");
+  const payload = event.record?.payload || {};
   const eventTool = String(event.record?.payload?.normalized_tool || event.record?.payload?.toolName || event.record?.payload?.tool || "").toLowerCase();
-  if (String(event.type || "") === "tool_call" && eventTool) {
+  if (type === "tool_call" && eventTool) {
     const toolMatches = graph.nodes.filter((node) => node.kind === "action" && [node.tool, node.original_tool, node.title]
       .map((value) => String(value || "").toLowerCase())
       .some((value) => value === eventTool || value.endsWith(`.${eventTool}`)));
@@ -588,9 +592,6 @@ function bestTimelineNode(event, graph) {
     if (linkedToolMatches.length) candidates = linkedToolMatches;
     else if (toolMatches.length) candidates = toolMatches;
   }
-  if (!candidates.length) return null;
-  const type = String(event.type || "");
-  const payload = event.record?.payload || {};
   const preferredKinds = ["lab_command", "user_message", "command"].includes(type)
     ? ["intent"]
     : type === "task_spec" ? ["capability"]
@@ -603,6 +604,10 @@ function bestTimelineNode(event, graph) {
               : type === "guard_finding" ? ["taint", "secret", "capability", "guard"]
                 : type === "alert" ? ["guard", "decision", "action"]
                   : ["decision", "guard", "action", "agent", "data"];
+  if (!candidates.length) {
+    candidates = graph.nodes.filter((node) => preferredKinds.includes(node.kind));
+  }
+  if (!candidates.length) return null;
   return candidates.slice().sort((left, right) => {
     const leftRank = preferredKinds.indexOf(left.kind);
     const rightRank = preferredKinds.indexOf(right.kind);
@@ -999,7 +1004,7 @@ function nodeEvidenceLabel(node, fallback = "") {
 
 function selectionTone(session, edgeValue, node) {
   const relation = String(edgeValue?.kind || "").toLowerCase();
-  if (node?.kind === "decision") return node.state === "ASK" ? "warning" : "safe";
+  if (node?.kind === "decision") return ["ASK", "REVIEW"].includes(String(node.state || "").toUpperCase()) ? "warning" : "safe";
   if (node?.kind === "guard") return session.decision === "ask" ? "warning" : "safe";
   if (["blocked_by", "approved_by", "decides"].includes(relation)) return session.decision === "ask" ? "warning" : "safe";
   if (node?.kind === "taint" || ["taints", "consumes"].includes(relation)) return "danger";
@@ -1055,11 +1060,11 @@ export function riskLabel(value) {
 }
 
 export function decisionLabel(value) {
-  return ({ deny: "拒绝", ask: "询问", allow: "允许", info: "观察" })[normalizeDecision(value)] || "观察";
+  return sharedVerdictLabel(normalizeDecision(value));
 }
 
 export function decisionCode(value) {
-  return ({ deny: "DENY", ask: "ASK", allow: "ALLOW", info: "INFO" })[normalizeDecision(value)] || "INFO";
+  return sharedVerdictCode(normalizeDecision(value));
 }
 
 export function edgeLabel(edgeValue, fromNode, toNode) {
@@ -1413,11 +1418,8 @@ function recordText(record) {
 }
 
 function normalizeDecision(value) {
-  const text = String(value || "").toLowerCase();
-  if (["block", "blocked", "deny", "denied", "reject", "rejected"].includes(text)) return "deny";
-  if (["ask", "review", "pending", "require_approval", "approval"].includes(text)) return "ask";
-  if (["allow", "allowed", "pass", "passed", "success"].includes(text)) return "allow";
-  return "info";
+  const normalized = normalizeVerdict(value);
+  return normalized === "review" ? "ask" : normalized === "observe" ? "info" : normalized;
 }
 
 function normalizeSeverity(value) {

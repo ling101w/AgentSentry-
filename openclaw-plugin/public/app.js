@@ -4,8 +4,9 @@ import {
   buildSelectionEvidence,
   decisionCode,
   primaryPathGraph,
-} from "/graph-adapter.js?v=20260809-2";
-import { SemanticGraph } from "/semantic-graph.js?v=20260809-2";
+} from "/graph-adapter.js?v=20260809-4";
+import { SemanticGraph } from "/semantic-graph.js?v=20260809-3";
+import { normalizeVerdict, verdictMeta } from "/verdict.js?v=20260809-1";
 
 const $ = (id) => document.getElementById(id);
 
@@ -21,6 +22,7 @@ const state = {
   live: true,
   playing: false,
   loading: false,
+  dataSignature: "",
   refreshTimer: null,
   playbackTimer: null,
   search: "",
@@ -62,28 +64,36 @@ async function refreshData({ keepSelection = true, quiet = false } = {}) {
       throw overviewResult.reason || recordsResult.reason;
     }
 
-    state.overview = overviewResult.status === "fulfilled" ? overviewResult.value : {};
+    const nextOverview = overviewResult.status === "fulfilled" ? overviewResult.value : {};
     const recordsPayload = recordsResult.status === "fulfilled" ? recordsResult.value : {};
-    state.records = Array.isArray(recordsPayload.records) ? recordsPayload.records : [];
-    if (enforcementResult.status === "fulfilled") state.enforcement = enforcementResult.value;
-    state.model = buildDashboardModel({ overview: state.overview, records: state.records, recordsMeta: recordsPayload });
+    const nextRecords = Array.isArray(recordsPayload.records) ? recordsPayload.records : [];
+    const nextEnforcement = enforcementResult.status === "fulfilled" ? enforcementResult.value : state.enforcement;
+    const nextSignature = dashboardDataSignature(nextOverview, nextRecords, nextEnforcement);
+    const shouldRender = !quiet || nextSignature !== state.dataSignature;
 
-    const preserved = keepSelection && state.model.sessions.some((session) => session.id === state.selectedSessionId);
-    if (!preserved) state.selectedSessionId = preferredSession(state.model.sessions)?.id || "";
-    const session = currentSession();
-    if (!session) {
-      state.playhead = 0;
-      state.selectedItem = null;
-    } else {
-      state.playhead = state.live
-        ? Math.max(0, session.timeline.length - 1)
-        : Math.min(state.playhead, Math.max(0, session.timeline.length - 1));
-      state.selectedItem = keepSelection
-        ? restoreSelection(session, state.selectedItem) || defaultSelection(session)
-        : defaultSelection(session);
+    state.overview = nextOverview;
+    state.records = nextRecords;
+    state.enforcement = nextEnforcement;
+    state.dataSignature = nextSignature;
+
+    if (shouldRender) {
+      state.model = buildDashboardModel({ overview: state.overview, records: state.records, recordsMeta: recordsPayload });
+      const preserved = keepSelection && state.model.sessions.some((session) => session.id === state.selectedSessionId);
+      if (!preserved) state.selectedSessionId = preferredSession(state.model.sessions)?.id || "";
+      const session = currentSession();
+      if (!session) {
+        state.playhead = 0;
+        state.selectedItem = null;
+      } else {
+        state.playhead = state.live
+          ? Math.max(0, session.timeline.length - 1)
+          : Math.min(state.playhead, Math.max(0, session.timeline.length - 1));
+        state.selectedItem = keepSelection
+          ? restoreSelection(session, state.selectedItem) || defaultSelection(session)
+          : defaultSelection(session);
+      }
+      renderAll();
     }
-
-    renderAll();
     setConnection(state.model.source.available === false ? "warning" : "live", state.model.source.available === false ? "降级" : "实时");
   } catch (error) {
     setConnection("error", "连接失败");
@@ -93,6 +103,20 @@ async function refreshData({ keepSelection = true, quiet = false } = {}) {
     state.loading = false;
     $("refreshBtn").classList.remove("spinning");
   }
+}
+
+function dashboardDataSignature(overview, records, enforcement) {
+  const source = overview?.source || {};
+  const recordIds = records.map((record) => `${record.id || ""}:${record.created_at || ""}`).join("|");
+  return [
+    source.total_records ?? source.totalRecords ?? records.length,
+    source.window_records ?? source.windowRecords ?? records.length,
+    source.openclaw_available,
+    overview?.alertCount ?? "",
+    enforcement?.profile ?? "",
+    enforcement?.mode ?? "",
+    recordIds,
+  ].join("::");
 }
 
 async function fetchJson(url, options = {}) {
@@ -152,7 +176,9 @@ function renderHeader() {
 }
 
 function renderIncidentConclusion() {
-  const conclusion = buildIncidentConclusion(currentSession());
+  const session = currentSession();
+  const conclusion = buildIncidentConclusion(session);
+  const verdict = verdictMeta(session?.decision);
   const severity = $("conclusionSeverity");
   const severityTone = conclusion.severity === "高危" ? "danger" : conclusion.severity === "中危" ? "warning" : "safe";
   severity.className = `severity-badge tone-${severityTone}`;
@@ -160,9 +186,33 @@ function renderIncidentConclusion() {
   $("conclusionType").textContent = conclusion.attackType;
   $("conclusionSummary").textContent = brandText(conclusion.summary);
   const outcome = $("conclusionOutcome");
-  outcome.className = `conclusion-outcome tone-${escapeHtml(conclusion.tone)}`;
-  outcome.innerHTML = `<i data-lucide="${conclusion.tone === "safe" ? "shield-check" : conclusion.tone === "warning" ? "clock-alert" : conclusion.tone === "danger" ? "triangle-alert" : "activity"}"></i>
-    <span><small>结果</small><strong>${escapeHtml(conclusion.result)}</strong></span>`;
+  outcome.className = `conclusion-outcome tone-${escapeHtml(conclusion.tone)} verdict-${escapeHtml(verdict.key)}`;
+  outcome.innerHTML = `<i data-lucide="${escapeHtml(verdict.icon)}"></i>
+    <span><small>玄鉴裁决</small><strong>${escapeHtml(incidentVerdictTitle(session, conclusion))}</strong><code>${escapeHtml(verdict.code)}</code><em>${escapeHtml(conclusion.result)}</em></span>`;
+}
+
+function incidentVerdictTitle(session, conclusion) {
+  if (!session) return "等待行为进入裁决链路";
+  if (session.decision === "deny") return conclusion.target ? "攻击已在外发边界阻断" : "危险动作已在执行边界阻断";
+  if (session.decision === "ask") return "高风险动作已暂停并等待确认";
+  return "行为符合当前任务边界";
+}
+
+function selectionVerdict(evidence, session) {
+  const relation = String(evidence.kind || "").toLowerCase();
+  const stateValue = String(evidence.state || "").toLowerCase();
+  if (evidence.type === "edge" && ["blocked_by", "reviewed_by", "approved_by", "decides"].includes(relation)) return session.decision;
+  if (evidence.kind === "decision") return normalizeVerdict(stateValue);
+  if (evidence.kind === "guard") return session.decision;
+  if (["taint", "secret", "sink"].includes(evidence.kind) && session.decision !== "allow") return session.decision;
+  if (evidence.kind === "capability" && /unscoped|deny|block|未授权/i.test(`${evidence.state} ${evidence.title}`)) return session.decision === "deny" ? "deny" : "ask";
+  if (evidence.kind === "action" && /blocked|deny|reject|unscoped/i.test(stateValue)) return "deny";
+  return "";
+}
+
+function renderVerdictInline(value, rule) {
+  const meta = verdictMeta(value);
+  return `<span class="inspector-verdict verdict-${escapeHtml(meta.key)}"><span><strong>${escapeHtml(meta.label)}</strong><code>${escapeHtml(meta.code)}</code></span>${rule ? `<small>${escapeHtml(rule)}</small>` : ""}</span>`;
 }
 
 function renderSessions() {
@@ -273,7 +323,7 @@ function renderGraph() {
     <span>${escapeHtml(graph.riskLabel)}</span>
     <span>SAG V${escapeHtml(graph.version)}</span>
     <span>${escapeHtml(partial)}</span>`;
-  $("graphConfidence").textContent = `${state.pathFocus ? "攻击主路径" : evidence} · ${Math.round(graph.confidence * 100)}% · ${displayGraph.nodes.length}/${Math.max(graph.nodes.length, graph.sourceNodeCount)} 个节点`;
+  $("graphConfidence").textContent = `${state.pathFocus ? "事件主路径" : evidence} · ${Math.round(graph.confidence * 100)}% · ${displayGraph.nodes.length}/${Math.max(graph.nodes.length, graph.sourceNodeCount)} 个节点`;
   updateGraphModeButton();
 
   const selectedNodeId = state.selectedItem?.type === "node" && displayGraph.nodes.some((node) => node.id === state.selectedItem.value.id)
@@ -291,8 +341,8 @@ function updateGraphModeButton() {
   const button = $("pathFocusBtn");
   button.classList.toggle("active", !state.pathFocus);
   button.setAttribute("aria-expanded", String(!state.pathFocus));
-  button.title = state.pathFocus ? "展开全部依赖关系" : "仅展示攻击主路径";
-  button.innerHTML = `<i data-lucide="${state.pathFocus ? "network" : "route"}"></i><span>${state.pathFocus ? "完整因果图" : "攻击主路径"}</span>`;
+  button.title = state.pathFocus ? "展开全部依赖关系" : "仅展示事件主路径";
+  button.innerHTML = `<i data-lucide="${state.pathFocus ? "network" : "route"}"></i><span>${state.pathFocus ? "完整因果图" : "事件主路径"}</span>`;
 }
 
 function handleGraphSelection(item) {
@@ -332,6 +382,7 @@ function renderInspector(item) {
   ].filter(Boolean);
   const conclusion = selectionConclusion(evidence, session);
   const keyFacts = selectionKeyFacts(evidence, session);
+  const localVerdict = selectionVerdict(evidence, session);
 
   body.innerHTML = `
     <div class="inspector-selection">
@@ -346,6 +397,7 @@ function renderInspector(item) {
         <small>这里发生了什么 · ${escapeHtml(evidence.kindLabel)}</small>
         <h3>${escapeHtml(conclusion.title)}</h3>
         <p>${escapeHtml(evidence.description)}</p>
+        ${localVerdict ? renderVerdictInline(localVerdict, evidence.policies?.find(isPolicyCode) || "") : ""}
       </div>
     </section>
 
@@ -388,7 +440,7 @@ function selectionConclusion(evidence, session) {
   }
   if (evidence.kind === "decision") {
     if (stateValue === "DENY") return { title: "已阻断", tone: "safe", icon: "shield-check" };
-    if (stateValue === "ASK") return { title: "等待人工确认", tone: "warning", icon: "clock-alert" };
+    if (["ASK", "REVIEW"].includes(stateValue)) return { title: "等待人工确认", tone: "warning", icon: "clock-alert" };
     return { title: "已放行", tone: "safe", icon: "badge-check" };
   }
   if (evidence.kind === "guard") return { title: session.decision === "deny" ? "执行边界阻断成功" : "执行边界校验完成", tone: "safe", icon: "shield-check" };
@@ -764,6 +816,9 @@ function bindInteractions() {
   });
   $("zoomInBtn").addEventListener("click", () => semanticGraph.zoom(1.14));
   $("zoomOutBtn").addEventListener("click", () => semanticGraph.zoom(0.88));
+  $("resetGraphBtn").addEventListener("click", () => {
+    if (semanticGraph.resetLayout()) showToast("图谱已恢复自动布局");
+  });
   $("fitGraphBtn").addEventListener("click", () => semanticGraph.fit());
   $("closeInspectorBtn").addEventListener("click", () => {
     state.selectedItem = null;

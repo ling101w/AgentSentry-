@@ -23,12 +23,126 @@
   --amber: #d9913f;
   --amber-soft: rgba(138, 91, 35, 0.2);
   --purple: #9c73ff;
+  --action: var(--blue);
+  --verdict-allow: #2ed393;
+  --verdict-review: #d9913f;
+  --verdict-deny: #ff4d52;
+  --verdict-observe: #8a9ba6;
   --header-height: 70px;
   --nav-width: 134px;
   --node-width: 164px;
   --node-height: 62px;
   font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif;
 }
+
+/* Xuanjian product language: Boundary, Trace, Verdict. */
+.verdict-badge {
+  display: inline-grid;
+  min-width: 72px;
+  gap: 1px;
+  border-left: 2px solid var(--verdict-observe);
+  padding: 2px 0 2px 7px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.verdict-badge strong,
+.verdict-badge code {
+  display: block;
+  line-height: 1.15;
+}
+
+.verdict-badge strong {
+  color: #b8c7cf;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.verdict-badge code {
+  color: #758a96;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+}
+
+.verdict-badge.verdict-deny { border-color: var(--verdict-deny); }
+.verdict-badge.verdict-review { border-color: var(--verdict-review); }
+.verdict-badge.verdict-allow { border-color: var(--verdict-allow); }
+.verdict-badge.verdict-deny strong,
+.verdict-badge.verdict-deny code { color: #ef8588; }
+.verdict-badge.verdict-review strong,
+.verdict-badge.verdict-review code { color: #d8a965; }
+.verdict-badge.verdict-allow strong,
+.verdict-badge.verdict-allow code { color: #66d5a5; }
+
+.conclusion-outcome span {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+
+.conclusion-outcome span small,
+.conclusion-outcome span em {
+  grid-column: 1 / -1;
+}
+
+.conclusion-outcome span code {
+  color: #79909d;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.conclusion-outcome span em {
+  overflow: hidden;
+  color: #8297a3;
+  font-size: 10px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conclusion-outcome.verdict-deny > svg,
+.conclusion-outcome.verdict-deny code { color: var(--verdict-deny); }
+.conclusion-outcome.verdict-review > svg,
+.conclusion-outcome.verdict-review code { color: var(--verdict-review); }
+.conclusion-outcome.verdict-allow > svg,
+.conclusion-outcome.verdict-allow code { color: var(--verdict-allow); }
+
+.inspector-verdict {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  border-top: 1px solid rgba(43, 70, 84, 0.78);
+  padding-top: 8px;
+}
+
+.inspector-verdict > span {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.inspector-verdict strong {
+  color: #c6d4da;
+  font-size: 12px;
+}
+
+.inspector-verdict code,
+.inspector-verdict small {
+  color: #758b97;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+}
+
+.inspector-verdict.verdict-deny strong,
+.inspector-verdict.verdict-deny code { color: #ef8588; }
+.inspector-verdict.verdict-review strong,
+.inspector-verdict.verdict-review code { color: #d8a965; }
+.inspector-verdict.verdict-allow strong,
+.inspector-verdict.verdict-allow code { color: #66d5a5; }
 
 * {
   box-sizing: border-box;
@@ -1000,7 +1114,8 @@ svg.lucide {
   box-shadow: 0 0 16px rgba(46, 211, 147, 0.12);
 }
 
-.semantic-node.kind-decision[data-state="ASK"] {
+.semantic-node.kind-decision[data-state="ASK"],
+.semantic-node.kind-decision[data-state="REVIEW"] {
   border-color: #9a6e32;
   background: #2a1f12;
   color: #efb765;
@@ -2493,7 +2608,7 @@ svg.lucide {
 
   .header-controls .operator-menu,
   .notification-button,
-  .severity-badge:not(#summarySeverity) {
+  #severityBadge {
     display: none;
   }
 
@@ -3225,6 +3340,52 @@ svg.lucide {
 .semantic-edge-group.tone-authorized .semantic-edge {
   stroke: var(--green);
   filter: none;
+}
+
+/* Normal context is deliberately quiet; confirmed attack, review, and control states carry color. */
+.semantic-node.tone-normal,
+.semantic-node.tone-neutral,
+.semantic-node.on-path.tone-normal {
+  border-color: #303d45;
+  background: #0d161c;
+  color: #bac8cf;
+  box-shadow: none;
+}
+
+.semantic-node.tone-normal:not(.selected):not(:hover),
+.semantic-node.tone-neutral:not(.selected):not(:hover) {
+  opacity: 0.78;
+}
+
+.semantic-node.tone-normal:not(.on-path):not(.selected):not(:hover),
+.semantic-node.tone-neutral:not(.on-path):not(.selected):not(:hover) {
+  opacity: 0.52;
+}
+
+.semantic-node.tone-normal .node-icon,
+.semantic-node.tone-neutral .node-icon {
+  color: #71838d;
+}
+
+.semantic-node.tone-attack,
+.semantic-node.tone-suspicious,
+.semantic-node.tone-control {
+  opacity: 1;
+}
+
+.semantic-edge-group.tone-evidence .semantic-edge {
+  stroke: #53616a;
+  stroke-width: 1.15;
+}
+
+.semantic-edge-group.tone-evidence .semantic-edge-label {
+  fill: #6f7f88;
+}
+
+.semantic-edge-group.tone-attack .semantic-edge,
+.semantic-edge-group.tone-review .semantic-edge,
+.semantic-edge-group.tone-authorized .semantic-edge {
+  stroke-width: 2.25;
 }
 
 .inspector {

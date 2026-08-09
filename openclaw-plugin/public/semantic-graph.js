@@ -145,6 +145,29 @@ export class SemanticGraph {
     this.applyTransform();
   }
 
+  resetLayout() {
+    if (!this.graph) return false;
+    const key = this.graphKey();
+    try {
+      window.localStorage.removeItem(manualLayoutStorageKey(key));
+    } catch {
+      // Restoring the in-memory layout still works when storage is unavailable.
+    }
+    this.manualLayout = new Map();
+    this.layout = layoutGraph(this.graph, this.viewport.clientWidth, this.viewport.clientHeight);
+    this.world.style.width = `${this.layout.worldWidth}px`;
+    this.world.style.height = `${this.layout.worldHeight}px`;
+    this.svg.setAttribute("viewBox", `0 0 ${this.layout.worldWidth} ${this.layout.worldHeight}`);
+    this.svg.setAttribute("width", String(this.layout.worldWidth));
+    this.svg.setAttribute("height", String(this.layout.worldHeight));
+    this.positionNodes();
+    this.drawEdges();
+    this.applyVisibility();
+    this.applyFocus();
+    this.fit();
+    return true;
+  }
+
   resize() {
     clearTimeout(this.resizeTimer);
     this.resizeTimer = setTimeout(() => {
@@ -844,7 +867,7 @@ function edgeTone(edge, graph) {
 function nodeTone(node, graph) {
   const state = String(node.state || "").toUpperCase();
   if (node.kind === "guard" || node.kind === "decision") {
-    if (state === "ASK" || graph.verdict === "ask") return "suspicious";
+    if (state === "ASK" || state === "REVIEW" || graph.verdict === "ask" || graph.verdict === "review") return "suspicious";
     return "control";
   }
   if (node.kind === "taint") return "attack";

@@ -7,8 +7,8 @@
     <meta name="description" content="玄鉴智能体行为安全裁决系统，实时呈现攻击因果链路、关键证据与执行边界裁决。" />
     <title>玄鉴 · 攻击事件详情</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=20260809-3" />
-    <link rel="stylesheet" href="/themes.css?v=20260809-2" />
+    <link rel="stylesheet" href="/styles.css?v=20260809-5" />
+    <link rel="stylesheet" href="/themes.css?v=20260809-3" />
     <script src="/theme.js?v=20260809-2"></script>
   </head>
   <body>
@@ -109,12 +109,15 @@
           <section class="graph-workspace panel-frame" aria-labelledby="graphTitle">
             <header class="panel-titlebar graph-titlebar">
               <div>
-                <h2 id="graphTitle">攻击因果图 / 语义行动图</h2>
+                <h2 id="graphTitle">攻击事件路径</h2>
                 <span class="info-mark" title="展示 Agent 行为的语义因果关系">i</span>
               </div>
               <div class="graph-tools" aria-label="图谱工具">
                 <button id="pathFocusBtn" class="compact-button" type="button" aria-expanded="false" title="展开全部依赖关系">
                   <i data-lucide="network"></i><span>完整因果图</span>
+                </button>
+                <button id="resetGraphBtn" class="compact-button" type="button" title="恢复自动布局" aria-label="恢复自动布局">
+                  <i data-lucide="rotate-ccw"></i><span>重置布局</span>
                 </button>
                 <button id="fitGraphBtn" class="compact-button" type="button" title="适配画布">
                   <i data-lucide="maximize"></i><span>全屏</span>
@@ -239,6 +242,6 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script src="/vendor/lucide.min.js?v=0.468.0"></script>
-    <script type="module" src="/app.js?v=20260809-2"></script>
+    <script type="module" src="/app.js?v=20260809-6"></script>
   </body>
 </html>

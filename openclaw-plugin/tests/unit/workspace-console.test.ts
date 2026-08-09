@@ -7,6 +7,7 @@ const workspaceJs = readFileSync(new URL("../../public/workspace.js", import.met
 const appJs = readFileSync(new URL("../../public/app.js", import.meta.url), "utf8");
 const themeJs = readFileSync(new URL("../../public/theme.js", import.meta.url), "utf8");
 const themesCss = readFileSync(new URL("../../public/themes.css", import.meta.url), "utf8");
+const verdictJs = readFileSync(new URL("../../public/verdict.js", import.meta.url), "utf8");
 const dashboardTs = readFileSync(new URL("../../server/dashboard.ts", import.meta.url), "utf8");
 
 describe("玄鉴 operations workspace", () => {
@@ -65,9 +66,22 @@ describe("玄鉴 operations workspace", () => {
     expect(appJs).toContain('new URLSearchParams(window.location.search).get("session")');
   });
 
+  it("uses one Boundary, Trace and Verdict language across the operations pages", () => {
+    expect(workspaceJs).toContain('class="policy-rule-editor"');
+    expect(workspaceJs).toContain('data-action="add-policy-rule"');
+    expect(workspaceJs).toContain('class="alert-feed investigation-queue"');
+    expect(workspaceJs).toContain('class="capability-details"');
+    expect(workspaceJs).toContain('class="verdict-card verdict-${meta.key}"');
+    expect(workspaceJs).toContain("谁能调用它");
+    expect(workspaceJs).toContain("它能调用谁");
+    expect(verdictJs).toContain('code: "REVIEW"');
+    expect(verdictJs).toContain('code: "DENY"');
+    expect(verdictJs).toContain('code: "ALLOW"');
+  });
+
   it("exposes a persistent theme switch on both investigation shells", () => {
     expect(workspaceHtml).toContain("data-theme-toggle");
-    expect(workspaceHtml).toContain('/themes.css?v=20260809-2');
+    expect(workspaceHtml).toContain('/themes.css?v=20260809-3');
     expect(workspaceHtml).toContain('/theme.js?v=20260809-2');
     expect(indexHtml).toContain("data-theme-toggle");
     expect(themeJs).toContain("agentsentry-console-theme");

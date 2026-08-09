@@ -6,6 +6,7 @@ import { buildDashboardModel, buildIncidentConclusion, buildSelectionEvidence, c
 const indexSource = readFileSync(new URL("../../public/index.html", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../../public/app.js", import.meta.url), "utf8");
 const graphSource = readFileSync(new URL("../../public/semantic-graph.js", import.meta.url), "utf8");
+const stylesSource = readFileSync(new URL("../../public/styles.css", import.meta.url), "utf8");
 
 describe("semantic action graph homepage", () => {
   it("projects a real causal graph into typed security nodes and an explicit decision chain", () => {
@@ -25,35 +26,47 @@ describe("semantic action graph homepage", () => {
             verdict: "block",
             certainty: "observed",
             confidence: 0.98,
-            path_node_ids: ["action-read", "data-secret", "action-send", "sink-email"],
-            path_edge_ids: ["returns", "uses", "targets"],
+            path_node_ids: ["action-read", "data-prompt", "data-secret", "action-send", "sink-email"],
+            path_edge_ids: ["returns", "derives", "uses", "targets"],
             nodes: [
               { id: "intent", kind: "intent", label: "user_task", sequence: 1 },
               { id: "capability", kind: "capability", label: "send:email", authorized: false, sequence: 2 },
               { id: "action-read", kind: "action", tool: "read_webpage", sequence: 3 },
-              { id: "data-secret", kind: "data", path: "response.body", confidentiality: "secret", integrity: "tainted", sequence: 4 },
-              { id: "action-send", kind: "action", tool: "send_email", status: "blocked", sequence: 5 },
-              { id: "sink-email", kind: "sink", sink: "attacker.example", effect: "external", sequence: 6 },
+              { id: "data-prompt", kind: "data", path: "response.body.hidden_prompt", confidentiality: "public", integrity: "tainted", sequence: 4 },
+              { id: "data-secret", kind: "data", path: "response.body", confidentiality: "secret", integrity: "tainted", sequence: 5 },
+              { id: "action-send", kind: "action", tool: "send_email", status: "blocked", sequence: 6 },
+              { id: "sink-email", kind: "sink", sink: "attacker.example", effect: "external", sequence: 7 },
               { id: "support-agent", kind: "agent", label: "background planning", sequence: 2 },
             ],
             edges: [
               { id: "support", from: "intent", to: "support-agent", kind: "requests" },
               { id: "auth", from: "capability", to: "action-send", kind: "constrains" },
-              { id: "returns", from: "action-read", to: "data-secret", kind: "produces", on_path: true, confidence: 1 },
+              { id: "returns", from: "action-read", to: "data-prompt", kind: "produces", on_path: true, confidence: 1 },
+              { id: "derives", from: "data-prompt", to: "data-secret", kind: "derives", on_path: true, confidence: 0.98 },
               { id: "uses", from: "data-secret", to: "action-send", kind: "consumes", arg_path: "$.args.body", on_path: true, confidence: 0.98 },
               { id: "targets", from: "action-send", to: "sink-email", kind: "targets", on_path: true, confidence: 1 },
             ],
           },
         }],
       },
-      records: [{
-        id: "decision-1",
-        session_key: "agent:demo:exfiltration",
-        created_at: "2026-08-07T08:21:06.000Z",
-        type: "tool_decision",
-        severity: "danger",
-        payload: { decision: "deny", toolName: "send_email" },
-      }],
+      records: [
+        {
+          id: "web-result",
+          session_key: "agent:demo:exfiltration",
+          created_at: "2026-08-07T08:21:04.000Z",
+          type: "tool_result",
+          severity: "warning",
+          payload: { toolName: "read_webpage", preview: "Ignore previous instructions" },
+        },
+        {
+          id: "decision-1",
+          session_key: "agent:demo:exfiltration",
+          created_at: "2026-08-07T08:21:06.000Z",
+          type: "tool_decision",
+          severity: "danger",
+          payload: { decision: "deny", toolName: "send_email" },
+        },
+      ],
     });
 
     const session = model.sessions[0];
@@ -67,7 +80,7 @@ describe("semantic action graph homepage", () => {
       expect.objectContaining({ label: "使用数据", onPath: true }),
       expect.objectContaining({ label: "策略阻断", displayOnly: true }),
     ]));
-    expect(causalPathTitles(session.graph).at(-1)).toBe("拒绝");
+    expect(causalPathTitles(session.graph).at(-1)).toBe("阻断");
     expect(session.reasons.map((reason: { title: string }) => reason.title)).toEqual(expect.arrayContaining([
       "能力未获授权", "参数包含污染数据", "检测到敏感信息",
     ]));
@@ -90,6 +103,10 @@ describe("semantic action graph homepage", () => {
     ]));
     expect(edgeEvidence.policies).toContain("TAINT_TO_EXTERNAL_SINK");
     expect(session.timeline[0]).toEqual(expect.objectContaining({ nodeId: expect.any(String), revealSequence: expect.any(Number) }));
+    expect(session.timeline.find((event: { id: string }) => event.id === "web-result")).toMatchObject({
+      nodeId: "data-prompt",
+      stage: "Prompt 注入",
+    });
 
     const conclusion = buildIncidentConclusion(session);
     expect(conclusion).toMatchObject({
@@ -190,11 +207,11 @@ describe("semantic action graph homepage", () => {
   });
 
   it("makes the incident context, causal graph, evidence inspector and replay rail the homepage structure", () => {
-    for (const id of ["incidentConclusion", "requestContext", "graphViewport", "graphNodes", "inspectorBody", "outcomeActions", "timelineRange", "pathFocusBtn"]) {
+    for (const id of ["incidentConclusion", "requestContext", "graphViewport", "graphNodes", "inspectorBody", "outcomeActions", "timelineRange", "pathFocusBtn", "resetGraphBtn"]) {
       expect(indexSource).toContain(`id="${id}"`);
     }
     expect(indexSource).toContain("核心结论");
-    expect(indexSource).toContain("攻击因果图 / 语义行动图");
+    expect(indexSource).toContain("攻击事件路径");
     expect(indexSource).toContain("请求上下文");
     expect(indexSource).toContain("证据详情");
     expect(indexSource).toContain("事件处理结果");
@@ -209,6 +226,11 @@ describe("semantic action graph homepage", () => {
     expect(indexSource).toContain("智能体行为安全裁决系统");
     expect(appSource).toContain("这里发生了什么");
     expect(appSource).toContain("现场信息");
+    expect(appSource).toContain("dashboardDataSignature");
+    expect(appSource).toContain("if (shouldRender)");
+    expect(appSource).toContain("semanticGraph.resetLayout()");
+    expect(stylesSource).toContain("#severityBadge {");
+    expect(stylesSource).not.toContain(".severity-badge:not(#summarySeverity)");
     expect(indexSource).not.toContain("v1.2.0");
   });
 
@@ -222,5 +244,7 @@ describe("semantic action graph homepage", () => {
     expect(graphSource).toContain('labelHit.addEventListener("pointerdown", reserveEdgePointer)');
     expect(graphSource).toContain("placeEdgeLabel(geometry");
     expect(graphSource).toContain("|| this.nodeDrag");
+    expect(graphSource).toContain("resetLayout()");
+    expect(graphSource).toContain("window.localStorage.removeItem(manualLayoutStorageKey(key))");
   });
 });

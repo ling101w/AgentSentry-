@@ -251,6 +251,47 @@ html[data-theme="graphite"] .theme-toggle {
   color: var(--blue);
 }
 
+html[data-theme="graphite"] .workspace-drawer,
+html[data-theme="graphite"] .workspace-dialog,
+html[data-theme="graphite"] .drawer-section,
+html[data-theme="graphite"] .verdict-card,
+html[data-theme="graphite"] .policy-rule-chip {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+html[data-theme="graphite"] .verdict-card.verdict-deny { border-left-color: var(--verdict-deny); }
+html[data-theme="graphite"] .verdict-card.verdict-review { border-left-color: var(--verdict-review); }
+html[data-theme="graphite"] .verdict-card.verdict-allow { border-left-color: var(--verdict-allow); }
+
+html[data-theme="graphite"] .capability-overview {
+  background: var(--line-soft);
+}
+
+html[data-theme="graphite"] .capability-overview > div {
+  background: var(--panel);
+}
+
+html[data-theme="graphite"] .trust-score i {
+  background: linear-gradient(to right, #7e8192 0 var(--trust), #333645 var(--trust) 100%);
+}
+
+html[data-theme="graphite"] .mode-option.selected {
+  border-color: #7c88ce;
+  background: rgba(91, 102, 170, 0.24);
+}
+
+html[data-theme="graphite"] .investigation-queue .alert-row,
+html[data-theme="graphite"] .capability-groups section {
+  background: transparent;
+}
+
+html[data-theme="graphite"] .policy-rule-chip strong,
+html[data-theme="graphite"] .verdict-copy > strong,
+html[data-theme="graphite"] .alert-story strong {
+  color: var(--text-soft);
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-theme="graphite"] * {
     transition-duration: 0.01ms !important;
