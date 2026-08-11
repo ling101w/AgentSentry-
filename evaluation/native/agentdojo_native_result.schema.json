@@ -680,6 +680,7 @@
       "additionalProperties": false,
       "properties": {
         "setup": { "$ref": "#/$defs/nonNegativeInteger" },
+        "provider": { "$ref": "#/$defs/nonNegativeInteger" },
         "agent": { "$ref": "#/$defs/nonNegativeInteger" },
         "detector": { "$ref": "#/$defs/nonNegativeInteger" },
         "benchmark": { "$ref": "#/$defs/nonNegativeInteger" },

@@ -7,11 +7,11 @@
   "visibility": "public_aggregate",
   "status": "complete",
   "run": {
-    "run_id": "agentdojo-native-20260809T053343Z-f1f33bf0",
-    "release_commit": "a6ee0314025f464809249494b48a33d2c03bd47a",
+    "run_id": "agentdojo-native-20260809T090245Z-9ca2466a",
+    "release_commit": "69123e8ebad741a1d2dc6f359468923a03ffd574",
     "working_tree_dirty": false,
-    "started_at": "2026-08-09T05:33:43.793195+00:00",
-    "finished_at": "2026-08-09T06:19:34.059283+00:00"
+    "started_at": "2026-08-09T09:02:45.960921+00:00",
+    "finished_at": "2026-08-09T09:33:25.170853+00:00"
   },
   "benchmark": {
     "name": "AgentDojo",
@@ -28,19 +28,19 @@
   },
   "system_under_test": {
     "plugin_version": "0.2.0",
-    "profile": "competition",
-    "model": "deepseek/deepseek-v4-pro",
-    "config_sha256": "ca5a96593a8ea7af4171107a9a31f130e1310d0f524f195fd1f817dbca186743"
+    "profile": "observe-no-defense",
+    "model": "alibaba/qwen3.7-plus",
+    "config_sha256": "1c8d537050d414c1ded747cbc8cfc65b04c5d7969eb408a50ec67b6c759598c3"
   },
   "label_isolation": {
     "architecture": "separate_evaluator_and_detector_processes",
     "label_store_mounted_in_detector": false,
     "opaque_trial_ids": true,
     "detector_event_schema_sha256": "3fe94bfa6e0b7b360d825573fea1214ab2c87881f888bf6dc893e848d4bb4106",
-    "detector_transcript_sha256": "a5b09362d16089078ff904e818f0c8b8ffa5a4d522cdf464454cd755e32e0b9a",
-    "detector_event_count": 942,
-    "private_labels_sha256": "f51ac33d2d75f6b56c9594bb2cd9a2f8278780591494bf26301ada6c814353cb",
-    "post_join_sha256": "812e72075b8f6cb1272ea586c96f384c9989bf08f3ea7aa1d3022db55979c5df",
+    "detector_transcript_sha256": "d705c60522f80027cddc111b110fc5c69222145e105dd65a82f6b2d710a767b1",
+    "detector_event_count": 632,
+    "private_labels_sha256": "870f28b01eb9a5bdb99674e9b7b84c9e7ee7192e07fac7ccc8beb9ec21120e80",
+    "post_join_sha256": "29ee561d5c05fd51d3fd211d666f37c802502ed4487644283ebc240b5a59ac38",
     "violations": []
   },
   "coverage": {
@@ -71,12 +71,12 @@
     "utility": {
       "all": {
         "evaluated_trials": 120,
-        "score_sum": 108.0,
-        "mean_score": 0.9,
-        "completed_tasks": 108,
+        "score_sum": 115.0,
+        "mean_score": 0.958333,
+        "completed_tasks": 115,
         "task_completion_rate": {
-          "value": 0.9,
-          "numerator": 108,
+          "value": 0.958333,
+          "numerator": 115,
           "denominator": 120
         }
       },
@@ -93,22 +93,22 @@
       },
       "attack": {
         "evaluated_trials": 60,
-        "score_sum": 50.0,
-        "mean_score": 0.833333,
-        "completed_tasks": 50,
+        "score_sum": 57.0,
+        "mean_score": 0.95,
+        "completed_tasks": 57,
         "task_completion_rate": {
-          "value": 0.833333,
-          "numerator": 50,
+          "value": 0.95,
+          "numerator": 57,
           "denominator": 60
         }
       }
     },
     "latency_ms": {
       "samples": 120,
-      "mean": 22909.68,
-      "p50": 17614.83,
-      "p95": 48103.52,
-      "p99": 52747.8
+      "mean": 15319.0,
+      "p50": 13659.17,
+      "p95": 32461.05,
+      "p99": 37716.55
     },
     "cost": {
       "known_trials": 0,
@@ -130,9 +130,9 @@
       "by_kind": {}
     },
     "decision_counts": {
-      "allow": 72,
+      "allow": 120,
       "ask": 0,
-      "deny": 48
+      "deny": 0
     },
     "decisions": {
       "fpr": {
@@ -158,18 +158,18 @@
     },
     "judge": {
       "call_rate": {
-        "value": 0.166667,
-        "numerator": 20,
+        "value": 0.0,
+        "numerator": 0,
         "denominator": 120
       }
     },
     "stability": {
       "repeated_cases": 40,
-      "decision_stability": 0.958333
+      "decision_stability": 1.0
     }
   },
   "artifacts": {
-    "private_trials_sha256": "0e54ff1586f9b18df07d493d767b32d872faa704c5e85158dade64a72d74fa21",
-    "detector_transcript_sha256": "a5b09362d16089078ff904e818f0c8b8ffa5a4d522cdf464454cd755e32e0b9a"
+    "private_trials_sha256": "da7f2711eb748d1452176d48c284a7be7486c01f05e4db3b4b760880e273971d",
+    "detector_transcript_sha256": "d705c60522f80027cddc111b110fc5c69222145e105dd65a82f6b2d710a767b1"
   }
 }

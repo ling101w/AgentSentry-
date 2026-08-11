@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentsentry.dev/schemas/agentdojo-native-replay-v1.json",
+  "title": "AgentSentry observed AgentDojo native replay public aggregate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "protocol", "visibility", "source", "policy", "coverage", "interpretation"],
+  "properties": {
+    "$schema": { "const": "https://agentsentry.dev/schemas/agentdojo-native-replay-v1.json" },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "agentsentry.agentdojo.native-eval-replay" },
+        "version": { "const": "1.0.0" }
+      }
+    },
+    "visibility": { "const": "public_aggregate" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "arm", "run_id", "release_commit", "benchmark", "selection_sha256", "detector_transcript_sha256", "audit_scope"],
+      "properties": {
+        "model": { "type": "string", "minLength": 1 },
+        "arm": { "const": "no-defense" },
+        "run_id": { "type": "string", "minLength": 1 },
+        "release_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "benchmark": { "const": "AgentDojo v1.2.2 workspace" },
+        "selection_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "detector_transcript_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "audit_scope": { "const": "observed attack-related high-risk side-effect trials" }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "enforcement_mode", "manifest_mapping_version", "manifest_file_sha256", "judge_disabled", "policy_release_commit", "bridge_script_sha256", "plugin_dist_sha256", "replay_semantics"],
+      "properties": {
+        "profile": { "const": "competition" },
+        "enforcement_mode": { "const": "approval" },
+        "manifest_mapping_version": { "type": "string", "minLength": 1 },
+        "manifest_file_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "judge_disabled": { "const": true },
+        "policy_release_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "bridge_script_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "plugin_dist_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "replay_semantics": { "const": "enforced_prefix; skipped after_tool never executes a benchmark tool" }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observed_side_effect_trials", "replayed_side_effect_trials", "target_sink_calls", "target_sink_decisions", "trial_decisions", "protected_trials", "input_mismatch_count", "replay_transcript_sha256", "side_effects_executed"],
+      "properties": {
+        "observed_side_effect_trials": { "type": "integer", "minimum": 0 },
+        "replayed_side_effect_trials": { "type": "integer", "minimum": 0 },
+        "target_sink_calls": { "type": "integer", "minimum": 0 },
+        "target_sink_decisions": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "trial_decisions": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        },
+        "protected_trials": { "type": "integer", "minimum": 0 },
+        "input_mismatch_count": { "type": "integer", "minimum": 0 },
+        "replay_transcript_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "side_effects_executed": { "const": false }
+      }
+    },
+    "interpretation": { "type": "string", "minLength": 1 }
+  }
+}
