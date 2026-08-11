@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentsentry.dev/schemas/agentdojo-native-expanded-selection-v1.json",
+  "title": "AgentSentry AgentDojo native-expanded-v1 selection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "selection_version", "benchmark", "attack", "seed_scope", "seeds", "benign_task_ids", "attack_pairs", "sampling", "coverage", "expected"],
+  "properties": {
+    "$schema": { "const": "https://agentsentry.dev/schemas/agentdojo-native-expanded-selection-v1.json" },
+    "selection_version": { "const": "1.1.0" },
+    "benchmark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "package_version", "benchmark_version", "source_commit", "suite"],
+      "properties": {
+        "name": { "const": "AgentDojo" },
+        "package_version": { "const": "0.1.35" },
+        "benchmark_version": { "const": "v1.2.2" },
+        "source_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "suite": { "const": "workspace" }
+      }
+    },
+    "attack": { "const": "tool_knowledge" },
+    "seed_scope": { "type": "string", "minLength": 1 },
+    "seeds": { "const": [7] },
+    "benign_task_ids": { "type": "array", "const": ["user_task_0", "user_task_1", "user_task_2", "user_task_3", "user_task_4", "user_task_5", "user_task_6", "user_task_7", "user_task_8", "user_task_9", "user_task_10", "user_task_11", "user_task_12", "user_task_13", "user_task_14", "user_task_15", "user_task_16", "user_task_17", "user_task_18", "user_task_19", "user_task_20", "user_task_21", "user_task_22", "user_task_23", "user_task_24", "user_task_25", "user_task_26", "user_task_27", "user_task_28", "user_task_29", "user_task_30", "user_task_31", "user_task_32", "user_task_33", "user_task_34", "user_task_35", "user_task_36", "user_task_37", "user_task_38", "user_task_39"] },
+    "attack_pairs": {
+      "type": "array",
+      "minItems": 100,
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["user_task_id", "injection_task_id"],
+        "properties": {
+          "user_task_id": { "type": "string", "pattern": "^user_task_[0-9]+$" },
+          "injection_task_id": { "type": "string", "pattern": "^injection_task_[0-9]+$" }
+        }
+      }
+    },
+    "sampling": {
+      "const": {
+        "mode": "one_generation_per_unique_case",
+        "repeats": 1,
+        "harness_seed": 7,
+        "provider_generation_seed": "not_exposed_by_agentdojo_0.1.35"
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": ["selection_algorithm", "unique_benign_cases", "unique_attack_cases", "observable_injection_vector_counts", "injection_task_counts", "attack_user_task_counts", "sink_family_case_counts", "sink_family_counting", "injection_sink_families", "static_ground_truth_tool_sequences"],
+      "properties": {
+        "selection_algorithm": { "type": "string", "minLength": 1 },
+        "unique_benign_cases": { "const": 40 },
+        "unique_attack_cases": { "const": 100 },
+        "observable_injection_vector_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "injection_task_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "attack_user_task_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "sink_family_case_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } },
+        "sink_family_counting": { "const": "multi_label; one attack case may contribute to multiple sink families" },
+        "injection_sink_families": { "type": "object", "additionalProperties": { "type": "array", "minItems": 1, "items": { "type": "string" } } },
+        "static_ground_truth_tool_sequences": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } } }
+      },
+      "additionalProperties": false
+    },
+    "expected": {
+      "const": { "benign_cases": 40, "attack_cases": 100, "unique_cases": 140, "trials": 140 }
+    }
+  }
+}

@@ -188,7 +188,7 @@ def load_selection(path: Path) -> dict[str, Any]:
         raise NativeSetupError(f"selection file not found: {path}") from exc
     except json.JSONDecodeError as exc:
         raise NativeSetupError(f"selection file is invalid JSON: {exc}") from exc
-    expected_keys = {
+    base_keys = {
         "$schema",
         "selection_version",
         "benchmark",
@@ -199,8 +199,14 @@ def load_selection(path: Path) -> dict[str, Any]:
         "attack_pairs",
         "expected",
     }
-    if not isinstance(payload, dict) or set(payload) != expected_keys:
-        raise NativeSetupError("selection must use the exact native selection v1 fields")
+    if not isinstance(payload, dict):
+        raise NativeSetupError("selection must be a JSON object")
+    selection_version = str(payload.get("selection_version"))
+    expanded = selection_version == "1.1.0"
+    expected_keys = base_keys | ({"sampling", "coverage"} if expanded else set())
+    if set(payload) != expected_keys:
+        version_name = "native-expanded selection v1.1" if expanded else "native selection v1"
+        raise NativeSetupError(f"selection must use the exact {version_name} fields")
     benchmark = payload.get("benchmark")
     if not isinstance(benchmark, dict) or set(benchmark) != {
         "name", "package_version", "benchmark_version", "source_commit", "suite"
@@ -211,16 +217,25 @@ def load_selection(path: Path) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9a-f]{40}", str(benchmark["source_commit"])):
         raise NativeSetupError("selection source_commit must be a full Git SHA-1")
     seeds = payload.get("seeds")
-    if not isinstance(seeds, list) or len(seeds) != 3 or any(type(seed) is not int or seed < 0 for seed in seeds):
-        raise NativeSetupError("selection must contain exactly three non-negative integer seeds")
+    expected_seed_count = 1 if expanded else 3
+    if not isinstance(seeds, list) or len(seeds) != expected_seed_count or any(type(seed) is not int or seed < 0 for seed in seeds):
+        raise NativeSetupError(
+            "expanded selection must contain one harness seed" if expanded
+            else "selection must contain exactly three non-negative integer seeds"
+        )
     if len(set(seeds)) != len(seeds):
         raise NativeSetupError("selection seeds must be unique")
     benign = payload.get("benign_task_ids")
     pairs = payload.get("attack_pairs")
-    if not isinstance(benign, list) or len(benign) != 20 or len(set(benign)) != len(benign):
+    if not isinstance(benign, list) or not benign or len(set(benign)) != len(benign):
+        raise NativeSetupError("selection must contain unique benign task ids")
+    if not expanded and len(benign) != 20:
         raise NativeSetupError("selection must contain 20 unique benign task ids")
-    if not isinstance(pairs, list) or len(pairs) != 20:
-        raise NativeSetupError("selection must contain 20 attack pairs, not a task cross product")
+    if not isinstance(pairs, list) or not pairs or (not expanded and len(pairs) != 20):
+        raise NativeSetupError(
+            "selection must contain 20 attack pairs, not a task cross product"
+            if not expanded else "expanded selection must contain unique attack pairs"
+        )
     pair_keys: set[tuple[str, str]] = set()
     for pair in pairs:
         if not isinstance(pair, dict) or set(pair) != {"user_task_id", "injection_task_id"}:
@@ -230,8 +245,25 @@ def load_selection(path: Path) -> dict[str, Any]:
             raise NativeSetupError(f"duplicate attack pair: {key}")
         pair_keys.add(key)
     expected = payload.get("expected")
-    if expected != {"benign_cases": 20, "attack_cases": 20, "unique_cases": 40, "trials": 120}:
-        raise NativeSetupError("selection expected counts must be 20 benign + 20 attack pairs x 3 seeds")
+    expected_counts = {
+        "benign_cases": len(benign),
+        "attack_cases": len(pairs),
+        "unique_cases": len(benign) + len(pairs),
+        "trials": (len(benign) + len(pairs)) * len(seeds),
+    }
+    if expected != expected_counts:
+        raise NativeSetupError(f"selection expected counts must equal {expected_counts}")
+    if expanded:
+        sampling = payload.get("sampling")
+        if not isinstance(sampling, dict) or sampling != {
+            "mode": "one_generation_per_unique_case",
+            "repeats": 1,
+            "harness_seed": seeds[0],
+            "provider_generation_seed": "not_exposed_by_agentdojo_0.1.35",
+        }:
+            raise NativeSetupError("expanded selection sampling must declare one generation per case")
+        if not isinstance(payload.get("coverage"), dict):
+            raise NativeSetupError("expanded selection coverage metadata is required")
     return payload
 
 
