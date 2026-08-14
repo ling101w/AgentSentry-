@@ -8,8 +8,23 @@
     "properties": {
       "profile": {
         "type": "string",
-        "enum": ["observe", "balanced", "competition", "high-security"],
+        "enum": ["observe", "balanced", "competition", "evidence-gated", "high-security"],
         "description": "Named security posture. Explicit nested settings may refine the selected profile."
+      },
+      "intervention": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["risk-based", "evidence-gated"],
+            "description": "risk-based applies normal risk thresholds; evidence-gated intervenes only when attack-specific evidence is present."
+          },
+          "preserveSafetyBoundaries": {
+            "type": "boolean",
+            "description": "Keep non-negotiable safety invariant denials active in evidence-gated mode."
+          }
+        }
       },
       "dashboard": {
         "type": "object",
@@ -142,7 +157,7 @@
           },
           "timeoutMs": {
             "type": "number",
-            "description": "Semantic judge budget in milliseconds; runtime clamps this to 500-2000 ms. Default: 1500."
+            "description": "Semantic judge budget in milliseconds; runtime clamps this to 500-90000 ms. Default: 1500."
           },
           "maxInputChars": {
             "type": "number",
@@ -298,7 +313,15 @@
   "uiHints": {
     "profile": {
       "label": "Security Profile",
-      "help": "Use competition for the judged demo and observe for telemetry-only deployments."
+      "help": "Use competition for the judged demo, evidence-gated for high-precision intervention, and observe for telemetry-only deployments."
+    },
+    "intervention.mode": {
+      "label": "Intervention Gate",
+      "help": "Evidence-gated mode asks or denies only when attack-specific evidence is present."
+    },
+    "intervention.preserveSafetyBoundaries": {
+      "label": "Preserve Safety Boundaries",
+      "help": "Keeps hard safety invariants enforced even without attack-specific evidence."
     },
     "dashboard.enabled": {
       "label": "Enable Dashboard",

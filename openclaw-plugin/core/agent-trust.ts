@@ -3,6 +3,7 @@ import type { AgentIdentityConfig, AgentIdentityLevel, PluginConfig } from "../c
 import { loadOrCreateStateSecret } from "./state-secret.ts";
 import type { DetectionFinding } from "./detect.ts";
 import type { AgentSentryAction } from "./policy.ts";
+import { interventionEvidence } from "./policy/intervention-gate.ts";
 import { analyzeTrustContent, finding, riskMax } from "./trust.ts";
 
 export type AgentIdentity = AgentIdentityConfig & {
@@ -138,12 +139,14 @@ export function agentCommunicationFindings(action: AgentSentryAction, config: Pl
     findings.push(finding("Agent Communication", "deterministic", "require_approval", "跨 Agent 消息包含未登记或缺失的身份，不能获得可信执行权限", 55, {
       from: publicIdentity(from),
       to: publicIdentity(to),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
   if (from.tenant !== to.tenant) {
     findings.push(finding("Agent Communication", "deterministic", "block", "跨租户 Agent 消息被隔离，禁止将上下文和能力跨租户传递", 100, {
       from: publicIdentity(from),
       to: publicIdentity(to),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
   if (config.multiAgentSecurity.requireSignedEnvelope) {
@@ -152,6 +155,7 @@ export function agentCommunicationFindings(action: AgentSentryAction, config: Pl
       findings.push(finding("Agent Communication", "deterministic", "require_approval", `跨 Agent 消息未通过传输完整性校验：${envelope.reason}`, 60, {
         from: publicIdentity(from),
         to: publicIdentity(to),
+        ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
       }));
     }
   }
@@ -164,6 +168,7 @@ export function agentCommunicationFindings(action: AgentSentryAction, config: Pl
       to: publicIdentity(to),
       risk_vector: analysis.risk_vector,
       tags: analysis.tags,
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   } else if (tainted && crossesTrustBoundary) {
     findings.push(finding("Agent Communication", "deterministic", risk >= 70 ? "block" : "require_approval", "低信任 Agent 消息不能提升为高信任 Agent 的工具授权", risk >= 70 ? 100 : 55, {
@@ -171,6 +176,7 @@ export function agentCommunicationFindings(action: AgentSentryAction, config: Pl
       to: publicIdentity(to),
       risk_vector: analysis.risk_vector,
       tags: analysis.tags,
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
   if (!from.mayDelegate && to.id !== from.id) {

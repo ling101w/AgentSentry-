@@ -158,6 +158,10 @@ const TARGET_SCOPE_MISMATCH_REASONS = new Set([
   "host_outside_authorization",
   "method_outside_authorization",
   "command_outside_authorization",
+  "calendar_operation_outside_authorization",
+  "participant_outside_authorization",
+  "cloud_file_operation_outside_authorization",
+  "cloud_file_outside_authorization",
   "capability_constraints_not_satisfied",
 ]);
 
@@ -748,7 +752,7 @@ function authorizationRiskFor(
 }
 
 function defaultSideEffectForTool(tool: string, effects: SemanticActionEffects): boolean {
-  if (["write_file", "send_email", "shell_exec", "memory_write"].includes(tool)) return true;
+  if (["write_file", "send_email", "shell_exec", "memory_write", "calendar_write", "cloud_file_write", "cloud_file_share"].includes(tool)) return true;
   return tool === "call_api" && (effects.external || effects.persistence || effects.execution);
 }
 
@@ -1389,7 +1393,8 @@ function keyForCapability(capability: TaskCapability): string {
 }
 
 function authoritativeCapability(capability: TaskCapability): boolean {
-  return capability.evidence.source === "user"
+  return (capability.evidence.source === "user"
+    || (capability.evidence.source === "delegated_tool_result" && capability.evidence.delegationVerified === true))
     && capability.evidence.explicitAuthorization
     && !capability.evidence.insideQuotation
     && !capability.evidence.negated

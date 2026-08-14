@@ -23,14 +23,28 @@ describe("security profile source files", () => {
   });
 
   it("loads every named posture from the source profile directory", () => {
-    const profiles: SecurityProfileName[] = ["observe", "balanced", "competition", "high-security"];
+    const profiles: SecurityProfileName[] = ["observe", "balanced", "competition", "evidence-gated", "high-security"];
 
     for (const profile of profiles) {
       const definition = loadSecurityProfileDefinition(profile);
       expect(definition.profile).toBe(profile);
       expect(definition.policy.deterministic).toBe(true);
       expect(definition.semantic.mode).toBe("risk-tiered");
+      expect(definition.intervention.preserveSafetyBoundaries).toBe(true);
     }
+    expect(loadSecurityProfileDefinition("evidence-gated").intervention.mode).toBe("evidence-gated");
+  });
+
+  it("publishes the evidence-gated profile and intervention settings in the plugin schema", () => {
+    const manifestUrl = new URL("../../openclaw.plugin.json", import.meta.url);
+    const manifest = JSON.parse(readFileSync(manifestUrl, "utf8")) as Record<string, any>;
+
+    expect(manifest.configSchema.properties.profile.enum).toContain("evidence-gated");
+    expect(manifest.configSchema.properties.intervention.properties.mode.enum).toEqual(["risk-based", "evidence-gated"]);
+    expect(manifest.configSchema.properties.intervention.properties.preserveSafetyBoundaries.type).toBe("boolean");
+    expect(manifest.configSchema.properties.semantic.properties.timeoutMs.description).toContain("500-90000");
+    expect(manifest.uiHints).toHaveProperty("intervention.mode");
+    expect(manifest.uiHints).toHaveProperty("intervention.preserveSafetyBoundaries");
   });
 
   it("applies profile defaults before explicit nested user configuration", () => {
@@ -72,6 +86,8 @@ describe("security profile source files", () => {
     ["wrong field type", (profile: Record<string, any>) => { profile.semantic.enabled = "true"; }, /semantic\.enabled must be a boolean/i],
     ["unknown field", (profile: Record<string, any>) => { profile.policy.typo = true; }, /policy contains unknown field\(s\): typo/i],
     ["missing field", (profile: Record<string, any>) => { delete profile.runtimeIsolation.auditAfterExecution; }, /runtimeIsolation is missing required field\(s\): auditAfterExecution/i],
+    ["invalid intervention mode", (profile: Record<string, any>) => { profile.intervention.mode = "threshold-only"; }, /intervention\.mode must be one of: risk-based, evidence-gated/i],
+    ["missing intervention boundary flag", (profile: Record<string, any>) => { delete profile.intervention.preserveSafetyBoundaries; }, /intervention is missing required field\(s\): preserveSafetyBoundaries/i],
     ["profile name mismatch", (profile: Record<string, any>) => { profile.profile = "balanced"; }, /profile\.profile must be "competition"/i],
   ])("rejects a structurally invalid definition: %s", (_label, mutate, expectedError) => {
     const directory = createProfileDirectory();

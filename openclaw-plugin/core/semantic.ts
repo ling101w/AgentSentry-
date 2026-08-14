@@ -1,4 +1,8 @@
-import type { PluginConfig } from "../config.ts";
+import {
+  MAX_SEMANTIC_JUDGE_TIMEOUT_MS,
+  MIN_SEMANTIC_JUDGE_TIMEOUT_MS,
+  type PluginConfig,
+} from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
 import type { PolicyState } from "./policy.ts";
@@ -10,6 +14,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { AgentSentryAction, PolicyDecision, TaskSpec } from "./policy.ts";
 import { resolveToolManifest } from "./tool-manifest.ts";
+import { interventionEvidence, type AttackClass } from "./policy/intervention-gate.ts";
 
 export type SemanticJudgeGate = {
   shouldJudge: boolean;
@@ -156,6 +161,7 @@ async function judgeAmbiguousAction(input: {
       semanticCacheKey: cacheKey,
       semanticCacheHit: false,
       deterministicDisposition: input.preliminary.deterministic_disposition,
+      ...semanticInterventionEvidence(judged, resolution),
     },
   }];
 }
@@ -393,7 +399,8 @@ export function semanticGateForToolCall(
     reasons.push("task-bound third-party data operation needs purpose consistency review");
   }
   if (manifest?.dataOrigins.some((origin) => origin === "external_web" || origin === "email" || origin === "third_party_api")
-    && manifest.sideEffects.some((effect) => effect === "network_write" || effect === "process_exec" || effect === "persistent_state")) {
+    && manifest.sideEffects.some((effect) => effect === "network_write" || effect === "process_exec" || effect === "persistent_state")
+    && (!url || externalUrl(url))) {
     reasons.push("external-origin tool combines intake with material side effects");
   }
 
@@ -478,7 +485,7 @@ export function semanticGateForTaskSpec(taskSpec: TaskSpec, config: PluginConfig
   const mode = taskSpec.task_mode || "unknown";
   const confidence = Number.isFinite(taskSpec.task_confidence) ? (taskSpec.task_confidence || 0) : 0;
   const sideEffectFamily = family === "write_task" || family === "delivery" || family === "memory" || family === "shell" || family === "mixed";
-  const sideEffectTools = taskSpec.allowed_tools.some((tool) => ["write_file", "send_email", "memory_write", "shell_exec"].includes(tool))
+  const sideEffectTools = taskSpec.allowed_tools.some((tool) => ["write_file", "send_email", "memory_write", "shell_exec", "calendar_write", "cloud_file_write", "cloud_file_share"].includes(tool))
     || taskSpec.capabilities.some((capability) => capability.resourceType === "api" && capability.effect !== "read_only");
 
   if (sideEffectFamily) reasons.push(`task family ${family} can change external state`);
@@ -791,12 +798,7 @@ export function buildJudgeEnvelope(input: {
 async function callJudge(prompt: JudgeEnvelope, config: PluginConfig): Promise<JudgeResult | null> {
   const apiKey = resolveSemanticApiKey(config.semantic.apiKeyEnv);
   if (!apiKey) return null;
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const result = await callJudgeOnce(prompt, config, apiKey);
-    if (result) return result;
-  }
-  return null;
+  return callJudgeOnce(prompt, config, apiKey);
 }
 
 async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey: string): Promise<JudgeResult | null> {
@@ -847,7 +849,7 @@ async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey
 }
 
 function semanticBudgetMs(config: PluginConfig): number {
-  return Math.min(10000, Math.max(500, config.semantic.timeoutMs));
+  return Math.min(MAX_SEMANTIC_JUDGE_TIMEOUT_MS, Math.max(MIN_SEMANTIC_JUDGE_TIMEOUT_MS, config.semantic.timeoutMs));
 }
 
 function markSemanticCacheHit(findings: DetectionFinding[], cacheKey: string): DetectionFinding[] {
@@ -1025,6 +1027,7 @@ function judgeToFinding(
     semanticRecommendedAction: judged.recommended_action,
     semanticEvidence: judged.evidence,
     semanticCategories: judged.categories,
+    ...semanticInterventionEvidence(judged, semanticDecision),
   };
   if (semanticDecision === "allow") {
     return [{
@@ -1047,4 +1050,48 @@ function judgeToFinding(
       evidence: semanticEvidence,
     },
   ];
+}
+
+function semanticInterventionEvidence(
+  judged: JudgeResult,
+  decision: "allow" | "ask" | "deny",
+): ReturnType<typeof interventionEvidence> {
+  const attackClass = semanticAttackClass(judged.categories || []);
+  const confidence = typeof judged.confidence === "number" ? judged.confidence : 0;
+  if (decision === "allow" || !attackClass || confidence < 0.8) {
+    return interventionEvidence("risk_only");
+  }
+  return interventionEvidence("attack_signal", {
+    attack_class: attackClass,
+    causal_certainty: "inferred",
+    confidence,
+  });
+}
+
+function semanticAttackClass(categories: string[]): AttackClass | null {
+  const normalized = new Set(categories.map((category) => category
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")));
+  if (["prompt_injection", "indirect_prompt_injection", "instruction_injection"].some((item) => normalized.has(item))) {
+    return "prompt_injection";
+  }
+  if (["exfiltration", "data_exfiltration", "credential_exfiltration"].some((item) => normalized.has(item))) {
+    return "exfiltration";
+  }
+  if (["tool_hijack", "tool_hijacking", "gateway_hijack"].some((item) => normalized.has(item))) {
+    return "tool_hijack";
+  }
+  if (["memory_poisoning", "memory_poison"].some((item) => normalized.has(item))) {
+    return "memory_poisoning";
+  }
+  if (["persistence_abuse", "malicious_persistence"].some((item) => normalized.has(item))) {
+    return "persistence_abuse";
+  }
+  if (["credential_access", "credential_theft"].some((item) => normalized.has(item))) {
+    return "credential_access";
+  }
+  return null;
 }

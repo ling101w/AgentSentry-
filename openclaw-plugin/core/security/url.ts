@@ -20,7 +20,7 @@ export function targetMatches(target: string, allowed: string): boolean {
 
 export function hostFromUrl(value: string): string {
   try {
-    return new URL(value).hostname.toLowerCase();
+    return normalizedUrl(value)?.hostname.toLowerCase() || "";
   } catch {
     return "";
   }
@@ -54,7 +54,9 @@ function parseTargetRule(value: string): { kind: "exact" | "prefix"; value: stri
 
 function normalizedUrl(value: string): URL | null {
   try {
-    const parsed = new URL(value.trim());
+    const text = value.trim();
+    const candidate = /^[a-z0-9.-]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(text) ? `https://${text}` : text;
+    const parsed = new URL(candidate);
     parsed.protocol = parsed.protocol.toLowerCase();
     parsed.hostname = parsed.hostname.toLowerCase();
     return parsed;

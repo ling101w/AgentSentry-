@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import type { DetectionFinding } from "./detect.ts";
+import { interventionEvidence } from "./policy/intervention-gate.ts";
 import { clampText, safeStringify } from "./redact.ts";
 
 export type TrustLevel = "trusted" | "user" | "workspace" | "external" | "tainted";
@@ -104,6 +105,9 @@ const HIDDEN_HTML_PATTERNS = [
 const PROMPT_INJECTION_PATTERNS = [
   /ignore\s+(all\s+)?(previous|prior|above|security|safety)\s+(instructions?|rules?|commands?|policies?)/i,
   /\b(system|developer|internal)\b.{0,56}\b(prompt|configuration|policy|instruction|message)\b/i,
+  /\b(?:important\s+)?(?:message|instructions?)\s+(?:from\s+[^\n]{1,80}\s+)?(?:to|for)\s+(?:you|the)\s*,?\s*(?:ai\s+)?(?:assistant|agent)\b/i,
+  /\bbefore\s+you\s+(?:can\s+)?(?:solve|complete|answer|continue).{0,160}\b(?:do|perform|execute|follow)\b.{0,40}\b(?:following|steps?|instructions?)\b.{0,24}\bfirst\b/i,
+  /\byou\s+should\s+(?:first\s+)?(?:use|call|invoke|run)\s+(?:the\s+)?(?:tool|function|command)\b/i,
   /(act\s+as|pretend\s+to\s+be).{0,32}(developer|system|jailbroken|unfiltered)/i,
   /(bypass|disable|override|circumvent|evade).{0,40}(policy|guardrail|safety|approval|monitor|audit)/i,
   /(send|show|list|provide|copy|exfiltrate|upload|post|attach|append|include|route|forward|mirror|sync|archive).{0,120}(api[_ -]?key|token|secret|password|credential|private\s*key|identity|session|environment|config|id_(?:rsa|ed25519|ecdsa|dsa)|openclaw\.json|\.env)/i,
@@ -293,6 +297,7 @@ export function analyzeTrustContent(
       trust_label: label,
       risk_vector: risk,
       preview: clampText(text, previewChars),
+      ...promptInjectionInterventionEvidence(source, 0.95),
     }));
   }
   if (matched.pdfStego.length) {
@@ -302,6 +307,7 @@ export function analyzeTrustContent(
       matched: matched.pdfStego.slice(0, 5),
       trust_label: label,
       risk_vector: risk,
+      ...promptInjectionInterventionEvidence(source, 0.95),
     }));
   }
   if (matched.imageMetadata.length) {
@@ -311,6 +317,7 @@ export function analyzeTrustContent(
       matched: matched.imageMetadata.slice(0, 5),
       trust_label: label,
       risk_vector: risk,
+      ...promptInjectionInterventionEvidence(source, 0.9),
     }));
   }
   if (matched.promptInjection.length && !findings.some((item) => item.layer === "Context Provenance")) {
@@ -320,6 +327,7 @@ export function analyzeTrustContent(
       trust_label: label,
       risk_vector: risk,
       preview: clampText(text, previewChars),
+      ...promptInjectionInterventionEvidence(source, 0.7),
     }));
   }
   if (matched.memoryPoison.length) {
@@ -329,6 +337,7 @@ export function analyzeTrustContent(
       matched: matched.memoryPoison.slice(0, 5),
       trust_label: label,
       risk_vector: risk,
+      ...sourceAttackInterventionEvidence(source, "memory_poisoning"),
     }));
   }
   if (matched.gatewayHijack.length) {
@@ -337,6 +346,7 @@ export function analyzeTrustContent(
       matched: matched.gatewayHijack.slice(0, 5),
       trust_label: label,
       risk_vector: risk,
+      ...sourceAttackInterventionEvidence(source, "tool_hijack"),
     }));
   }
   if (matched.skillExfil.length) {
@@ -346,6 +356,7 @@ export function analyzeTrustContent(
       matched: matched.skillExfil.slice(0, 5).map((item) => sanitizeEvidence(item)),
       trust_label: label,
       risk_vector: risk,
+      ...sourceAttackInterventionEvidence(source, "exfiltration"),
     }));
   }
   if (matched.sensitive.length) {
@@ -358,6 +369,42 @@ export function analyzeTrustContent(
   }
 
   return { label, risk_vector: risk, findings: dedupeFindings(findings), tags };
+}
+
+function promptInjectionInterventionEvidence(
+  source: TrustSource,
+  confidence: number,
+): ReturnType<typeof interventionEvidence> {
+  const externallyControlled = source === "external_web"
+    || source === "email_html"
+    || source === "pdf_text"
+    || source === "image_metadata"
+    || source === "webhook";
+  return externallyControlled
+    ? interventionEvidence("attack_signal", {
+      attack_class: "prompt_injection",
+      causal_certainty: "inferred",
+      confidence,
+    })
+    : interventionEvidence("risk_only");
+}
+
+function sourceAttackInterventionEvidence(
+  source: TrustSource,
+  attackClass: "exfiltration" | "tool_hijack" | "memory_poisoning",
+): ReturnType<typeof interventionEvidence> {
+  const externallyControlled = source === "external_web"
+    || source === "email_html"
+    || source === "pdf_text"
+    || source === "image_metadata"
+    || source === "webhook";
+  return externallyControlled
+    ? interventionEvidence("confirmed_attack", {
+      attack_class: attackClass,
+      causal_certainty: "observed",
+      confidence: 1,
+    })
+    : interventionEvidence("risk_only");
 }
 
 export function mergeRiskVectors(...vectors: Array<RiskVector | undefined | null>): RiskVector {

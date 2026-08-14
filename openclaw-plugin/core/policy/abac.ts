@@ -2,6 +2,7 @@ import type { DetectionFinding } from "../detect.ts";
 import { finding, taintBlockedForSink, taintProfileFromLabel, type RiskVector, type TaintSink, type TrustLabel } from "../trust.ts";
 import type { TaskSpec } from "../task-spec/index.ts";
 import type { ActionAssessment, PolicyActionInput } from "./action-assessment.ts";
+import { interventionEvidence, type AttackClass } from "./intervention-gate.ts";
 
 export type DataFlowTaintFlow = {
   label_id: string;
@@ -11,6 +12,7 @@ export type DataFlowTaintFlow = {
   confidence: number;
   reason: string;
   tags: string[];
+  confidentiality: "public" | "internal" | "secret";
 };
 
 export type DataFlowBranch = {
@@ -52,10 +54,43 @@ export function evaluateAbacDataFlow(input: AbacDecisionInput): AbacDecision {
       taint: blockedFlow,
       aggregate_risk: input.aggregateRisk,
       tainted_sources: input.taintedSources.slice(-8),
+      ...blockedFlowInterventionEvidence(blockedFlow),
     }));
   }
 
   return { findings, blockedFlow, isolatedBranchGate: false };
+}
+
+function blockedFlowInterventionEvidence(flow: DataFlowTaintFlow): ReturnType<typeof interventionEvidence> {
+  const attackClass = attackClassForTags(flow.tags);
+  if (attackClass) {
+    return interventionEvidence("confirmed_attack", {
+      attack_class: attackClass,
+      causal_certainty: "observed",
+      confidence: Math.max(0.5, Math.min(1, flow.confidence / 100)),
+    });
+  }
+  if (flow.confidentiality === "secret") {
+    return interventionEvidence("safety_boundary", { causal_certainty: "observed" });
+  }
+  return interventionEvidence("risk_only");
+}
+
+function attackClassForTags(tags: string[]): AttackClass | null {
+  if (tags.some((tag) => tag === "gateway_hijack" || tag === "skill_secret_exfiltration" || tag === "tool_hijack")) {
+    return "tool_hijack";
+  }
+  if (tags.some((tag) => tag === "persistence_instruction" || tag === "memory_poisoning")) {
+    return "persistence_abuse";
+  }
+  if (tags.some((tag) => tag === "prompt_injection"
+    || tag === "hidden_html"
+    || tag === "url_fragment_instruction"
+    || tag === "pdf_hidden_text"
+    || tag === "image_metadata_instruction")) {
+    return "prompt_injection";
+  }
+  return null;
 }
 
 function blockedTaintFlow(labels: TrustLabel[], sink: TaintSink): DataFlowTaintFlow | null {
@@ -72,5 +107,6 @@ function blockedTaintFlow(labels: TrustLabel[], sink: TaintSink): DataFlowTaintF
     confidence: selected.profile.confidence,
     reason: selected.profile.reasons.join("; ") || "taint profile blocks this sink",
     tags: selected.profile.tags,
+    confidentiality: selected.profile.confidentiality,
   };
 }

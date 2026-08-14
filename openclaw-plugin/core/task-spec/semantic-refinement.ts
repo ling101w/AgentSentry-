@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PluginConfig } from "../../config.ts";
+import {
+  MAX_SEMANTIC_JUDGE_TIMEOUT_MS,
+  type PluginConfig,
+} from "../../config.ts";
 import type { DetectionFinding } from "../detect.ts";
 import { clampText, safeStringify } from "../redact.ts";
 import { hostFromUrl } from "../policy/value-utils.ts";
@@ -24,6 +27,7 @@ type SemanticCapability = {
   allowedPaths?: string[];
   allowedHosts?: string[];
   allowedRecipients?: string[];
+  allowedOperations?: string[];
   confidence: number;
   evidenceSpan: string;
 };
@@ -52,6 +56,9 @@ const CANONICAL_TOOLS = [
   "memory_read",
   "memory_write",
   "shell_exec",
+  "calendar_write",
+  "cloud_file_write",
+  "cloud_file_share",
 ];
 
 const MAX_REFINEMENT_BODY_CHARS = 256 * 1024;
@@ -105,7 +112,7 @@ function shouldRefineTaskSpec(taskSpec: TaskSpec, config: PluginConfig): boolean
   if (confidence > 0 && confidence < 0.72) return true;
   if (family === "mixed" || family === "unknown") return true;
   if (family === "analysis" || family === "read_only") return false;
-  return taskSpec.allowed_tools.some((tool) => ["write_file", "send_email", "memory_write"].includes(tool));
+  return taskSpec.allowed_tools.some((tool) => ["write_file", "send_email", "memory_write", "calendar_write", "cloud_file_write", "cloud_file_share"].includes(tool));
 }
 
 async function callTaskSpecRefiner(taskSpec: TaskSpec, config: PluginConfig): Promise<SemanticTaskSpecRefinement | null> {
@@ -120,7 +127,7 @@ async function callTaskSpecRefiner(taskSpec: TaskSpec, config: PluginConfig): Pr
 
 async function callTaskSpecRefinerOnce(taskSpec: TaskSpec, config: PluginConfig, apiKey: string): Promise<SemanticTaskSpecRefinement | null> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.min(10000, Math.max(700, config.semantic.timeoutMs)));
+  const timeout = setTimeout(() => controller.abort(), Math.min(MAX_SEMANTIC_JUDGE_TIMEOUT_MS, Math.max(700, config.semantic.timeoutMs)));
   try {
     const response = await fetch(`${config.semantic.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
@@ -202,13 +209,14 @@ function refinementEnvelope(taskSpec: TaskSpec): Record<string, unknown> {
             required: ["action", "resourceType", "effect", "targets", "confidence", "evidenceSpan"],
             properties: {
               action: { enum: ["read", "write", "send", "execute", "request", "persist"] },
-              resourceType: { enum: ["file", "email", "api", "shell", "memory", "skill"] },
+              resourceType: { enum: ["file", "email", "api", "shell", "memory", "skill", "calendar", "cloud_file"] },
               effect: { enum: ["read_only", "external_side_effect", "persistent_change"] },
               targets: { type: "array", items: { type: "string" }, maxItems: 8 },
               allowedMethods: { type: "array", items: { type: "string" }, maxItems: 6 },
               allowedPaths: { type: "array", items: { type: "string" }, maxItems: 8 },
               allowedHosts: { type: "array", items: { type: "string" }, maxItems: 8 },
               allowedRecipients: { type: "array", items: { type: "string" }, maxItems: 8 },
+              allowedOperations: { type: "array", items: { type: "string" }, maxItems: 8 },
               confidence: { type: "number", minimum: 0, maximum: 1 },
               evidenceSpan: { type: "string" },
             },
@@ -258,7 +266,7 @@ function parseCapabilities(value: unknown): SemanticCapability[] {
     const obj = item as Record<string, unknown>;
     const confidence = number01(obj.confidence);
     const action = enumValue(obj.action, ["read", "write", "send", "execute", "request", "persist"]);
-    const resourceType = enumValue(obj.resourceType, ["file", "email", "api", "shell", "memory", "skill"]);
+    const resourceType = enumValue(obj.resourceType, ["file", "email", "api", "shell", "memory", "skill", "calendar", "cloud_file"]);
     const effect = enumValue(obj.effect, ["read_only", "external_side_effect", "persistent_change"]);
     const evidenceSpan = typeof obj.evidenceSpan === "string" ? clampText(obj.evidenceSpan, 320) : "";
     const targets = parseStringArray(obj.targets, 8).map((target) => clampText(target, 240));
@@ -272,6 +280,7 @@ function parseCapabilities(value: unknown): SemanticCapability[] {
       allowedPaths: parseStringArray(obj.allowedPaths, 8),
       allowedHosts: parseStringArray(obj.allowedHosts, 8).map((host) => host.toLowerCase()),
       allowedRecipients: parseStringArray(obj.allowedRecipients, 8).map((recipient) => recipient.toLowerCase()),
+      allowedOperations: parseStringArray(obj.allowedOperations, 8).map((operation) => operation.toLowerCase()),
       confidence,
       evidenceSpan,
     });
@@ -303,6 +312,7 @@ function applyRefinement(
         allowedPaths: candidate.allowedPaths?.length ? unique(candidate.allowedPaths) : undefined,
         allowedHosts: candidate.allowedHosts?.length ? unique(candidate.allowedHosts) : undefined,
         allowedRecipients: candidate.allowedRecipients?.length ? unique(candidate.allowedRecipients) : undefined,
+        allowedOperations: candidate.allowedOperations?.length ? unique(candidate.allowedOperations) : undefined,
       },
       evidence: {
         sourceMessageHash: hash,
@@ -387,6 +397,9 @@ function capabilityTools(capability: TaskCapability): string[] {
   if (capability.resourceType === "api") return capability.action === "read" ? ["read_webpage", "call_api"] : ["call_api"];
   if (capability.resourceType === "memory") return capability.action === "read" ? ["memory_read"] : ["memory_write"];
   if (capability.resourceType === "shell") return ["shell_exec"];
+  if (capability.resourceType === "calendar" && capability.action === "write") return ["calendar_write"];
+  if (capability.resourceType === "cloud_file" && capability.action === "write") return ["cloud_file_write"];
+  if (capability.resourceType === "cloud_file" && capability.action === "send") return ["cloud_file_share"];
   return [];
 }
 
@@ -404,6 +417,7 @@ function mergeCapabilities(capabilities: TaskCapability[]): TaskCapability[] {
     current.constraints.allowedPaths = mergeOptional(current.constraints.allowedPaths, capability.constraints.allowedPaths);
     current.constraints.allowedHosts = mergeOptional(current.constraints.allowedHosts, capability.constraints.allowedHosts);
     current.constraints.allowedRecipients = mergeOptional(current.constraints.allowedRecipients, capability.constraints.allowedRecipients);
+    current.constraints.allowedOperations = mergeOptional(current.constraints.allowedOperations, capability.constraints.allowedOperations);
     current.evidence.confidence = Math.max(current.evidence.confidence, capability.evidence.confidence);
   }
   return [...merged.values()];
