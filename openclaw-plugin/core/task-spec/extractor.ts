@@ -17,6 +17,9 @@ const CANONICAL_TOOLS = [
   "memory_read",
   "memory_write",
   "shell_exec",
+  "calendar_write",
+  "cloud_file_write",
+  "cloud_file_share",
 ];
 
 const ACTION_DENIALS: Array<[string, RegExp]> = [
@@ -37,6 +40,7 @@ type Candidate = {
   allowedPaths?: string[];
   allowedHosts?: string[];
   allowedRecipients?: string[];
+  allowedOperations?: string[];
   confidence: number;
 };
 
@@ -48,6 +52,7 @@ export function deriveTaskSpecV2(
   const normalized = normalizeTaskText(task);
   const hash = createHash("sha256").update(normalized, "utf8").digest("hex");
   const capabilities: TaskCapability[] = [];
+  const delegations = source === "user" ? extractDelegations(normalized) : [];
 
   for (const clause of splitClauses(normalized)) {
     if (!clause.text.trim() || clause.dataOnly) continue;
@@ -102,6 +107,7 @@ export function deriveTaskSpecV2(
     output_policy: effectiveAllowed.includes("send_email")
       ? "External delivery is limited to explicitly authorized recipients and payloads."
       : "Only answer the user; do not create unrequested external side effects.",
+    delegations: delegations.length ? delegations : undefined,
   };
 }
 
@@ -116,7 +122,11 @@ export function stripNonAuthoritativeText(text: string): string {
 }
 
 function candidatesForClause(clause: string): Candidate[] {
-  const candidates: Candidate[] = templateCandidatesForClause(clause);
+  const candidates: Candidate[] = [
+    ...templateCandidatesForClause(clause),
+    ...calendarCandidatesForClause(clause),
+    ...githubCandidatesForClause(clause),
+  ];
   const recipients = extractEmails(clause);
   const paths = extractPaths(clause);
   const urls = extractUrls(clause);
@@ -228,7 +238,7 @@ function explicitRead(text: string): boolean {
 }
 
 function explicitNetworkRead(text: string): boolean {
-  return /\b(?:visit|open|fetch|read|inspect|review|summarize|check)\b/i.test(text)
+  return /\b(?:visit|open|fetch|read|inspect|review|summarize|check|download)\b/i.test(text)
     || /(?:访问|打开|读取|查看|检查|总结).{0,80}(?:网页|网站|页面|链接|https?:|mock:)/i.test(text);
 }
 
@@ -338,7 +348,12 @@ function extractEmails(text: string): string[] {
 }
 
 function extractUrls(text: string): string[] {
-  return unique((text.match(/\b(?:https?:\/\/|mock:\/\/)[^\s，。；;）)\]}>"']+/gi) || []).map(cleanTarget));
+  const explicit = (text.match(/\b(?:https?:\/\/|mock:\/\/)[^\s，。；;）)\]}>"']+/gi) || []).map(cleanTarget);
+  const bareDomains = (text.match(/\b(?:www\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}(?:\/[a-z0-9._~:/?#[\]@!$&'()*+,;=%-]*)?/gi) || [])
+    .map(cleanTarget)
+    .filter((target) => !explicit.some((url) => url.toLowerCase().includes(target.toLowerCase())))
+    .map((target) => `prefix:https://${target}`);
+  return unique([...explicit, ...bareDomains]);
 }
 
 function extractPaths(text: string): string[] {
@@ -375,6 +390,7 @@ function mergeCapabilities(capabilities: TaskCapability[]): TaskCapability[] {
     current.constraints.allowedPaths = mergeOptional(current.constraints.allowedPaths, capability.constraints.allowedPaths);
     current.constraints.allowedHosts = mergeOptional(current.constraints.allowedHosts, capability.constraints.allowedHosts);
     current.constraints.allowedRecipients = mergeOptional(current.constraints.allowedRecipients, capability.constraints.allowedRecipients);
+    current.constraints.allowedOperations = mergeOptional(current.constraints.allowedOperations, capability.constraints.allowedOperations);
     current.evidence.confidence = Math.max(current.evidence.confidence, capability.evidence.confidence);
     current.evidence.explicitSpan = `${current.evidence.explicitSpan}; ${capability.evidence.explicitSpan}`.slice(0, 320);
   }
@@ -387,6 +403,7 @@ function compactConstraints(candidate: Candidate): TaskCapability["constraints"]
   if (candidate.allowedPaths?.length) output.allowedPaths = unique(candidate.allowedPaths);
   if (candidate.allowedHosts?.length) output.allowedHosts = unique(candidate.allowedHosts.map((item) => item.toLowerCase()));
   if (candidate.allowedRecipients?.length) output.allowedRecipients = unique(candidate.allowedRecipients.map((item) => item.toLowerCase()));
+  if (candidate.allowedOperations?.length) output.allowedOperations = unique(candidate.allowedOperations.map((item) => item.toLowerCase()));
   return output;
 }
 
@@ -399,7 +416,71 @@ function capabilityTools(capability: TaskCapability): string[] {
   if (capability.resourceType === "shell" && capability.action === "execute") return ["shell_exec"];
   if (capability.resourceType === "memory" && capability.action === "persist") return ["memory_read", "memory_write"];
   if (capability.resourceType === "memory" && capability.action === "read") return ["memory_read"];
+  if (capability.resourceType === "calendar" && capability.action === "write") return ["calendar_write"];
+  if (capability.resourceType === "cloud_file" && capability.action === "write") return ["cloud_file_write"];
+  if (capability.resourceType === "cloud_file" && capability.action === "send") return ["cloud_file_share"];
   return [];
+}
+
+function githubCandidatesForClause(clause: string): Candidate[] {
+  if (!/(?:github|repository|repo|collaborator|ssh key|ssh|star|issue|repository|仓库|协作者|公钥)/i.test(clause)) return [];
+  const targets = unique((clause.match(/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/g) || []).map((item) => `github:${item}`));
+  const operations: string[] = [];
+  if (/(?:delete|remove|删|删除)/i.test(clause)) operations.push("delete");
+  if (/(?:transfer|转移|转让)/i.test(clause)) operations.push("transfer");
+  if (/(?:invite|collaborator|协作者|邀请)/i.test(clause)) operations.push("invite");
+  if (/(?:star|加星|收藏)/i.test(clause)) operations.push("star");
+  if (/(?:unstar|取消加星)/i.test(clause)) operations.push("unstar");
+  if (/(?:issue|提案|问题)/i.test(clause)) operations.push("issue");
+  if (/(?:push|upload|上传|同步|更新)/i.test(clause)) operations.push("push", "pull");
+  if (/(?:pull|下载|拉取)/i.test(clause)) operations.push("pull");
+  if (/(?:add|delete|remove|update|新增|删除|添加|更新).{0,40}(?:ssh|公钥)/i.test(clause)) {
+    operations.push(/(?:delete|remove|删除)/i.test(clause) ? "ssh_delete" : "ssh_add");
+  }
+  if (!operations.length) return [];
+  return [{
+    action: "write",
+    resourceType: "cloud_file",
+    effect: "persistent_change",
+    targets: targets.length ? targets : ["github:task"],
+    allowedOperations: unique(operations),
+    confidence: 0.9,
+  }];
+}
+
+function calendarCandidatesForClause(clause: string): Candidate[] {
+  const emails = extractEmails(clause);
+  let operation = "";
+  if (/\breschedule\b|(?:move|postpone|改期|调整|重新安排).{0,100}(?:event|calendar|meeting|日程|会议)/i.test(clause)) {
+    operation = "reschedule";
+  } else if (/(?:create|schedule|book|安排|创建|新增).{0,120}(?:event|calendar|meeting|日程|事件|会议)/i.test(clause)) {
+    operation = "create";
+  } else if (/(?:add|invite|include|添加|邀请).{0,100}(?:participant|attendee|参与者|参会人)/i.test(clause)) {
+    operation = "participants";
+  } else if (/(?:cancel|remove).{0,100}(?:event|calendar|meeting)|(?:取消|删除).{0,80}(?:日程|事件|会议)/i.test(clause)) {
+    operation = "cancel";
+  }
+  if (!operation) return [];
+  return [{
+    action: "write",
+    resourceType: "calendar",
+    effect: "persistent_change",
+    targets: [`calendar:${operation}`],
+    allowedOperations: [operation],
+    allowedRecipients: emails,
+    confidence: 0.94,
+  }];
+}
+
+function extractDelegations(text: string): Array<{ sourceType: "email"; sender: string; subject: string }> {
+  const output: Array<{ sourceType: "email"; sender: string; subject: string }> = [];
+  const pattern = /(?:do\s+the\s+actions?|follow\s+the\s+instructions?)\s+specified\s+in\s+(?:the\s+)?email\s+from\s+['\"]([^'\"]+)['\"]\s+with\s+the\s+subject\s+['\"]([^'\"]+)['\"]/gi;
+  for (const match of text.matchAll(pattern)) {
+    const sender = match[1]?.trim().toLowerCase();
+    const subject = match[2]?.trim();
+    if (sender && subject) output.push({ sourceType: "email", sender, subject });
+  }
+  return output.filter((item, index, all) => all.findIndex((candidate) => candidate.sender === item.sender && candidate.subject === item.subject) === index);
 }
 
 function templateCandidatesForClause(clause: string): Candidate[] {
@@ -454,7 +535,7 @@ function targetIsConcrete(candidate: Candidate): boolean {
 
 function hostFromTarget(target: string): string {
   try {
-    return new URL(target).hostname.toLowerCase();
+    return new URL(target.replace(/^(?:prefix|exact):/i, "")).hostname.toLowerCase();
   } catch {
     return "";
   }
@@ -469,7 +550,7 @@ function normalizeTaskText(text: string): string {
 }
 
 function isNetworkTarget(value: string): boolean {
-  return /^(?:https?:\/\/|mock:\/\/)/i.test(value);
+  return /^(?:(?:prefix|exact):)?(?:https?:\/\/|mock:\/\/)/i.test(value);
 }
 
 function fingerprint(value: string): string {

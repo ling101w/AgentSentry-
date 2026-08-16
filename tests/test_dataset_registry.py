@@ -72,7 +72,7 @@ def test_import_registry_normalizes_and_enriches_supported_sources(tmp_path: Pat
     ("headers", "threat", "message"),
     [
         (("数据集", "威胁", "边界说明", "分类依据"), "T2 注入", "invalid registry headers"),
-        (("数据集", "威胁", "分类依据", "边界说明"), "T7 未知", "expected at least one code"),
+        (("数据集", "威胁", "分类依据", "边界说明"), "T8 未知", "expected at least one code"),
     ],
 )
 def test_import_registry_rejects_wrong_contract(

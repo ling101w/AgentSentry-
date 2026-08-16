@@ -236,7 +236,13 @@ describe("OpenClaw plugin hooks", () => {
     const harness = createHarness();
     await harness.service.start();
 
-    const allowContext = { sessionKey: "hooks:allow", workspaceDir: harness.stateDir };
+    const allowContext = {
+      sessionKey: "hooks:allow",
+      sessionId: "session-allow",
+      agentId: "agent-allow",
+      runId: "openclaw-run-allow",
+      workspaceDir: harness.stateDir,
+    };
     await invoke(harness, "before_prompt_build", {
       messages: [{ role: "user", content: "Save the summary to reports/status.md." }],
     }, allowContext);
@@ -246,6 +252,13 @@ describe("OpenClaw plugin hooks", () => {
       params: { path: "reports/status.md", content: "status" },
     }, allowContext);
     expect(allowed).toBeUndefined();
+    await invoke(harness, "after_tool_call", {
+      toolName: "write_file",
+      toolCallId: "tool-allow",
+      params: { path: "reports/status.md", content: "status" },
+      result: { ok: true },
+      runId: "openclaw-run-allow",
+    }, allowContext);
 
     const askContext = { sessionKey: "hooks:ask", workspaceDir: harness.stateDir };
     await invoke(harness, "before_prompt_build", {
@@ -287,22 +300,97 @@ describe("OpenClaw plugin hooks", () => {
     expect(deniedAgain).toMatchObject({ requireApproval: { timeoutBehavior: "deny" } });
     await flushRecords();
 
-    const decisions = readRecords(harness).filter((record) => record.type === "tool_decision");
-    expect(decisions.find((record) => record.payload.toolCallId === "tool-allow")?.payload).toMatchObject({ decision: "allow" });
-    expect(decisions.find((record) => record.payload.toolCallId === "tool-ask")?.payload).toMatchObject({
+    const records = readRecords(harness);
+    const decisions = records.filter((record) => record.type === "tool_decision");
+    const allowedDecision = decisions.find((record) => record.payload.toolCallId === "tool-allow");
+    expect(allowedDecision).toMatchObject({
+      schema_version: "agentsentry.audit-record.v1",
+      agent_id: "agent-allow",
+      session_id: "session-allow",
+      openclaw_run_id: "openclaw-run-allow",
+      tool_name: "write_file",
+      tool_call_id: "tool-allow",
+      params: { path: "reports/status.md", content: "status" },
+      decision: "allow",
+      disposition: "allowed",
+      execution_status: "pending",
+      payload: { decision: "allow" },
+    });
+    expect(allowedDecision?.params_sha256).toMatch(/^[a-f0-9]{64}$/);
+    const allowedResult = records.find((record) => record.type === "tool_result" && record.tool_call_id === "tool-allow");
+    expect(allowedResult).toMatchObject({
+      agent_id: "agent-allow",
+      session_id: "session-allow",
+      openclaw_run_id: "openclaw-run-allow",
+      tool_name: "write_file",
+      decision: "allow",
+      disposition: "allowed",
+      execution_status: "executed",
+    });
+    expect(decisions.find((record) => record.payload.toolCallId === "tool-ask")).toMatchObject({
       decision: "ask",
-      deterministic_block: false,
+      disposition: "approval_required",
+      execution_status: "pending",
+      payload: {
+        decision: "ask",
+        deterministic_block: false,
+      },
+    });
+    expect(records.find((record) => record.type === "approval_resolution" && record.tool_call_id === "tool-ask")).toMatchObject({
+      decision: "ask",
+      disposition: "approval_granted",
+      execution_status: "pending",
     });
     expect(decisions.find((record) => record.payload.toolCallId === "tool-ask-cached")?.payload).toMatchObject({
       decision: "allow",
       original_decision: "ask",
+      verdict: "pass",
+      original_verdict: "require_approval",
       approval_cache_hit: true,
+      intervention: {
+        decision: "allow",
+        approval_cache_override: true,
+      },
     });
     expect(decisions.filter((record) => String(record.payload.toolCallId).startsWith("tool-deny"))).toEqual([
       expect.objectContaining({ payload: expect.objectContaining({ decision: "deny", deterministic_block: true, approval_cache_hit: false }) }),
       expect.objectContaining({ payload: expect.objectContaining({ decision: "deny", deterministic_block: true, approval_cache_hit: false }) }),
     ]);
     expect((harness.command.handler({ args: "approvals status" }) as { text: string }).text).toContain("1 exact operation");
+  });
+
+  it("correlates same-name calls without tool IDs in FIFO order", async () => {
+    const harness = createHarness();
+    await harness.service.start();
+    const context = { sessionKey: "hooks:no-tool-id", workspaceDir: harness.stateDir };
+    await invoke(harness, "before_prompt_build", {
+      messages: [{ role: "user", content: "Read README.md and package.json." }],
+    }, context);
+
+    await invoke(harness, "before_tool_call", {
+      toolName: "read_file",
+      params: { path: "README.md" },
+    }, context);
+    await invoke(harness, "before_tool_call", {
+      toolName: "read_file",
+      params: { path: "package.json" },
+    }, context);
+    await invoke(harness, "after_tool_call", {
+      toolName: "read_file",
+      result: { content: "readme" },
+    }, context);
+    await invoke(harness, "after_tool_call", {
+      toolName: "read_file",
+      result: { content: "package" },
+    }, context);
+    await flushRecords();
+
+    const records = readRecords(harness);
+    const decisions = records.filter((record) => record.type === "tool_decision" && record.tool_name === "read_file");
+    const results = records.filter((record) => record.type === "tool_result" && record.tool_name === "read_file");
+    expect(results.map((record) => record.params?.path)).toEqual(["README.md", "package.json"]);
+    expect(results.map((record) => record.decision)).toEqual(decisions.map((record) => record.decision));
+    expect(results.every((record) => record.execution_status === "executed")).toBe(true);
   });
 
   it("labels contaminated tool output, records runtime audit, and covers exactly one assistant response", async () => {
@@ -487,6 +575,7 @@ describe("OpenClaw plugin hooks", () => {
         sessionId: "default",
         runId: `run-capacity-${index}`,
         runtimeCheckpoints: new Map(),
+        pendingToolAudits: new Map(),
       });
     }
 

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from ..sources import SOURCE_SPECS, SourceSpec
-from . import agentdojo, injecagent, mcpsecbench, memorygraft, msb, redteamcua
+from . import agentdojo, deeptrap, injecagent, mcpsecbench, memorygraft, msb, redteamcua
 
 
 Loader = Callable[[Path, SourceSpec, Mapping[str, Any]], list[dict[str, Any]]]
@@ -17,6 +17,7 @@ ADAPTERS: dict[str, Loader] = {
     "memorygraft": memorygraft.load,
     "agentdojo": agentdojo.load,
     "injecagent": injecagent.load,
+    "deeptrap": deeptrap.load,
 }
 
 _LOADERS_WITH_REPORT = {
@@ -26,6 +27,7 @@ _LOADERS_WITH_REPORT = {
     "memorygraft": memorygraft.load_with_report,
     "agentdojo": agentdojo.load_with_report,
     "injecagent": injecagent.load_with_report,
+    "deeptrap": deeptrap.load_with_report,
 }
 
 

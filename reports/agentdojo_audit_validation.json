@@ -1,0 +1,25 @@
+{
+  "schema_version": "agentsentry.audit-completeness.v1",
+  "path": "reports\\agentdojo_audit_events.jsonl",
+  "records": 750,
+  "malformed_lines": 0,
+  "timestamp_errors": 0,
+  "complete_records": 750,
+  "completeness_rate": 1.0,
+  "missing_by_field": {},
+  "incomplete_record_ids": [],
+  "tool_or_approval_records": 750,
+  "tool_or_approval_incomplete": 0,
+  "replay_fields": [
+    "created_at",
+    "run_id",
+    "session_key",
+    "agent_id",
+    "tool_name",
+    "params",
+    "decision",
+    "disposition",
+    "execution_status"
+  ],
+  "status": "pass"
+}

@@ -6,10 +6,12 @@ import { PluginConfig } from "../../config.ts";
 import { detectToolCall } from "../../core/detect.ts";
 import { createPolicyState, updateTaskSpec } from "../../core/policy.ts";
 import { matchWorkspaceReadPath, pathInsideCanonicalRoot } from "../../core/path-security.ts";
+import { clearCustomToolManifests, registerToolManifest } from "../../core/tool-manifest.ts";
 
 const roots: string[] = [];
 
 afterEach(() => {
+  clearCustomToolManifests();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -26,6 +28,39 @@ function fixture(): { workspace: string; outside: string } {
 }
 
 describe("canonical filesystem boundaries", () => {
+  it("does not resolve an isolated tool runtime path against the host workspace", () => {
+    const { workspace } = fixture();
+    registerToolManifest({
+      toolId: "read_file",
+      aliases: ["list_virtual_directory"],
+      dataOrigins: ["workspace"],
+      sideEffects: ["file_read"],
+      acceptsSensitiveData: false,
+      canExfiltrate: false,
+      requiresExplicitAuthorization: true,
+      defaultTrust: "workspace",
+      accessScope: "explicit_target",
+      sensitiveInputHandling: "none",
+      dataClassification: "user_private",
+      targetFields: ["path"],
+      pathScope: "isolated_environment",
+    });
+    const config = new PluginConfig();
+    const state = createPolicyState();
+    updateTaskSpec(state, [{ role: "user", content: "Inspect /user/info in the isolated environment." }], config);
+
+    const result = detectToolCall(
+      "list_virtual_directory",
+      { path: "/user/info" },
+      config,
+      state,
+      [],
+      { workspaceDir: workspace },
+    );
+    expect(result.policy.violations.some((item) => item.includes("read path escapes allowed root"))).toBe(false);
+    expect(result.decision).toBe("allow");
+  });
+
   it("allows reads inside the real workspace and rejects traversal and absolute escapes", () => {
     const { workspace, outside } = fixture();
     expect(matchWorkspaceReadPath("docs/report.md", workspace).allowed).toBe(true);

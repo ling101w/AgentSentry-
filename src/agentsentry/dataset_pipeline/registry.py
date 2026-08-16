@@ -12,7 +12,7 @@ from .sources import resolve_source
 
 
 REQUIRED_HEADERS = ("数据集", "威胁", "分类依据", "边界说明")
-_THREAT_PATTERN = re.compile(r"(?<![A-Z0-9])T([1-6])(?!\d)", re.IGNORECASE)
+_THREAT_PATTERN = re.compile(r"(?<![A-Z0-9])T([1-7])(?!\d)", re.IGNORECASE)
 
 
 class RegistryImportError(ValueError):
@@ -213,7 +213,7 @@ def enrich_registry_rows(
 
 
 def parse_threat(value: Any, *, source_row: int | None = None) -> tuple[list[str], str]:
-    """Parse one or more ordered T1-T6 labels and the human-readable threat name."""
+    """Parse one or more ordered T1-T7 labels and the human-readable threat name."""
 
     text = _registry_text(value)
     codes: list[str] = []
@@ -224,7 +224,7 @@ def parse_threat(value: Any, *, source_row: int | None = None) -> tuple[list[str
     if not codes:
         location = f" at row {source_row}" if source_row is not None else ""
         raise RegistryImportError(
-            f"invalid 威胁{location}: expected at least one code from T1 through T6, got {text!r}"
+            f"invalid 威胁{location}: expected at least one code from T1 through T7, got {text!r}"
         )
     threat_name = _THREAT_PATTERN.sub(" ", text)
     threat_name = threat_name.strip(" \t/,，;；:：-—–|()[]")

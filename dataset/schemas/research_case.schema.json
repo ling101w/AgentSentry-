@@ -36,11 +36,11 @@
       "required": ["attack", "threat_primary", "threat_secondary", "attack_type"],
       "properties": {
         "attack": {"type": "boolean"},
-        "threat_primary": {"enum": ["T1", "T2", "T3", "T4", "T5", "T6"]},
+        "threat_primary": {"enum": ["T1", "T2", "T3", "T4", "T5", "T6", "T7"]},
         "threat_secondary": {
           "type": "array",
           "uniqueItems": true,
-          "items": {"enum": ["T1", "T2", "T3", "T4", "T5", "T6"]}
+          "items": {"enum": ["T1", "T2", "T3", "T4", "T5", "T6", "T7"]}
         },
         "attack_type": {"type": "string", "minLength": 1}
       },

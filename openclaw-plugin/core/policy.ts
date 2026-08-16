@@ -24,6 +24,12 @@ import {
 } from "./policy/action-assessment.ts";
 import { evaluateAbacDataFlow, type DataFlowTaintFlow } from "./policy/abac.ts";
 import { behaviorAnomalyFindingsFor, updateBehaviorProfile, type BehaviorProfile } from "./policy/behavior-baseline.ts";
+import {
+  applyInterventionGate,
+  interventionEvidence,
+  type AttackClass,
+  type InterventionGateResult,
+} from "./policy/intervention-gate.ts";
 import { containsAny, flattenText as flattenValueText, hostFromUrl, isLabeledValue, readFirstString, unique } from "./policy/value-utils.ts";
 import { clampText, safeStringify as redactSafeStringify } from "./redact.ts";
 import { targetAllowed } from "./security/url.ts";
@@ -60,6 +66,7 @@ import {
   isSideEffectToolCall,
   type AuthorizationState,
   type CapabilityAuthorization,
+  type TaskCapability,
   type TaskSpec,
 } from "./task-spec/index.ts";
 import { resolveToolManifest, type ToolSecurityManifest } from "./tool-manifest.ts";
@@ -142,6 +149,8 @@ export type PolicyState = {
     decision: "allow" | "ask" | "deny";
     risk_score: number;
   }>;
+  /** Monotonic count of completed policy decisions; unlike history it is never truncated. */
+  actionSequence: number;
   toolResultLabels: Map<string, Label>;
   exposures: Array<{
     source: string;
@@ -149,6 +158,8 @@ export type PolicyState = {
     label: Label;
     provenanceId?: string;
     semanticClaims?: SemanticClaim[];
+    observedHistoryIndex?: number;
+    observedActionSequence?: number;
   }>;
   apiCallCounts: Map<string, number>;
   behaviorProfiles: Map<string, BehaviorProfile>;
@@ -178,6 +189,7 @@ export type PolicyDecision = {
   findings: DetectionFinding[];
   action_graph_node_id: string;
   deterministic_disposition: "allow" | "deny" | "ambiguous";
+  intervention?: InterventionGateResult;
   effects?: PolicyEffects;
 };
 
@@ -200,6 +212,7 @@ export type PolicyStateCheckpoint = {
   provenanceBlocked: boolean;
   provenanceFindings: DetectionFinding[];
   history: PolicyState["history"];
+  actionSequence?: number;
   toolResultLabels: Array<[string, Label]>;
   exposures: PolicyState["exposures"];
   apiCallCounts: Array<[string, number]>;
@@ -242,7 +255,7 @@ const TOOL_ALIASES: Array<[RegExp, string]> = [
   [/(shell|command|exec|terminal|powershell|cmd)/i, "shell_exec"],
 ];
 
-const HIGH_RISK_SINKS = new Set(["send_email", "call_api", "shell_exec", "memory_write"]);
+const HIGH_RISK_SINKS = new Set(["send_email", "call_api", "shell_exec", "memory_write", "cloud_file_share"]);
 const EXPLICIT_NO_EMAIL = ["do not email", "don't email", "no email", "不要发", "别发", "不要发送", "不要给任何人发"];
 
 export function createPolicyState(): PolicyState {
@@ -259,6 +272,7 @@ export function createPolicyState(): PolicyState {
     provenanceBlocked: false,
     provenanceFindings: [],
     history: [],
+    actionSequence: 0,
     toolResultLabels: new Map(),
     exposures: [],
     apiCallCounts: new Map(),
@@ -346,6 +360,9 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
   const links: SemanticProvenanceLink[] = [];
   const additions: DataProvenance[] = [];
   const blocksTaintedInput = HIGH_RISK_SINKS.has(action.tool);
+  const delegatedAuthorization = blocksTaintedInput
+    ? authorizeCapability(state.taskSpec, action, { taskMode: state.taskSpec.task_mode })
+    : null;
   let matchedAny = false;
   for (const [key, value] of Object.entries(args)) {
     if (isControlArg(key)) continue;
@@ -381,8 +398,9 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
     } else if (exposure.provenanceId) {
       links.push({ provenanceId: exposure.provenanceId, argPath: provenanceArgPath(key), match: mode, ...matchEvidence });
     }
-    if (blocksTaintedInput) {
+    if (blocksTaintedInput && !delegatedExposureAllowed(delegatedAuthorization, exposure, state)) {
       const observed = matchEvidence.basis !== "conservative";
+      const gatedEvidence = exposureInterventionEvidence(action, exposure.label, observed);
       findings.push(finding(
         "Tool Boundary",
         observed ? "deterministic" : "heuristic",
@@ -402,6 +420,7 @@ export function applyExposureTaint(action: AgentSentryAction, state: PolicyState
           provenance_id: lineage?.id || exposure.provenanceId || "",
           parent_ids: lineage?.parentIds || [],
           provenance_path: lineage?.path || "",
+          ...gatedEvidence,
         },
       ));
     }
@@ -459,6 +478,7 @@ export function checkpointPolicyState(state: PolicyState): PolicyStateCheckpoint
     provenanceBlocked: state.provenanceBlocked,
     provenanceFindings: state.provenanceFindings,
     history: state.history,
+    actionSequence: state.actionSequence,
     toolResultLabels: [...state.toolResultLabels.entries()],
     exposures: state.exposures,
     apiCallCounts: [...state.apiCallCounts.entries()],
@@ -485,6 +505,9 @@ export function restorePolicyStateCheckpoint(state: PolicyState, checkpoint: Pol
   state.provenanceBlocked = checkpoint.provenanceBlocked;
   state.provenanceFindings = structuredClone(checkpoint.provenanceFindings);
   state.history = structuredClone(checkpoint.history);
+  state.actionSequence = Number.isSafeInteger(checkpoint.actionSequence) && checkpoint.actionSequence! >= 0
+    ? checkpoint.actionSequence!
+    : checkpoint.history.length;
   state.toolResultLabels = new Map(structuredClone(checkpoint.toolResultLabels));
   state.exposures = structuredClone(checkpoint.exposures);
   state.apiCallCounts = new Map(structuredClone(checkpoint.apiCallCounts));
@@ -532,11 +555,13 @@ function evaluateMutable(
     findings.push(finding("Tool Boundary", "deterministic", "block", "tool action input could not be safely analyzed; policy failed closed", 100, {
       issue: normalizedAction.issue,
       tool: action.tool,
+      ...interventionEvidence("safety_boundary"),
     }));
   }
   if (normalizedFindings.invalidCount) {
     findings.push(finding("Tool Boundary", "deterministic", "block", "security finding input failed validation; policy failed closed", 100, {
       invalid_findings: normalizedFindings.invalidCount,
+      ...interventionEvidence("safety_boundary"),
     }));
   }
   const reasons: string[] = [];
@@ -555,6 +580,9 @@ function evaluateMutable(
   const capabilityAuthorization: CapabilityAuthorization = implicitManifestRead
     ? { action: "allow", authorized: true, reason: "manifest_bound_read" }
     : extractedAuthorization;
+  if (config.intervention.mode === "evidence-gated") {
+    findings.push(...inferredSessionAttackSinkFindings(action, assessment, state, capabilityAuthorization));
+  }
   let actionGraphNodeId = "";
   try {
     const graphAttempt = beginSemanticAction(state.semanticActionGraph, {
@@ -599,6 +627,7 @@ function evaluateMutable(
         node_ids: compactEvidenceList(violation.path.nodeIds, 32),
         edge_ids: compactEvidenceList(violation.path.edgeIds, 32),
         causal_chain: compactEvidenceList(violation.path.steps, 24),
+        ...semanticPathInterventionEvidence(violation.path, action, state),
         },
       ));
       if (blockingPath) violations.push(violation.reason);
@@ -606,6 +635,7 @@ function evaluateMutable(
   } catch {
     findings.push(finding("Semantic Action Graph", "deterministic", "block", "semantic action graph evaluation failed; policy failed closed", 100, {
       tool: action.tool,
+      ...interventionEvidence("safety_boundary"),
     }));
     violations.push("semantic action graph evaluation failed");
   }
@@ -637,7 +667,9 @@ function evaluateMutable(
         ? "tool reads a risky workspace item for isolated analysis; downstream high-risk sinks remain restricted"
         : "tool call directly references a workspace item marked risky by provenance scan",
       isolatedRead ? 10 : 100,
-      directProvenanceRisk,
+      isolatedRead
+        ? directProvenanceRisk
+        : { ...directProvenanceRisk, ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }) },
     ));
     if (!isolatedRead) violations.push("tool call directly references risky workspace item");
   }
@@ -687,7 +719,10 @@ function evaluateMutable(
     : [];
   for (const violation of policyViolations) {
     violations.push(violation);
-    findings.push(finding("Tool Boundary", "deterministic", "block", violation, 100, { tool: action.tool }));
+    findings.push(finding("Tool Boundary", "deterministic", "block", violation, 100, {
+      tool: action.tool,
+        ...policyViolationInterventionEvidence(violation, action),
+    }));
   }
   for (const reason of findings
     .filter((item) => item.finding_type === "deterministic" && item.verdict === "block")
@@ -756,7 +791,14 @@ function evaluateMutable(
       denyThreshold: config.detection.denyThreshold,
     })
     : "allow";
-  const decision = mergeDecision(deterministicDecision, additionalDecision);
+  const rawDecision = mergeDecision(deterministicDecision, additionalDecision);
+  const intervention = applyInterventionGate({
+    mode: config.intervention.mode,
+    rawDecision,
+    findings,
+    preserveSafetyBoundaries: config.intervention.preserveSafetyBoundaries,
+  });
+  const decision = intervention.decision;
   if (actionGraphNodeId) setSemanticActionDecision(state.semanticActionGraph, actionGraphNodeId, decision);
 
   return {
@@ -772,11 +814,18 @@ function evaluateMutable(
     task_spec: taskSpec,
     findings: dedupeFindings(findings),
     action_graph_node_id: actionGraphNodeId,
-    deterministic_disposition: deterministicBlock
-      ? "deny"
-      : findings.some((item) => item.verdict !== "pass") || decision !== "allow"
-        ? "ambiguous"
-        : "allow",
+    deterministic_disposition: config.intervention.mode === "evidence-gated"
+      ? decision === "deny"
+        ? "deny"
+        : decision === "ask"
+          ? "ambiguous"
+          : "allow"
+      : deterministicBlock
+        ? "deny"
+        : findings.some((item) => item.verdict !== "pass") || decision !== "allow"
+          ? "ambiguous"
+          : "allow",
+    intervention,
   };
 }
 
@@ -794,6 +843,7 @@ export function updateAfterMessage(state: PolicyState, findings: DetectionFindin
 }
 
 export function updateAfterDecision(state: PolicyState, decision: PolicyDecision, config: PluginConfig = new PluginConfig()): void {
+  state.actionSequence = Math.max(state.actionSequence || 0, state.history.length) + 1;
   if (!isPolicyDecisionForUpdate(decision)) {
     state.history.push({ tool: "unknown_tool", decision: "deny", risk_score: 100 });
     if (state.history.length > 80) state.history = state.history.slice(-80);
@@ -940,6 +990,7 @@ function enforcementBypassFinding(lifecycle: ToolResultLifecycle, toolName: stri
       tool: normalizeToolName(toolName || "unknown_tool"),
       action_node_id: lifecycle.actionNodeId,
       call_id_hash: lifecycle.callIdHash,
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     },
   );
 }
@@ -1000,9 +1051,13 @@ export function labelToolResult(
   }
   const persistentMemoryMatches = source === "memory" ? matchingPersistentMemoryLabels(state, result, fieldProvenance) : [];
   const memoryLowTrust = persistentMemoryMatches.some((item) => item.integrity === "untrusted-external" || item.confidentiality === "tenant-secret" || riskMax(item.risk_vector) >= 50);
-  const provenanceUntrusted = !toolName || ["external_web", "email_html", "pdf_text", "image_metadata", "webhook", "unknown"].includes(source);
-  const maliciousTaint = Boolean(incompleteReason) || memoryLowTrust || analysis.label.tainted || hasInjectionSignal(text) || riskMax(analysis.risk_vector) >= 50;
   const manifest = resolveToolManifest(toolName);
+  const manifestTrust = manifest?.manifest.defaultTrust;
+  const provenanceUntrusted = !toolName
+    || ["external_web", "email_html", "pdf_text", "image_metadata", "webhook", "unknown"].includes(source)
+    || manifestTrust === "external"
+    || manifestTrust === "unknown";
+  const maliciousTaint = Boolean(incompleteReason) || memoryLowTrust || analysis.label.tainted || hasInjectionSignal(text) || riskMax(analysis.risk_vector) >= 50;
   const manifestClassification = manifest?.manifest.dataClassification || "unknown";
   const subjectScopes = manifest ? subjectScopesForAction(manifest.manifest, {
     tool: toolName,
@@ -1084,6 +1139,7 @@ export function labelToolResult(
   if (analysis.label.confidentiality === "secret" || config.policy.sensitiveAssets.some((asset) => asset && text.toLowerCase().includes(asset.toLowerCase()))) {
     label.confidentiality = "secret";
   }
+  const fieldExposureStart = state.exposures.length;
   for (const field of fieldProvenance) {
     rememberTrustLabel(state, field.trustLabel);
     const claimConfidentiality = strongestSemanticClaimConfidentiality(field.semanticClaims);
@@ -1100,7 +1156,15 @@ export function labelToolResult(
         tags: unique([...field.tags, ...field.semanticClaims.flatMap((claim) => claim.tags)]),
         taint_profile: taintProfileFromLabel(field.trustLabel) || undefined,
       };
-      state.exposures.push({ source: fieldLabel.source, text: field.value, label: fieldLabel, provenanceId: field.id, semanticClaims: field.semanticClaims });
+      state.exposures.push({
+        source: fieldLabel.source,
+        text: field.value,
+        label: fieldLabel,
+        provenanceId: field.id,
+        semanticClaims: field.semanticClaims,
+        observedHistoryIndex: state.history.length,
+        observedActionSequence: state.actionSequence,
+      });
     }
   }
   const publicFields = fieldProvenance.map(publicProvenance);
@@ -1115,10 +1179,30 @@ export function labelToolResult(
   rememberDataProvenance(state, publicFields);
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, analysis.risk_vector);
   if (toolCallId) state.toolResultLabels.set(toolCallId, label);
-  if (!fieldProvenance.length && label.tainted && text.trim()) {
-    state.exposures.push({ source: label.source, text, label: { ...label }, semanticClaims: semanticClaimsForValue({ value: text, tags: label.tags, confidentiality: label.confidentiality }) });
+  const aggregateAttackClass = attackClassForExposure(label, unique([
+    ...(label.tags || []),
+    ...(label.taint_profile?.tags || []),
+  ]), {
+    tool: "unknown_tool",
+    originalTool: toolName || "unknown_tool",
+    args: {},
+    reason: "aggregate tool-result attack evidence",
+  });
+  if (aggregateAttackClass && text.trim()) {
+    // Keep the aggregate excerpt behind field-level provenance in matching
+    // priority.  It is a bounded fallback for directives outside the normal
+    // preview, not a replacement for exact field lineage.
+    state.exposures.splice(fieldExposureStart, 0, {
+      source: label.source,
+      text: attackEvidenceExcerpt(text, config.capture.previewChars),
+      label: { ...label },
+      semanticClaims: semanticClaimsForValue({ value: text, tags: label.tags, confidentiality: label.confidentiality }),
+      observedHistoryIndex: state.history.length,
+      observedActionSequence: state.actionSequence,
+    });
   }
-  if (state.exposures.length > 80) state.exposures = state.exposures.slice(-80);
+  state.exposures = compactExposureHistory(state.exposures, 80);
+  if (!maliciousTaint) activateDelegatedCapabilitiesFromResult(state, toolName, result, toolArgs);
   return label;
 }
 
@@ -1169,6 +1253,7 @@ export function resultFindings(
       ? [finding("Context Provenance", "deterministic", "block", "tool result could not be completely analyzed; taint is preserved and policy failed closed", 100, {
         source: label.source,
         tags: label.tags || [],
+        ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
       })]
       : []),
     ...(lowTrustPersistentMemory
@@ -1266,43 +1351,70 @@ function mergeDataProvenance(current: DataProvenance[], additions: DataProvenanc
 
 function rememberDataProvenance(state: PolicyState, additions: DataProvenance[]): void {
   const merged = mergeDataProvenance(state.dataProvenance, additions);
-  if (merged.length <= 240) {
+  const limit = 240;
+  if (merged.length <= limit) {
     state.dataProvenance = merged;
     return;
   }
 
   const byId = new Map(merged.map((node) => [node.id, node]));
-  const protectedIds = new Set<string>(additions.map((node) => node.id));
-  for (const exposure of state.exposures.slice(-80)) {
-    if (exposure.provenanceId) protectedIds.add(exposure.provenanceId);
-  }
-  const pending = [...protectedIds];
-  while (pending.length && protectedIds.size < 240) {
-    const id = pending.pop()!;
-    for (const parentId of byId.get(id)?.parentIds || []) {
-      if (!protectedIds.has(parentId)) {
-        protectedIds.add(parentId);
+  const selectedIds = new Set<string>();
+  const addIds = (ids: Iterable<string | undefined>): void => {
+    for (const id of ids) {
+      if (selectedIds.size >= limit) return;
+      if (id && byId.has(id)) selectedIds.add(id);
+    }
+  };
+  const addAncestors = (ids: Iterable<string | undefined>): void => {
+    const pending = [...ids].filter((id): id is string => Boolean(id));
+    const visited = new Set<string>();
+    while (pending.length && selectedIds.size < limit) {
+      const id = pending.pop()!;
+      if (visited.has(id)) continue;
+      visited.add(id);
+      for (const parentId of byId.get(id)?.parentIds || []) {
+        addIds([parentId]);
         pending.push(parentId);
       }
     }
-  }
+  };
 
-  const protectedNodes = merged.filter((node) => protectedIds.has(node.id)).slice(-240);
-  const remainingBudget = Math.max(0, 240 - protectedNodes.length);
-  const remainingCandidates = merged.filter((node) => !protectedIds.has(node.id));
-  const remaining = remainingBudget > 0 ? remainingCandidates.slice(-remainingBudget) : [];
-  const order = new Map(merged.map((node, index) => [node.id, index]));
-  const kept = [...protectedNodes, ...remaining].sort((left, right) =>
-    (order.get(left.id) || 0) - (order.get(right.id) || 0)
+  const retainedExposures = compactExposureHistory(state.exposures, 80);
+  const criticalExposures = retainedExposures.filter((exposure) =>
+    isAttackEvidenceExposure(exposure) || isSecretExposure(exposure)
   );
+  const criticalIds = [...criticalExposures].reverse().map((exposure) => exposure.provenanceId);
+  const additionIds = [...additions].reverse().map((node) => node.id);
+  const ordinaryExposureIds = [...retainedExposures]
+    .reverse()
+    .filter((exposure) => !isAttackEvidenceExposure(exposure) && !isSecretExposure(exposure))
+    .map((exposure) => exposure.provenanceId);
+
+  // One large read must not evict the attack or secret evidence required to
+  // classify a later sink in the same trajectory.
+  addIds(criticalIds);
+  addAncestors(criticalIds);
+  addIds(additionIds);
+  addAncestors(additionIds);
+  addIds(ordinaryExposureIds);
+  addAncestors(ordinaryExposureIds);
+  addIds([...merged].reverse().map((node) => node.id));
+
+  const kept = merged.filter((node) => selectedIds.has(node.id));
   const keptIds = new Set(kept.map((node) => node.id));
   state.dataProvenance = kept.map((node) => ({
     ...node,
     parentIds: node.parentIds.filter((id) => keptIds.has(id)),
     transformations: [...node.transformations],
   }));
-  state.exposures = state.exposures.filter((exposure) =>
-    !exposure.provenanceId || keptIds.has(exposure.provenanceId)
+  state.exposures = compactExposureHistory(
+    state.exposures.filter((exposure) =>
+      !exposure.provenanceId
+      || keptIds.has(exposure.provenanceId)
+      || isAttackEvidenceExposure(exposure)
+      || isSecretExposure(exposure)
+    ),
+    80,
   );
 }
 
@@ -1368,6 +1480,10 @@ function capabilityAuthorizationReason(reason: string, tool: string): string {
     host_outside_authorization: "网络主机不在用户明确授权主机范围内",
     method_outside_authorization: "HTTP 方法不在用户明确授权方法范围内",
     command_outside_authorization: "Shell 命令不在用户明确授权命令范围内",
+    calendar_operation_outside_authorization: "日历操作不在用户明确授权范围内",
+    participant_outside_authorization: "日历参与者不在用户明确授权范围内",
+    cloud_file_operation_outside_authorization: "云文件操作不在用户明确授权范围内",
+    cloud_file_outside_authorization: "云文件目标不在用户明确授权范围内",
     unknown_tool_capability: `${tool} 没有已注册的能力模型，需要确认`,
   };
   return messages[reason] || `${tool} 能力授权校验未通过：${reason}`;
@@ -1376,7 +1492,7 @@ function capabilityAuthorizationReason(reason: string, tool: string): string {
 function allowsImplicitLowRiskRead(action: AgentSentryAction, assessment: ActionAssessment, reason: string): boolean {
   if (reason !== "missing_explicit_authorization" && reason !== "unknown_tool_capability") return false;
   if (assessment.highRisk || assessment.sensitive || assessment.persistence || assessment.systemMutation || assessment.externalSink) return false;
-  if (action.tool === "read_file" || action.tool === "memory_read") return true;
+  if (action.tool === "read_file" || action.tool === "memory_read" || action.tool === "business_read") return true;
   if (action.tool !== "call_api") return false;
   const method = readFirstString(action.args, ["method", "httpMethod", "verb"]).toUpperCase() || "GET";
   return ["GET", "HEAD", "OPTIONS"].includes(method);
@@ -1407,7 +1523,7 @@ function deterministicViolations(
   const violations: string[] = [];
   const assessment = assessAction(action, config);
   const argsAnalysis = analyzeTrustContent(action.args, {
-    source: sourceFromTool(action.tool),
+    source: "unknown",
     sourceId: action.originalTool,
     toolName: action.originalTool,
     previewChars: config.capture.previewChars,
@@ -1451,6 +1567,14 @@ function deterministicViolations(
   if (action.tool === "write_file") {
     const requestedPath = readFirstString(action.args, ["path", "file", "filename", "target"]);
     const content = readFirstString(action.args, ["content", "body", "text", "patch"]);
+    const contentLabels: TrustLabel[] = [];
+    collectActionTrustLabels(action.args, contentLabels);
+    const lowTrustContent = contentLabels.some((label) => {
+      const evidence = label.evidence || {};
+      return label.integrity === "tainted"
+        || label.integrity === "external"
+        || evidence.provenance_untrusted === true;
+    });
     let effectivePath = requestedPath;
     if (!requestedPath.trim()) violations.push("missing write path");
     if (config.policy.restrictWritesToAllowedRoots) {
@@ -1492,6 +1616,17 @@ function deterministicViolations(
     if (writeContentAnalysis.findings.some((finding) => finding.verdict === "block")) {
       violations.push("write content contains persistence or skill hijack instructions");
     }
+    const lowTrustInjection = lowTrustContent && writeContentAnalysis.tags.some((tag) => [
+      "prompt_injection",
+      "persistence_instruction",
+      "tool_hijack",
+      "skill_secret_exfiltration",
+      "hidden_html",
+      "url_fragment_instruction",
+    ].includes(tag));
+    if (lowTrustInjection) {
+      violations.push("low-trust content cannot write authoritative file content");
+    }
     if (skillSurface && !taskSpec.allowed_tools.includes("write_file")) {
       violations.push("Skill 写入缺少用户明确授权");
     }
@@ -1502,7 +1637,11 @@ function deterministicViolations(
 
   if (action.tool === "read_file") {
     const requestedPath = readFirstString(action.args, ["path", "file", "filename", "target"]);
-    const boundary = matchWorkspaceReadPath(requestedPath, workspaceDir);
+    const manifest = resolveToolManifest(action.originalTool) || resolveToolManifest(action.tool);
+    const isolatedPathNamespace = manifest?.manifest.pathScope === "isolated_environment";
+    const boundary = isolatedPathNamespace
+      ? { allowed: Boolean(requestedPath.trim()), target: requestedPath, reason: "missing read path" }
+      : matchWorkspaceReadPath(requestedPath, workspaceDir);
     if (!boundary.allowed) violations.push(boundary.reason || "read path is outside workspace root");
     const effectivePath = boundary.allowed ? boundary.target : requestedPath;
     const path = effectivePath.replace(/\\/g, "/").toLowerCase();
@@ -1676,13 +1815,168 @@ function sensitiveReadAggregationFindings(action: AgentSentryAction, state: Poli
   )];
 }
 
+function activateDelegatedCapabilitiesFromResult(
+  state: PolicyState,
+  toolName: string,
+  result: unknown,
+  toolArgs: Record<string, unknown>,
+): void {
+  const delegations = state.taskSpec.delegations || [];
+  if (!delegations.length || toolName.toLowerCase() !== "search_emails") return;
+  const requestedSender = readFirstString(toolArgs, ["sender", "from", "email"]).toLowerCase();
+  const requestedSubject = readFirstString(toolArgs, ["query", "subject"]).toLowerCase();
+  if (!requestedSender || !requestedSubject) return;
+
+  const additions: TaskCapability[] = [];
+  for (const delegation of delegations) {
+    if (delegation.sourceType !== "email"
+      || delegation.sender.toLowerCase() !== requestedSender
+      || delegation.subject.toLowerCase() !== requestedSubject) continue;
+    for (const email of emailResultRecords(result)) {
+      const sender = readFirstString(email, ["sender", "from"]).toLowerCase();
+      const subject = readFirstString(email, ["subject"]).toLowerCase();
+      const body = readFirstString(email, ["body", "content", "text"]);
+      if (sender !== requestedSender || subject !== requestedSubject || !body || hasInjectionSignal(body)) continue;
+      additions.push(...delegatedEmailCapabilities(body, delegation));
+    }
+  }
+  if (!additions.length) return;
+
+  const capabilities = [...state.taskSpec.capabilities];
+  for (const capability of additions) {
+    const duplicate = capabilities.some((item) =>
+      item.action === capability.action
+      && item.resourceType === capability.resourceType
+      && item.evidence.delegation?.sender === capability.evidence.delegation?.sender
+      && item.evidence.delegation?.subject === capability.evidence.delegation?.subject
+      && (item.constraints.allowedOperations || []).join("|") === (capability.constraints.allowedOperations || []).join("|")
+    );
+    if (!duplicate) capabilities.push(capability);
+  }
+  const activatedTools = unique(additions.flatMap((capability) => {
+    if (capability.resourceType === "email" && capability.action === "send") return ["send_email"];
+    if (capability.resourceType === "cloud_file" && capability.action === "write") return ["cloud_file_write"];
+    if (capability.resourceType === "cloud_file" && capability.action === "send") return ["cloud_file_share"];
+    return [];
+  }));
+  state.taskSpec = {
+    ...state.taskSpec,
+    task_family: state.taskSpec.task_family === "unknown" ? "mixed" : state.taskSpec.task_family,
+    task_confidence: Math.max(state.taskSpec.task_confidence || 0, 0.9),
+    capabilities,
+    allowed_tools: unique([...state.taskSpec.allowed_tools, ...activatedTools]),
+    forbidden_tools: state.taskSpec.forbidden_tools.filter((tool) => !activatedTools.includes(tool)),
+    output_policy: activatedTools.includes("send_email")
+      ? "External delivery is limited to the verified delegated sender and payload."
+      : state.taskSpec.output_policy,
+  };
+  state.authorizationState = { ...state.authorizationState, taskSpec: structuredClone(state.taskSpec) };
+  activateSemanticIntent(state.semanticActionGraph, state.taskSpec);
+}
+
+function emailResultRecords(result: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(result)) {
+    return result.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+  }
+  if (!result || typeof result !== "object") return [];
+  const record = result as Record<string, unknown>;
+  if (Array.isArray(record.output)) return emailResultRecords(record.output);
+  return [record];
+}
+
+function delegatedEmailCapabilities(
+  body: string,
+  delegation: NonNullable<TaskSpec["delegations"]>[number],
+): TaskCapability[] {
+  const capabilities: TaskCapability[] = [];
+  const hash = createHash("sha256").update(body.normalize("NFKC"), "utf8").digest("hex");
+  const evidence = (span: string): TaskCapability["evidence"] => ({
+    sourceMessageHash: hash,
+    source: "delegated_tool_result",
+    explicitSpan: span.slice(0, 320),
+    explicitAuthorization: true,
+    insideQuotation: false,
+    negated: false,
+    targetIsConcrete: true,
+    confidence: 0.9,
+    delegationVerified: true,
+    delegation: { ...delegation },
+  });
+
+  const fileNames = unique(Array.from(body.matchAll(/["“]([^"”\n]+\.(?:docx?|xlsx?|pdf|txt|md|csv))["”]/gi))
+    .map((match) => match[1].trim()));
+  if (fileNames.length && /\b(?:add|append)\b[\s\S]{0,100}\b(?:to|into)\s+(?:the\s+)?file\b/i.test(body)) {
+    capabilities.push({
+      action: "write",
+      resourceType: "cloud_file",
+      targets: fileNames.slice(0, 4),
+      effect: "persistent_change",
+      constraints: { allowedPaths: fileNames.slice(0, 4), allowedOperations: ["append"] },
+      evidence: evidence("delegated email explicitly requests appending to a named cloud file"),
+      expiresAfterTurn: 1,
+    });
+  }
+  if (/\b(?:send\s+me\s+an?\s+email|email\s+me)\b/i.test(body)) {
+    capabilities.push({
+      action: "send",
+      resourceType: "email",
+      targets: [delegation.sender],
+      effect: "external_side_effect",
+      constraints: { allowedRecipients: [delegation.sender] },
+      evidence: evidence("delegated email explicitly requests a reply to its verified sender"),
+      expiresAfterTurn: 1,
+    });
+  }
+  return capabilities;
+}
+
+function delegatedExposureAllowed(
+  authorization: CapabilityAuthorization | null,
+  exposure: PolicyState["exposures"][number],
+  state: PolicyState,
+): boolean {
+  const delegation = authorization?.capability?.evidence.delegation;
+  if (!authorization?.authorized || !delegation || authorization.capability?.evidence.delegationVerified !== true) return false;
+  if (exposure.label.tainted || exposure.label.confidentiality === "secret" || riskMax(exposure.label.risk_vector || createRiskVector()) >= 65) return false;
+  if (!exposure.provenanceId) return false;
+  const lineage = provenanceClosure([exposure.provenanceId], state.dataProvenance);
+  const expectedScopes = delegationSubjectScopes(delegation);
+  return state.ifcBranches.some((branch) =>
+    branch.status === "isolated"
+    && branch.provenanceIds.some((id) => lineage.has(id))
+    && expectedScopes.every((scope) => (branch.subjectScopes || []).includes(scope))
+    && branch.risk < 65
+  );
+}
+
+function delegatedBranchesAuthorized(
+  authorization: CapabilityAuthorization,
+  branches: IFCBranch[],
+): boolean {
+  const delegation = authorization.capability?.evidence.delegation;
+  if (!authorization.authorized || !delegation || authorization.capability?.evidence.delegationVerified !== true) return false;
+  const expectedScopes = delegationSubjectScopes(delegation);
+  return branches.length > 0 && branches.every((branch) =>
+    expectedScopes.every((scope) => (branch.subjectScopes || []).includes(scope))
+    && branch.risk < 65
+  );
+}
+
+function delegationSubjectScopes(delegation: { sender: string; subject: string }): string[] {
+  return [subjectScopeHash(delegation.sender), subjectScopeHash(delegation.subject)];
+}
+
 function subjectScopesForAction(manifest: ToolSecurityManifest, action: AgentSentryAction): string[] {
   if (manifest.dataSubjects?.length === 1 && manifest.dataSubjects[0] === "caller") return ["caller"];
   const values = (manifest.subjectFields || []).flatMap((field) => readValuesAtField(action.args[field]));
-  return unique(values.map((value) => createHash("sha256")
-    .update(`agentsentry-subject-v1\u0000${value.normalize("NFKC").trim()}`, "utf8")
+  return unique(values.map(subjectScopeHash));
+}
+
+function subjectScopeHash(value: string): string {
+  return createHash("sha256")
+    .update(`agentsentry-subject-v1\u0000${value.normalize("NFKC").trim().toLowerCase()}`, "utf8")
     .digest("base64url")
-    .slice(0, 24)));
+    .slice(0, 24);
 }
 
 function sameSubjectScope(currentScopes: string[], prior: Label[]): boolean {
@@ -1865,6 +2159,9 @@ function runtimeFeedbackFindingsFor(action: AgentSentryAction, state: PolicyStat
         reasons: profile.reasons.slice(-4),
         events: profile.events.slice(-4),
       },
+      ...(critical
+        ? interventionEvidence("safety_boundary", { causal_certainty: "observed" })
+        : interventionEvidence("risk_only")),
     },
   )];
 }
@@ -1904,7 +2201,7 @@ function taskSpecBoundaryFindings(action: AgentSentryAction, state: PolicyState,
   if (taskSpec.capabilities.length > 4 && confidence < 0.8) {
     reasons.push("task spec contains several capability clauses and benefits from semantic review");
   }
-  if (taskSpec.allowed_tools.some((tool) => ["send_email", "write_file", "call_api", "memory_write", "shell_exec"].includes(tool)) && confidence < 0.75) {
+  if (taskSpec.allowed_tools.some((tool) => ["send_email", "write_file", "call_api", "memory_write", "shell_exec", "calendar_write", "cloud_file_write", "cloud_file_share"].includes(tool)) && confidence < 0.75) {
     reasons.push("task spec includes side-effect tools with uncertain scope");
   }
   if (!reasons.length) return [];
@@ -2029,6 +2326,7 @@ function ifcExecutionBoundaryFindings(
     || branch.risk >= 80
     || branch.integrity === "untrusted-external" && branch.risk >= 65
   );
+  if (!severe && delegatedBranchesAuthorized(authorization, branches)) return [];
   const strongAuthorization = hasStrongUserAuthorization(authorization);
   const verdict: "block" | "require_approval" = severe || !strongAuthorization ? "block" : "require_approval";
   const reason = verdict === "block"
@@ -2065,6 +2363,9 @@ function ifcExecutionBoundaryFindings(
         risk: branch.risk,
         confidence: branch.confidence,
       })),
+      ...(strongest.confidentiality === "tenant-secret"
+        ? interventionEvidence("safety_boundary", { causal_certainty: "observed" })
+        : interventionEvidence("risk_only")),
     },
   )];
 }
@@ -2073,7 +2374,8 @@ function hasStrongUserAuthorization(authorization: CapabilityAuthorization): boo
   const capability = authorization.capability;
   return Boolean(authorization.authorized
     && capability
-    && capability.evidence.source === "user"
+    && (capability.evidence.source === "user"
+      || (capability.evidence.source === "delegated_tool_result" && capability.evidence.delegationVerified === true))
     && capability.evidence.explicitAuthorization
     && !capability.evidence.insideQuotation
     && !capability.evidence.negated
@@ -2145,6 +2447,7 @@ function persistentMemoryIFCFindings(
       {
         key,
         labels: lowTrust.map(publicPersistentMemoryLabel),
+        ...persistentMemoryInterventionEvidence(lowTrust, action),
       },
     )];
   }
@@ -2159,8 +2462,27 @@ function persistentMemoryIFCFindings(
       key,
       tool: action.tool,
       labels: lowTrust.map(publicPersistentMemoryLabel),
+      ...persistentMemoryInterventionEvidence(lowTrust, action),
     },
   )];
+}
+
+function persistentMemoryInterventionEvidence(
+  labels: PersistentMemoryLabel[],
+  action: AgentSentryAction,
+): ReturnType<typeof interventionEvidence> {
+  const attackClass = attackClassForTags(unique(labels.flatMap((label) => label.tags || [])), action);
+  if (attackClass) {
+    return interventionEvidence("confirmed_attack", {
+      attack_class: attackClass,
+      causal_certainty: "observed",
+      confidence: 1,
+    });
+  }
+  if (labels.some((label) => label.confidentiality === "tenant-secret")) {
+    return interventionEvidence("safety_boundary", { causal_certainty: "observed" });
+  }
+  return interventionEvidence("risk_only");
 }
 
 function memoryKeyForAction(action: AgentSentryAction): string {
@@ -2261,16 +2583,32 @@ function evaluateAbacDecision(
   assessment: ActionAssessment,
   state: PolicyState,
 ) {
+  const authorization = authorizeCapability(state.taskSpec, action, { taskMode: state.taskSpec.task_mode });
+  const labels = trustLabelsForAction(action, state)
+    .filter((label) => !delegatedTrustLabelAllowed(label, authorization, state));
   return evaluateAbacDataFlow({
     action,
     assessment,
     sink: sinkForAction(action, assessment),
-    labels: trustLabelsForAction(action, state),
+    labels,
     isolatedBranches: state.ifcBranches,
     taskSpec: state.taskSpec,
     aggregateRisk: state.aggregateRisk,
     taintedSources: state.taintedSources,
   });
+}
+
+function delegatedTrustLabelAllowed(
+  label: TrustLabel,
+  authorization: CapabilityAuthorization,
+  state: PolicyState,
+): boolean {
+  if (!authorization.authorized
+    || authorization.capability?.evidence.source !== "delegated_tool_result"
+    || authorization.capability.evidence.delegationVerified !== true) return false;
+  const exposures = state.exposures.filter((exposure) => exposure.label.trust_label?.id === label.id);
+  return exposures.length > 0
+    && exposures.every((exposure) => delegatedExposureAllowed(authorization, exposure, state));
 }
 
 function trustLabelsForAction(action: AgentSentryAction, state: PolicyState): TrustLabel[] {
@@ -2608,15 +2946,12 @@ function isManifestBoundReadRequest(action: AgentSentryAction, manifest: ToolSec
 
 function readStringValues(args: Record<string, unknown>, keys: string[]): string[] {
   for (const key of keys) {
-    const value = args[key];
+    const original = args[key];
+    const value = isLabeledValue(original) ? original.value : original;
     if (typeof value === "string" && value.trim()) return [value.trim()];
     if (Array.isArray(value)) {
       const values = value.map((item) => flattenValueText(item).trim()).filter(Boolean);
       if (values.length) return values;
-    }
-    if (isLabeledValue(value)) {
-      const text = flattenValueText(value.value).trim();
-      if (text) return [text];
     }
   }
   return [];
@@ -2642,6 +2977,268 @@ function extractLatestUserText(messages: unknown): string | null {
     } catch {
       return "[unreadable user message]";
     }
+  }
+  return null;
+}
+
+function exposureInterventionEvidence(
+  action: AgentSentryAction,
+  label: Label,
+  observed: boolean,
+): ReturnType<typeof interventionEvidence> {
+  const tags = unique([...(label.tags || []), ...(label.taint_profile?.tags || [])]);
+  const attackClass = attackClassForTags(tags, action);
+  if (attackClass) {
+    return interventionEvidence(observed ? "confirmed_attack" : "attack_signal", {
+      attack_class: attackClass,
+      causal_certainty: observed ? "observed" : "inferred",
+      confidence: observed ? 1 : Math.max(0.55, (label.taint_profile?.confidence || 0) / 100),
+    });
+  }
+  if (label.confidentiality === "secret" || label.taint_profile?.confidentiality === "secret") {
+    return interventionEvidence("safety_boundary", {
+      attack_class: "credential_access",
+      causal_certainty: observed ? "observed" : "inferred",
+      confidence: observed ? 1 : 0.7,
+    });
+  }
+  return interventionEvidence("risk_only");
+}
+
+function inferredSessionAttackSinkFindings(
+  action: AgentSentryAction,
+  assessment: ActionAssessment,
+  state: PolicyState,
+  authorization: CapabilityAuthorization,
+): DetectionFinding[] {
+  if (authorization.authorized || !assessment.highRisk) return [];
+  const sink = sinkForAction(action, assessment) || (isSideEffectToolCall(action) ? action.tool : "");
+  if (!sink) return [];
+  const currentActionSequence = Math.max(state.actionSequence || 0, state.history.length);
+
+  const byAttackClass = new Map<AttackClass, {
+    sources: Set<string>;
+    tags: Set<string>;
+    confidence: number;
+  }>();
+  for (const exposure of state.exposures.slice(-80)) {
+    const observedSequence = typeof exposure.observedActionSequence === "number"
+      ? exposure.observedActionSequence
+      : exposure.observedHistoryIndex;
+    if (typeof observedSequence !== "number" || currentActionSequence - observedSequence > 12) continue;
+    if (!hasExternalAttackProvenance(exposure.label)) continue;
+    if (!attackExposureTargetsSink(exposure.text, action)) continue;
+    const tags = unique([...(exposure.label.tags || []), ...(exposure.label.taint_profile?.tags || [])]);
+    const attackClass = attackClassForExposure(exposure.label, tags, action);
+    if (!attackClass) continue;
+    const current = byAttackClass.get(attackClass) || {
+      sources: new Set<string>(),
+      tags: new Set<string>(),
+      confidence: 0.7,
+    };
+    current.sources.add(exposure.source);
+    for (const tag of tags) current.tags.add(tag);
+    const profileConfidence = exposure.label.taint_profile?.confidence;
+    if (typeof profileConfidence === "number" && Number.isFinite(profileConfidence)) {
+      current.confidence = Math.max(current.confidence, profileConfidence / 100);
+    }
+    byAttackClass.set(attackClass, current);
+  }
+
+  return [...byAttackClass.entries()].map(([attackClass, evidence]) => finding(
+    "Attack Causality",
+    "heuristic",
+    "require_approval",
+    "recent external attack evidence targets the same unauthorized high-risk sink family",
+    65,
+    {
+      tool: action.tool,
+      sink,
+      authorization_reason: authorization.reason,
+      relationship: "recent_external_attack_exposure_to_matching_sink_family",
+      causal_window_actions: 12,
+      attack_source_count: evidence.sources.size,
+      attack_sources: [...evidence.sources].sort().slice(-8),
+      attack_tags: [...evidence.tags].sort().slice(0, 12),
+      ...interventionEvidence("attack_signal", {
+        attack_class: attackClass,
+        causal_certainty: "inferred",
+        confidence: evidence.confidence,
+      }),
+    },
+  ));
+}
+
+function hasExternalAttackProvenance(label: Label): boolean {
+  const source = label.trust_label?.source;
+  const externalSource = source === "external_web"
+    || source === "email_html"
+    || source === "pdf_text"
+    || source === "image_metadata"
+    || source === "webhook";
+  const externalProvenance = label.provenance_untrusted === true
+    || label.taint_profile?.provenance_untrusted === true
+    || externalSource;
+  return externalProvenance;
+}
+
+function attackExposureTargetsSink(text: string, action: AgentSentryAction): boolean {
+  const normalized = text.normalize("NFKC").toLowerCase().replace(/[_-]+/g, " ");
+  if (!normalized.trim()) return false;
+  const patterns: Partial<Record<AgentSentryAction["tool"], RegExp>> = {
+    send_email: /(?:\b(?:send|forward|deliver|email|mail)\b.{0,100}\b(?:email|mail|recipient|address|subject|body|attachment)\b|\b(?:email|mail|recipient|address|subject|body|attachment)\b.{0,100}\b(?:send|forward|deliver|email|mail)\b|\b(?:send|forward|deliver)\b.{0,160}\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\b(?:email|mail)\b.{0,120}\bto\s+[\w.+-]+@[\w.-]+\.[a-z]{2,}\b|\bsend\s*email\b)|(?:发(?:送)?邮件|转发邮件|收件人|邮件主题|邮件正文)/iu,
+    cloud_file_write: /(?:\b(?:create|write|append|edit|delete|remove|rename|move|upload|overwrite|replace)\b.{0,80}\b(?:cloud|drive|file|document|folder)\b|\b(?:cloud|drive|file|document|folder)\b.{0,80}\b(?:create|write|append|edit|delete|remove|rename|move|upload|overwrite|replace)\b)|(?:(?:创建|写入|追加|编辑|删除|重命名|移动|上传|覆盖).{0,40}(?:云盘|云文件|文件|文档|文件夹)|(?:云盘|云文件|文件|文档|文件夹).{0,40}(?:创建|写入|追加|编辑|删除|重命名|移动|上传|覆盖))/iu,
+    cloud_file_share: /(?:\b(?:share|publish|grant|revoke|upload|make\s+public)\b.{0,80}\b(?:cloud|drive|file|document|folder|link)\b|\b(?:cloud|drive|file|document|folder)\b.{0,80}\b(?:share|publish|grant|revoke|upload|make\s+public)\b)|(?:(?:共享|分享|公开|授权|撤销|上传).{0,40}(?:云盘|云文件|文件|文档|文件夹|链接)|(?:云盘|云文件|文件|文档|文件夹).{0,40}(?:共享|分享|公开|授权|撤销|上传))/iu,
+    calendar_write: /(?:\b(?:create|add|cancel|delete|remove|reschedule|update|invite)\b.{0,80}\b(?:calendar|event|meeting|appointment|participant)\b|\b(?:calendar|event|meeting|appointment|participant)\b.{0,80}\b(?:create|add|cancel|delete|remove|reschedule|update|invite)\b)|(?:(?:创建|添加|取消|删除|改期|更新|邀请).{0,40}(?:日历|事件|会议|预约|参与者)|(?:日历|事件|会议|预约|参与者).{0,40}(?:创建|添加|取消|删除|改期|更新|邀请))/iu,
+    call_api: /(?:\b(?:call|invoke|request|post|put|patch|delete)\b.{0,120}(?:\b(?:api|endpoint|webhook|url)\b|https?:\/\/)|\b(?:upload|transmit|exfiltrate)\b.{0,120}https?:\/\/|\bsend\b.{0,120}\b(?:api|endpoint|webhook)\b|\b(?:api|endpoint|webhook)\b.{0,120}\b(?:call|invoke|request|send|upload|transmit|post|put|patch|delete)\b)|(?:(?:调用|请求|提交|删除|上传|传输).{0,60}(?:接口|端点|回调|网址|https?:\/\/)|(?:接口|端点|回调).{0,60}(?:调用|请求|提交|删除|上传|传输))/iu,
+    shell_exec: /(?:\b(?:run|execute|exec|invoke)\b.{0,80}\b(?:shell|command|terminal|script|powershell|sudo)\b|\b(?:shell|command|terminal|script|powershell|sudo)\b.{0,80}\b(?:run|execute|exec|invoke)\b)|(?:(?:运行|执行|调用).{0,40}(?:命令|终端|脚本|提权)|(?:命令|终端|脚本).{0,40}(?:运行|执行|调用))/iu,
+    memory_write: /(?:\b(?:remember|store|save|write|persist)\b.{0,80}\b(?:memory|future|session|startup)\b|\b(?:memory|startup)\b.{0,80}\b(?:remember|store|save|write|persist)\b)|(?:(?:记住|保存|写入|持久化).{0,40}(?:记忆|会话|以后|启动项)|(?:记忆|启动项).{0,40}(?:记住|保存|写入|持久化))/iu,
+    sessions_send: /(?:\b(?:send|forward|handoff|delegate)\b.{0,80}\b(?:agent|session|subagent|message)\b|\b(?:agent|session|subagent)\b.{0,80}\b(?:send|forward|handoff|delegate|message)\b)|(?:(?:发送|转交|委派).{0,40}(?:智能体|会话|消息)|(?:智能体|会话).{0,40}(?:发送|转交|委派))/iu,
+  };
+  return patterns[action.tool]?.test(normalized) || false;
+}
+
+function attackEvidenceExcerpt(text: string, previewChars: number): string {
+  const limit = Math.max(256, previewChars);
+  if (text.length <= limit) return text;
+  const marker = /<information>|important\s+message|ignore\s+(?:all\s+)?(?:previous|prior|above)|before\s+you\s+can|you\s+should\s+use\s+the\s+tool|system\s+message|提示注入|忽略(?:之前|以上)|重要(?:消息|指令)/iu.exec(text);
+  if (!marker) return text.slice(0, limit);
+  const contextBefore = Math.min(Math.floor(limit / 5), marker.index);
+  const start = marker.index - contextBefore;
+  return text.slice(start, start + limit);
+}
+
+function compactExposureHistory(
+  exposures: PolicyState["exposures"],
+  limit: number,
+): PolicyState["exposures"] {
+  if (exposures.length <= limit) return exposures;
+  const retained = new Set<number>();
+  for (let index = exposures.length - 1; index >= 0 && retained.size < limit; index -= 1) {
+    if (isAttackEvidenceExposure(exposures[index])) retained.add(index);
+  }
+  for (let index = exposures.length - 1; index >= 0 && retained.size < limit; index -= 1) {
+    if (isSecretExposure(exposures[index])) retained.add(index);
+  }
+  for (let index = exposures.length - 1; index >= 0 && retained.size < limit; index -= 1) {
+    retained.add(index);
+  }
+  return exposures.filter((_exposure, index) => retained.has(index));
+}
+
+function isAttackEvidenceExposure(exposure: PolicyState["exposures"][number]): boolean {
+  const tags = unique([...(exposure.label.tags || []), ...(exposure.label.taint_profile?.tags || [])]);
+  return attackClassForExposure(exposure.label, tags, {
+    tool: "unknown_tool",
+    originalTool: "unknown_tool",
+    args: {},
+    reason: "exposure retention classification",
+  }) !== null;
+}
+
+function attackClassForExposure(label: Label, tags: string[], action: AgentSentryAction): AttackClass | null {
+  const tagged = attackClassForTags(tags, action);
+  if (tagged) return tagged;
+  const risk = label.risk_vector || label.taint_profile?.risk_vector;
+  if (!risk) return null;
+  if (risk.prompt_injection >= 75 || risk.hidden_content >= 80) return "prompt_injection";
+  if (risk.exfiltration >= 70) return "exfiltration";
+  if (risk.tool_hijack >= 90) return "tool_hijack";
+  if (risk.persistence >= 85) return action.tool === "memory_write" ? "memory_poisoning" : "persistence_abuse";
+  return null;
+}
+
+function isSecretExposure(exposure: PolicyState["exposures"][number]): boolean {
+  return exposure.label.confidentiality === "secret"
+    || exposure.label.taint_profile?.confidentiality === "secret";
+}
+
+function semanticPathInterventionEvidence(path: {
+  risk: string;
+  certainty: "observed" | "conservative";
+  confidence: number;
+  nodeIds: string[];
+}, action: AgentSentryAction, state: PolicyState): ReturnType<typeof interventionEvidence> {
+  if (path.risk.startsWith("secret_to_")) {
+    return interventionEvidence("safety_boundary", {
+      attack_class: "exfiltration",
+      causal_certainty: path.certainty === "observed" ? "observed" : "inferred",
+      confidence: path.confidence,
+    });
+  }
+  if (!path.risk.startsWith("tainted_to_")) return interventionEvidence("risk_only");
+  const provenanceIds = new Set(state.semanticActionGraph.nodes
+    .filter((node) => path.nodeIds.includes(node.id) && node.kind === "data" && node.provenanceId)
+    .map((node) => node.provenanceId!));
+  const tags = unique(state.exposures
+    .filter((exposure) => exposure.provenanceId && provenanceIds.has(exposure.provenanceId))
+    .flatMap((exposure) => [...(exposure.label.tags || []), ...(exposure.label.taint_profile?.tags || [])]));
+  const attackClass = attackClassForTags(tags, action);
+  if (!attackClass) return interventionEvidence("risk_only");
+  return interventionEvidence(path.certainty === "observed" ? "confirmed_attack" : "attack_signal", {
+    attack_class: attackClass,
+    causal_certainty: path.certainty === "observed" ? "observed" : "inferred",
+    confidence: path.confidence,
+  });
+}
+
+function policyViolationInterventionEvidence(
+  violation: string,
+  action: AgentSentryAction,
+): ReturnType<typeof interventionEvidence> {
+  const hardBoundary = /secret-tainted|secret|credential|protected system path|sensitive asset|outside (?:the )?(?:workspace|allowed) root|escapes (?:the )?allowed root|(?:unc|network) path|no allowed write roots|allowed (?:read|write) root is not a directory|not allowlisted|missing (?:read|write) path|cannot be authorized without a workspace root|cannot (?:be )?canonicaliz|gateway override|control ui|sandbox|host escape/i.test(violation);
+  if (hardBoundary) {
+    return interventionEvidence("safety_boundary", { causal_certainty: "observed" });
+  }
+  if (/low-trust|hijack|malicious|prompt-injection|persistence instruction/i.test(violation)) {
+    const analysis = analyzeTrustContent(action.args, { source: "unknown", toolName: action.originalTool });
+    const attackClass = attackClassForTags(analysis.tags, action);
+    if (attackClass) {
+      const persistenceRelated = /persistence instruction|memory write|skill hijack|authoritative file content/i.test(violation);
+      if (persistenceRelated) {
+        return isActivePersistenceDestination(action)
+          ? interventionEvidence("confirmed_attack", {
+            attack_class: action.tool === "memory_write" ? "memory_poisoning" : "persistence_abuse",
+            causal_certainty: "observed",
+            confidence: 1,
+          })
+          : interventionEvidence("risk_only");
+      }
+      return interventionEvidence("attack_signal", {
+        attack_class: attackClass,
+        causal_certainty: "inferred",
+        confidence: 0.7,
+      });
+    }
+  }
+  return interventionEvidence("risk_only");
+}
+
+function isActivePersistenceDestination(action: AgentSentryAction): boolean {
+  if (action.tool === "memory_write") return true;
+  if (action.tool !== "write_file") return false;
+  const path = readFirstString(action.args, ["path", "file", "filename", "target"])
+    .replace(/\\/g, "/")
+    .toLowerCase();
+  return /(^|\/)(?:skills?|plugin-skills?|extensions?)(?:\/|$)/i.test(path)
+    || /(^|\/)(?:skill\.md|memory\.md|agents\.md|soul\.md|user\.md|openclaw\.json)$/i.test(path)
+    || /(^|\/)(?:cron\.d|systemd|startup)(?:\/|$)/i.test(path);
+}
+
+function attackClassForTags(tags: string[], action: AgentSentryAction): AttackClass | null {
+  const normalized = tags.map((tag) => tag.toLowerCase());
+  if (normalized.some((tag) => tag === "gateway_hijack" || tag === "skill_secret_exfiltration" || tag === "tool_hijack")) {
+    return "tool_hijack";
+  }
+  if (normalized.some((tag) => tag === "persistence_instruction" || tag === "memory_poisoning")) {
+    return action.tool === "memory_write" ? "memory_poisoning" : "persistence_abuse";
+  }
+  if (normalized.some((tag) => tag === "prompt_injection"
+    || tag === "hidden_html"
+    || tag === "url_fragment_instruction"
+    || tag === "pdf_hidden_text"
+    || tag === "image_metadata_instruction")) {
+    return "prompt_injection";
   }
   return null;
 }
@@ -2685,6 +3282,9 @@ function baseToolRisk(tool: string): number {
     memory_read: 10,
     read_webpage: 10,
     shell_exec: 25,
+    calendar_write: 22,
+    cloud_file_write: 22,
+    cloud_file_share: 25,
   }[tool] ?? 20;
 }
 

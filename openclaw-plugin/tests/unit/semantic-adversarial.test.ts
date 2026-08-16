@@ -137,7 +137,18 @@ describe("semantic judge adversarial boundaries", () => {
       judgeConfig(),
     );
     expect(findings).toEqual([
-      expect.objectContaining({ finding_type: "semantic", verdict: "block", score: 70 }),
+      expect.objectContaining({
+        finding_type: "semantic",
+        verdict: "block",
+        score: 70,
+        evidence: expect.objectContaining({
+          intervention_evidence: expect.objectContaining({
+            evidence_class: "attack_signal",
+            attack_class: "exfiltration",
+            causal_certainty: "inferred",
+          }),
+        }),
+      }),
     ]);
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -205,7 +216,16 @@ describe("semantic judge adversarial boundaries", () => {
       judgeConfig(),
     );
     expect(findings).toEqual([
-      expect.objectContaining({ verdict: "block", score: 85 }),
+      expect.objectContaining({
+        verdict: "block",
+        score: 85,
+        evidence: expect.objectContaining({
+          intervention_evidence: expect.objectContaining({
+            evidence_class: "attack_signal",
+            attack_class: "memory_poisoning",
+          }),
+        }),
+      }),
     ]);
   });
 });

@@ -1,0 +1,104 @@
+{
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "qwen": {
+        "baseUrl": "https://api.a6api.com/v1",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "QWEN_API_KEY"
+        },
+        "auth": "api-key",
+        "api": "openai-completions",
+        "timeoutSeconds": 120,
+        "models": [
+          {
+            "id": "deepseek-v4-flash",
+            "name": "deepseek-v4-flash",
+            "api": "openai-completions",
+            "contextWindow": 131072,
+            "maxTokens": 16384
+          }
+        ]
+      }
+    }
+  },
+  "meta": {
+    "lastTouchedVersion": "2026.6.10",
+    "lastTouchedAt": "2026-08-16T08:54:55.748Z"
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "qwen/deepseek-v4-flash"
+      }
+    },
+    "list": [
+      {
+        "id": "main"
+      },
+      {
+        "id": "bench-qwen-deepseek-v4-flash",
+        "name": "bench-qwen-deepseek-v4-flash",
+        "workspace": "/tmp/deeptrap/0042/agent_workspace",
+        "agentDir": "/tmp/agentsentry-deeptrap-agentward-deepseek-v4-flash-20260816-env1-full1/agents/bench-qwen-deepseek-v4-flash/agent",
+        "model": "qwen/deepseek-v4-flash"
+      }
+    ]
+  },
+  "gateway": {
+    "bind": "loopback",
+    "nodes": {
+      "denyCommands": [
+        "camera.snap",
+        "camera.clip",
+        "screen.record",
+        "contacts.add",
+        "calendar.add",
+        "reminders.add",
+        "sms.send"
+      ]
+    }
+  },
+  "session": {
+    "dmScope": "per-channel-peer"
+  },
+  "plugins": {
+    "allow": [
+      "agent-ward"
+    ],
+    "entries": {
+      "agent-ward": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
+        "config": {
+          "approvals": {
+            "enableUserApproval": false,
+            "timeoutMs": 1000
+          },
+          "notifications": {
+            "enableProactiveNotifications": false
+          },
+          "logging": {
+            "enableFileLog": true
+          },
+          "layers": {
+            "foundationScan": {
+              "blockToolCallOnFoundationScanWarning": true
+            }
+          },
+          "llm": {
+            "provider": "qwen",
+            "model": "deepseek-v4-flash",
+            "api": "openai-completions",
+            "baseUrl": "https://api.a6api.com/v1",
+            "apiKeyEnv": "AGENT_WARD_API_KEY"
+          }
+        }
+      }
+    }
+  }
+}

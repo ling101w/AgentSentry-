@@ -38,7 +38,9 @@ Runtime commands:
 ```text
 /agentsentry status
 /agentsentry profile competition
+/agentsentry profile evidence-gated
 /agentsentry config get
+/agentsentry config get intervention.mode
 /agentsentry config get enforcement.mode
 /agentsentry config set enforcement.mode approval
 /agentsentry config set enforcement.mode block
@@ -128,6 +130,14 @@ http://127.0.0.1:8765/api/export?format=json&limit=5000
 http://127.0.0.1:8765/api/export?format=csv&limit=5000
 ```
 
+New records use `schema_version = agentsentry.audit-record.v1`. Tool lifecycle records expose the audit-critical fields at the top level while retaining the historical `payload` copy for compatibility:
+
+- identity and correlation: `created_at`, `agent_id`, `session_id`, `openclaw_run_id`, `tool_name`, `tool_call_id`;
+- redacted input evidence: `params` and `params_sha256`;
+- policy and handling: `decision`, `disposition`, and `execution_status`.
+
+`params` is recursively redacted at the persistence boundary. `params_sha256` commits to the redacted canonical representation, so it supports correlation and integrity checks without hashing raw secrets. Readers should prefer top-level fields and fall back to `payload` for historical JSONL records. Records written before v1 remain readable and are not rewritten in place. Calls without a `tool_call_id` are correlated by a bounded per-session FIFO queue for the same tool name.
+
 ## Enforcement
 
 Default mode is `observe`, so the plugin records and alerts without changing OpenClaw behavior.
@@ -144,8 +154,57 @@ Named postures are available under `profiles/`:
 /agentsentry profile observe
 /agentsentry profile balanced
 /agentsentry profile competition
+/agentsentry profile evidence-gated
 /agentsentry profile high-security
 ```
+
+`enforcement.mode` controls what the runtime does after the policy returns a
+decision. The separate `intervention.mode` controls which evidence is allowed
+to produce that policy decision:
+
+- `risk-based` preserves the existing behavior: deterministic policy findings,
+  authorization gaps, behavior anomalies, and risk thresholds may produce
+  `ask` or `deny`.
+- `evidence-gated` is a high-precision intervention posture. Generic risk,
+  incomplete authorization, TaskSpec mismatch, or behavior drift remains in
+  the audit record but is overridden to `allow`. An attack-specific signal with
+  a causal link to the current action produces `ask`; a confirmed attack with
+  an observed causal link to a blocking sink produces `deny`.
+
+The `evidence-gated` profile keeps `intervention.preserveSafetyBoundaries=true`.
+Malformed policy input, manifest-integrity failures, path or sandbox escapes,
+secret-flow boundaries, and similarly non-negotiable invariants can therefore
+still produce `ask` or `deny` without being mislabeled as attack detection.
+Every policy record includes the final decision, `raw_decision`, whether the
+gate overrode it, the evidence class, attack classes, causal certainty, and
+whether a safety boundary was preserved.
+
+For a literal attack-evidence-only experiment, set
+`intervention.preserveSafetyBoundaries=false` after selecting the profile. This
+also disables the hard invariant exceptions above and is not recommended for
+production enforcement.
+
+This mode deliberately trades recall for fewer benign interventions. Attacks
+that do not produce a recognized attack signal or an auditable causal link may
+be allowed. Use `competition` or `high-security` when conservative risk-based
+containment is more important than intervention precision. Historical native
+results evaluated with the frozen `competition` policy retain their original
+semantics; selecting `evidence-gated` does not reinterpret those artifacts.
+
+As a local fixed-trajectory sanity check, the current working-tree policy was
+replayed over the expanded DeepSeek no-defense transcript: `63/63` observed
+malicious-side-effect trajectories were intercepted before their first target
+sink (`20 ask`, `43 deny`). At call level, 63 reached blocking boundaries and
+118 later target calls became unreachable. The separate benign replay produced
+`0/40` interventions across 142 observed tool calls. Both replays had zero
+detector-input mismatches. This replay sends recorded detector inputs through
+the bridge, does not execute AgentDojo tools, does not recompute utility, and
+is not an end-to-end ASR result. The source selection SHA-256 is
+`679cf45d9a186a5acc472151ba1b22a4a49c3029931b491d5611690d9fb9fad1`;
+the current plugin-dist SHA-256 is
+`6c48c86ff650e885b530c916981ca2e10e04515c9de5bf721131fc5b24f3b2b8`.
+These results remain private until this profile is frozen in its own policy
+commit.
 
 Proactive notifications are disabled by default. Enable them with:
 

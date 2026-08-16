@@ -4,8 +4,9 @@ import { semanticActionFindings } from "./action-semantics.ts";
 import { toolManifestFindings } from "./tool-manifest.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
 import { systemPreflight } from "./system-monitor.ts";
-import { analyzeTrustContent, riskMax, sourceFromTool } from "./trust.ts";
+import { analyzeTrustContent, riskMax } from "./trust.ts";
 import { memoryGuardScanWrite, type MemorySourceClass } from "./memory-guard.ts";
+import { interventionEvidence } from "./policy/intervention-gate.ts";
 import { isLowRiskShellReadCommand, isSafeSystemReadPath } from "./policy/safe-ops.ts";
 import { isLabeledValue } from "./policy/value-utils.ts";
 import {
@@ -132,7 +133,7 @@ export function detectToolCall(
     risk = 5;
   }
   const trustAnalysis = analyzeTrustContent(params, {
-    source: sourceFromTool(toolName),
+    source: "unknown",
     sourceId: toolName,
     toolName,
     previewChars: config.capture.previewChars,
@@ -181,7 +182,12 @@ export function detectToolCall(
         verdict: "block",
         reason: "dangerous command pattern detected",
         score: 90,
-        evidence: { toolName, command: clampText(command, config.capture.previewChars), matched },
+        evidence: {
+          toolName,
+          command: clampText(command, config.capture.previewChars),
+          matched,
+          ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
+        },
       });
     }
   }
@@ -196,7 +202,11 @@ export function detectToolCall(
       verdict: "block",
       reason: "tool parameters reference sensitive or system paths",
       score: 75,
-      evidence: { toolName, paths: sensitivePaths.slice(0, 5) },
+      evidence: {
+        toolName,
+        paths: sensitivePaths.slice(0, 5),
+        ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
+      },
     });
   }
 
@@ -209,7 +219,11 @@ export function detectToolCall(
       verdict: "require_approval",
       reason: "tool call contains prompt-injection or exfiltration indicators",
       score: 35,
-      evidence: { toolName, matched: injectionMatches.slice(0, 5) },
+      evidence: {
+        toolName,
+        matched: injectionMatches.slice(0, 5),
+        ...interventionEvidence("risk_only"),
+      },
     });
   }
 
@@ -245,7 +259,11 @@ function strictSandboxFindingsFor(
     verdict: "block",
     reason: "strict shell isolation requires an existing workspace boundary before execution",
     score: 100,
-    evidence: { tool: normalizedTool, workspaceDir: workspaceDir || "[missing]" },
+    evidence: {
+      tool: normalizedTool,
+      workspaceDir: workspaceDir || "[missing]",
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
+    },
   }];
 }
 
@@ -274,7 +292,15 @@ export function detectMessageContent(content: unknown, config: PluginConfig): De
       verdict: "pass",
       reason: "message contains prompt-injection indicators",
       score: 25,
-      evidence: { matched: matched.slice(0, 5), preview: text },
+      evidence: {
+        matched: matched.slice(0, 5),
+        preview: text,
+        ...interventionEvidence("attack_signal", {
+          attack_class: "prompt_injection",
+          causal_certainty: "none",
+          confidence: 0.7,
+        }),
+      },
     });
   const deduped = dedupeDetectionFindings(findings);
   return config.capture.includeMessageText
@@ -355,6 +381,11 @@ function mcpToolMetadataFindings(toolName: string, params: Record<string, unknow
         key: hit.key,
         preview: clampText(hit.preview, config.capture.previewChars),
       })),
+      ...interventionEvidence(strong.length ? "confirmed_attack" : "attack_signal", {
+        attack_class: "tool_hijack",
+        causal_certainty: strong.length ? "observed" : "inferred",
+        confidence: strong.length ? 1 : 0.7,
+      }),
     },
   }];
 }
@@ -696,6 +727,7 @@ function inputBoundaryFinding(surface: "tool" | "message", toolName: string, ano
     evidence: {
       toolName: clampText(toolName, MAX_TOOL_NAME_CHARS),
       anomalies: anomalies.slice(0, 24).map((item) => clampText(item, 180)),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     },
   };
 }
@@ -703,7 +735,7 @@ function inputBoundaryFinding(surface: "tool" | "message", toolName: string, ano
 function withoutCapturedMessageEvidence(finding: DetectionFinding): DetectionFinding {
   const evidence = finding.evidence || {};
   const retained: Record<string, unknown> = { capture: "[disabled]" };
-  for (const key of ["source", "path", "toolName", "tags", "risk_vector", "sensitive_kinds", "provenance_untrusted", "trust_label", "taint_profile"]) {
+  for (const key of ["source", "path", "toolName", "tags", "risk_vector", "sensitive_kinds", "provenance_untrusted", "trust_label", "taint_profile", "intervention_evidence"]) {
     if (evidence[key] !== undefined) retained[key] = evidence[key];
   }
   return { ...finding, evidence: retained };

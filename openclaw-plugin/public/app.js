@@ -300,6 +300,20 @@ function render() {
   const selected = records.find((record) => record.id === state.selectedId) || state.records.find((record) => record.id === state.selectedId);
   if (selected) renderDetail(selected);
   else renderEmptyDetail();
+
+  try {
+    window.dispatchEvent(new CustomEvent("agentsentry:records", {
+      detail: {
+        records: state.records,
+        timelineRecords: records,
+        selectedSession: state.selectedSession,
+        selectedId: state.selectedId,
+        stats: state.stats,
+      },
+    }));
+  } catch {
+    // Older browsers without CustomEvent: the semantic graph layer is optional.
+  }
 }
 
 function renderStats() {
@@ -473,8 +487,8 @@ function decisionStory(records) {
     || related.find((record) => record.type === "alert" && /taskspec|explicit capability|intent|authorization|outside task|drift/i.test(searchableText(record)));
   const dataRecord = related.find((record) => record.type === "guard_finding" && /sensitive|secret|credential|\.env|taint|pollution|exfiltrat/i.test(searchableText(record)))
     || related.find((record) => /sensitive|secret|credential|\.env|taint|pollution|exfiltrat/i.test(searchableText(record)));
-  const tool = displayTool(payload.normalized_tool || payload.toolName || payload.tool || decisionRecord.tool || "工具调用");
-  const rawDecision = payload.decision || payload.verdict || payload.original_decision || (isBlocked(decisionRecord) ? "deny" : "allow");
+  const tool = displayTool(decisionRecord.tool_name || payload.normalized_tool || payload.toolName || payload.tool || decisionRecord.tool || "工具调用");
+  const rawDecision = decisionRecord.decision || payload.decision || payload.verdict || payload.original_decision || (isBlocked(decisionRecord) ? "deny" : "allow");
   const decision = decisionNames[rawDecision] || rawDecision;
   const tone = isBlocked(decisionRecord) ? "danger" : rawDecision === "ask" ? "warning" : "success";
   const steps = [
@@ -832,10 +846,12 @@ function quickFacts(record) {
     ["Run", record.run_id || "-"],
   ];
 
-  if (payload.toolName || payload.normalized_tool) rows.push(["工具", payload.normalized_tool ? `${displayTool(payload.toolName || "-")} -> ${displayTool(payload.normalized_tool)}` : displayTool(payload.toolName)]);
+  const toolName = record.tool_name || payload.toolName;
+  const decision = record.decision || payload.decision;
+  if (toolName || payload.normalized_tool) rows.push(["工具", payload.normalized_tool ? `${displayTool(toolName || "-")} -> ${displayTool(payload.normalized_tool)}` : displayTool(toolName)]);
   if (payload.role) rows.push(["消息角色", roleNames[payload.role] || payload.role]);
   if (payload.stopReason) rows.push(["停止原因", stopReasonNames[payload.stopReason] || payload.stopReason]);
-  if (payload.decision || payload.original_decision) rows.push(["裁决", `${decisionNames[payload.decision] || payload.decision || "-"} / ${decisionNames[payload.original_decision] || payload.original_decision || "-"}`]);
+  if (decision || payload.original_decision) rows.push(["裁决", `${decisionNames[decision] || decision || "-"} / ${decisionNames[payload.original_decision] || payload.original_decision || "-"}`]);
   if (payload.risk_score !== undefined) rows.push(["风险分", payload.risk_score]);
   if (payload.approval_cache_hit !== undefined) rows.push(["审批缓存", payload.approval_cache_hit ? "命中" : "未命中"]);
   if (payload.grouped) {
@@ -852,7 +868,7 @@ function decisionSummary(record) {
 
   const findings = Array.isArray(payload.findings) ? payload.findings : [];
   const rows = [
-    ["判定", decisionNames[payload.verdict] || decisionNames[payload.decision] || payload.verdict || payload.decision || "-"],
+    ["判定", decisionNames[record.decision] || decisionNames[payload.verdict] || decisionNames[payload.decision] || record.decision || payload.verdict || payload.decision || "-"],
     ["确定性阻断", payload.deterministic_block ? "是" : "否"],
     ["违规原因", translateText((payload.violations || []).join("; ") || payload.summary || "-")],
     ["允许工具", payload.task_spec?.allowed_tools?.map(displayTool).join(", ") || "-"],
@@ -922,7 +938,8 @@ function summaryText(record) {
     return `${record.summary || ""} ${translateText(payload.reason || "")}`.trim();
   }
   if (record.type === "tool_decision") {
-    return translateText((payload.violations || []).join("; ") || payload.summary || `${displayTool(payload.toolName || "tool")} -> ${decisionNames[payload.decision] || payload.decision || payload.verdict || "裁决"}`);
+    const decision = record.decision || payload.decision;
+    return translateText((payload.violations || []).join("; ") || payload.summary || `${displayTool(record.tool_name || payload.toolName || "tool")} -> ${decisionNames[decision] || decision || payload.verdict || "裁决"}`);
   }
   if (record.type === "guard_finding") {
     return translateText(payload.reason || record.summary || "");
@@ -963,11 +980,11 @@ function chip(label, kind) {
 
 function isBlocked(record) {
   const payload = record.payload || {};
-  return record.severity === "danger" || payload.verdict === "block" || payload.decision === "deny" || payload.original_decision === "deny";
+  return record.severity === "danger" || record.disposition === "blocked" || record.decision === "deny" || payload.verdict === "block" || payload.decision === "deny" || payload.original_decision === "deny";
 }
 
 function searchableText(record) {
-  return `${record.title} ${record.summary} ${record.type} ${record.layer} ${record.session_key} ${record.run_id} ${JSON.stringify(record.payload)}`.toLowerCase();
+  return `${record.title} ${record.summary} ${record.type} ${record.layer} ${record.session_key} ${record.run_id} ${record.tool_name || ""} ${record.decision || ""} ${record.disposition || ""} ${JSON.stringify(record.params || {})} ${JSON.stringify(record.payload)}`.toLowerCase();
 }
 
 function compactSession(value) {

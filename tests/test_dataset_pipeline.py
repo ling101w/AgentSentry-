@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 
 import pytest
 
@@ -12,6 +14,7 @@ from agentsentry.dataset_pipeline.sampling import balance_attack_ratio
 from agentsentry.dataset_pipeline.sources import SOURCE_BY_KEY
 from agentsentry.dataset_pipeline.split import split_group, split_records
 from agentsentry.dataset_pipeline.validation import validate_records
+from agentsentry.dataset_pipeline.regression import RegressionSnapshotError, verify_regression_snapshot
 
 
 def _record(
@@ -55,6 +58,32 @@ def test_validation_marks_invalid_without_dropping_record() -> None:
     assert report["invalid"] == 1
     assert records[1]["quality"]["status"] == "invalid"
     assert "missing_agentsentry_command" in records[1]["quality"]["reasons"]
+
+
+def test_regression_snapshot_verifier_detects_byte_or_line_drift(tmp_path) -> None:
+    artifact = tmp_path / "agentsentry" / "benchmark_cases.jsonl"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text('{"case_id":"one"}\n', encoding="utf-8")
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    manifest = tmp_path / "regression_snapshot.json"
+    manifest.write_text(
+        json.dumps({
+            "schema_version": "agentsentry.regression_snapshot.v1",
+            "snapshot_id": "fixture",
+            "artifacts": [{
+                "path": "agentsentry/benchmark_cases.jsonl",
+                "lines": 1,
+                "bytes": artifact.stat().st_size,
+                "sha256": digest,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    assert verify_regression_snapshot(tmp_path, manifest)["verified"] is True
+    artifact.write_text('{"case_id":"changed"}\n', encoding="utf-8")
+    with pytest.raises(RegressionSnapshotError, match="snapshot drift"):
+        verify_regression_snapshot(tmp_path, manifest)
 
 
 def test_validation_applies_strict_research_schema_and_request_limit() -> None:

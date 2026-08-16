@@ -1,0 +1,225 @@
+/* graph.css — AgentSentry / OpenClaw 攻击事件详情首页（暗色，自包含主题） */
+
+.graph-home {
+  --bg-0: #0a0f16;
+  --bg-1: #0d141d;
+  --bg-2: #121b27;
+  --bg-3: #16202e;
+  --line: rgba(148, 178, 208, 0.14);
+  --line-strong: rgba(148, 178, 208, 0.28);
+  --ink-0: #d9e4ee;
+  --ink-1: #8fa3b4;
+  --ink-2: #5d7284;
+  --cyan: #40e6ff;
+  --blue: #4aa8ff;
+  --purple: #b48cff;
+  --teal: #24e6b6;
+  --green: #35f29b;
+  --amber: #f8b84e;
+  --red: #ff4d5e;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-0);
+  color: var(--ink-0);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+}
+
+.graph-home * { box-sizing: border-box; }
+.graph-home h1, .graph-home h2, .graph-home h3, .graph-home p { margin: 0; color: inherit; }
+.graph-home button { font-family: inherit; }
+.graph-home ::-webkit-scrollbar { width: 8px; height: 8px; }
+.graph-home ::-webkit-scrollbar-thumb { background: rgba(148, 178, 208, 0.22); border-radius: 8px; }
+.graph-home ::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- 顶栏 ---------- */
+.graph-home .topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 56px;
+  flex: 0 0 auto;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #0d1520, #0a0f16);
+}
+
+.graph-home .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.graph-home .brand .logo { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: rgba(64, 230, 255, 0.10); border: 1px solid rgba(64, 230, 255, 0.35); }
+.graph-home .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+.graph-home .brand-text strong { font-size: 14.5px; letter-spacing: 0.2px; }
+.graph-home .brand-text span { color: var(--ink-2); font-size: 10.5px; }
+
+.graph-home .top-divider { width: 1px; height: 26px; background: var(--line-strong); }
+
+.graph-home .page-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.graph-home .page-title h1 { font-size: 17px; font-weight: 800; letter-spacing: 0.5px; }
+
+.graph-home .chip { padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.graph-home .chip.ghost { background: var(--bg-2); border: 1px solid var(--line); color: var(--ink-1); font-weight: 500; }
+.graph-home .chip.danger { background: rgba(255, 77, 94, 0.16); border: 1px solid rgba(255, 77, 94, 0.55); color: var(--red); }
+
+.graph-home .top-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.graph-home .defense-pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border: 1px solid rgba(53, 242, 155, 0.4); border-radius: 999px; background: rgba(53, 242, 155, 0.08); color: var(--green); font-size: 11.5px; white-space: nowrap; }
+.graph-home .defense-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+.graph-home .top-link { padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink-1); font-size: 11.5px; text-decoration: none; white-space: nowrap; }
+.graph-home .top-link:hover { border-color: var(--cyan); color: var(--cyan); }
+.graph-home .bell { position: relative; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg-2); color: var(--ink-1); cursor: pointer; }
+.graph-home .bell:hover { color: var(--cyan); border-color: var(--cyan); }
+.graph-home .bell-count { position: absolute; top: -7px; right: -8px; min-width: 26px; padding: 2px 5px; border-radius: 999px; background: var(--red); color: #fff; font-size: 9.5px; font-weight: 800; text-align: center; }
+.graph-home .team-chip { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg-2); color: var(--ink-0); font-size: 11.5px; white-space: nowrap; }
+
+/* ---------- 主体 ---------- */
+.graph-home .app-body { display: flex; flex: 1 1 auto; min-height: 0; }
+
+/* 左侧图标导航 */
+.graph-home .icon-nav { display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 64px; flex: 0 0 auto; padding: 10px 6px; border-right: 1px solid var(--line); background: rgba(10, 16, 24, 0.7); }
+.graph-home .nav-item { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px; border: none; border-radius: 9px; background: transparent; color: var(--ink-2); cursor: pointer; font-size: 10px; }
+.graph-home .nav-item .nav-ic { font-size: 15px; line-height: 1; filter: grayscale(0.4); }
+.graph-home .nav-item:hover { color: var(--ink-1); background: var(--bg-2); }
+.graph-home .nav-item.active { color: var(--cyan); background: rgba(64, 230, 255, 0.10); box-shadow: inset 2px 0 0 var(--cyan); }
+.graph-home .nav-item.active .nav-ic { filter: none; }
+.graph-home .nav-badge { position: absolute; top: 3px; right: 8px; min-width: 16px; padding: 1px 4px; border-radius: 999px; background: var(--red); color: #fff; font-size: 9px; font-weight: 800; text-align: center; }
+.graph-home .nav-foot { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--teal); }
+.graph-home .nav-foot strong { color: var(--ink-1); font-size: 10px; }
+.graph-home .nav-foot .nav-ver { color: var(--ink-2); font-size: 9.5px; }
+
+/* 三栏主区 */
+.graph-home .main-grid { display: grid; grid-template-columns: 340px minmax(0, 1fr) 372px; gap: 10px; flex: 1 1 auto; min-height: 0; padding: 10px 10px 5px; }
+
+.graph-home .panel { display: flex; flex-direction: column; min-height: 0; background: var(--bg-1); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.graph-home .panel-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.graph-home .panel-head h2 { font-size: 13px; font-weight: 700; }
+.graph-home .panel-head h2 em { color: var(--ink-2); font-style: normal; font-size: 11px; font-weight: 500; }
+.graph-home .head-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.graph-home .head-btn { padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg-2); color: var(--ink-1); font-size: 11px; cursor: pointer; white-space: nowrap; }
+.graph-home .head-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+.graph-home .head-btn.close { padding: 2px 8px; font-size: 13px; }
+.graph-home .info-dot { color: var(--ink-2); font-size: 12px; }
+
+/* 左栏：对话 / 请求上下文 */
+.graph-home .ctx-cards { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.graph-home .ctx-card { border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); padding: 10px 12px; }
+.graph-home .ctx-card header { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; }
+.graph-home .ctx-card header i { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-style: normal; font-size: 10.5px; font-weight: 800; color: #06131c; }
+.graph-home .ctx-card header em { color: var(--ink-2); font-style: normal; font-size: 10.5px; font-weight: 500; }
+.graph-home .ctx-card header .layer-tag { margin-left: auto; padding: 2px 8px; border-radius: 6px; background: rgba(255, 77, 94, 0.14); border: 1px solid rgba(255, 77, 94, 0.45); color: var(--red); font-size: 9.5px; font-weight: 700; }
+.graph-home .ctx-card p { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(8, 13, 20, 0.65); border: 1px solid rgba(148, 178, 208, 0.08); color: var(--ink-1); font-size: 11.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-all; }
+.graph-home .ctx-card footer { margin-top: 8px; display: flex; justify-content: space-between; gap: 8px; color: var(--ink-2); font-size: 10.5px; }
+.graph-home .ctx-card.tone-blue { border-color: rgba(74, 168, 255, 0.45); }
+.graph-home .ctx-card.tone-blue header i { background: var(--blue); }
+.graph-home .ctx-card.tone-purple header i { background: var(--purple); }
+.graph-home .ctx-card.tone-teal header i { background: var(--teal); }
+.graph-home .ctx-card.tone-red { border-color: rgba(255, 77, 94, 0.5); }
+.graph-home .ctx-card.tone-red header i { background: var(--red); color: #fff; }
+.graph-home .ctx-card.tone-red p { color: #ffb3ba; }
+.graph-home .tool-chips { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.graph-home .tool-chip { padding: 4px 9px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg-3); color: var(--ink-0); font-size: 10.5px; font-family: Consolas, "Cascadia Code", monospace; }
+.graph-home .tool-chip.more { color: var(--ink-2); }
+
+/* 中栏：攻击因果图 */
+.graph-home .graph-col { position: relative; }
+.graph-home .graph-legend-row { display: flex; align-items: center; gap: 16px; padding: 8px 14px 0; color: var(--ink-1); font-size: 11px; }
+.graph-home .graph-legend-row span { display: inline-flex; align-items: center; gap: 6px; }
+.graph-home .lg-dot { width: 9px; height: 9px; border-radius: 50%; }
+.graph-home .lg-dot.blue { background: var(--blue); }
+.graph-home .lg-dot.amber { background: var(--amber); }
+.graph-home .lg-arrow { width: 22px; height: 0; border-top: 2px solid var(--red); position: relative; }
+.graph-home .lg-arrow::after { content: ""; position: absolute; right: -1px; top: -4px; border-left: 6px solid var(--red); border-top: 3px solid transparent; border-bottom: 3px solid transparent; }
+.graph-home .lg-plus { color: var(--green); font-style: normal; font-weight: 800; }
+.graph-home .graph-pager { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.graph-home .graph-pager button { width: 24px; height: 22px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg-2); color: var(--ink-0); cursor: pointer; font-size: 12px; }
+.graph-home .graph-pager button:hover { border-color: var(--cyan); color: var(--cyan); }
+.graph-home .graph-pager b { min-width: 46px; text-align: center; color: var(--ink-1); font-size: 11px; font-weight: 600; }
+
+.graph-home .graph-banner { margin: 8px 14px 0; padding: 7px 12px; border: 1px solid rgba(255, 77, 94, 0.55); border-radius: 8px; background: rgba(255, 77, 94, 0.10); color: #ffb3ba; font-size: 11.5px; text-align: center; }
+
+.graph-home .graph-canvas { position: relative; flex: 1 1 auto; min-height: 0; margin: 8px 14px; border: 1px solid var(--line); border-radius: 10px; background: radial-gradient(700px 320px at 50% -10%, rgba(64, 230, 255, 0.05), transparent 65%), rgba(8, 13, 20, 0.5); overflow: hidden; }
+.graph-home #cyGraph { position: absolute; inset: 0; }
+.graph-home .graph-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-2); font-size: 12.5px; text-align: center; padding: 24px; }
+.graph-home .graph-hint { padding: 0 14px 10px; color: var(--ink-2); font-size: 10.5px; }
+
+/* 右栏：证据详情 */
+.graph-home .evidence-col { border-color: rgba(255, 77, 94, 0.35); }
+.graph-home .red-head { border-bottom-color: rgba(255, 77, 94, 0.3); }
+.graph-home .red-head h2 { color: #ffd7db; }
+.graph-home .auto-pill { padding: 3px 9px; border-radius: 6px; background: rgba(255, 77, 94, 0.16); border: 1px solid rgba(255, 77, 94, 0.5); color: var(--red); font-size: 10px; font-weight: 700; }
+.graph-home .evidence-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; }
+.graph-home .ev-selected { color: var(--ink-1); font-size: 11.5px; }
+.graph-home .ev-selected b { color: var(--ink-0); }
+
+.graph-home .ev-row { display: flex; align-items: flex-start; gap: 8px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-2); font-size: 11.5px; }
+.graph-home .ev-row.col { flex-direction: column; gap: 6px; }
+.graph-home .ev-ic { color: var(--ink-2); font-size: 12px; line-height: 1.4; }
+.graph-home .ev-label { color: var(--ink-1); font-weight: 600; }
+.graph-home .ev-label em { color: var(--ink-2); font-style: normal; font-weight: 500; font-size: 10.5px; }
+.graph-home .ev-row p { color: var(--ink-0); line-height: 1.6; word-break: break-all; }
+.graph-home .mono-chip { align-self: flex-start; padding: 2px 8px; border-radius: 6px; background: rgba(64, 230, 255, 0.10); border: 1px solid rgba(64, 230, 255, 0.35); color: var(--cyan); font-size: 10px; font-family: Consolas, "Cascadia Code", monospace; }
+.graph-home .ok-chip { align-self: flex-start; padding: 2px 9px; border-radius: 6px; background: rgba(53, 242, 155, 0.12); border: 1px solid rgba(53, 242, 155, 0.45); color: var(--green); font-size: 10px; font-weight: 700; }
+.graph-home .copy-btn { margin-left: auto; padding: 2px 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg-3); color: var(--ink-1); font-size: 10px; cursor: pointer; }
+.graph-home .copy-btn:hover { color: var(--cyan); border-color: var(--cyan); }
+.graph-home .ev-row pre { margin: 0; padding: 8px 10px; border-radius: 8px; background: rgba(8, 13, 20, 0.75); border: 1px solid rgba(148, 178, 208, 0.08); color: #ffb3ba; font-size: 10.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; max-height: 150px; overflow-y: auto; font-family: Consolas, "Cascadia Code", monospace; }
+
+.graph-home .ev-actions { display: flex; gap: 8px; }
+.graph-home .ev-actions button { padding: 5px 14px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg-3); color: var(--ink-1); font-size: 11px; cursor: pointer; }
+.graph-home .ev-actions button:hover { border-color: var(--cyan); color: var(--cyan); }
+.graph-home .ev-actions button.active-allow { border-color: rgba(53, 242, 155, 0.6); color: var(--green); background: rgba(53, 242, 155, 0.1); }
+.graph-home .ev-actions button.active-ask { border-color: rgba(248, 184, 78, 0.6); color: var(--amber); background: rgba(248, 184, 78, 0.1); }
+.graph-home .ev-actions button.active-deny { border-color: rgba(255, 77, 94, 0.65); color: #fff; background: rgba(255, 77, 94, 0.75); font-weight: 700; }
+
+.graph-home .ev-meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg-2); font-size: 11px; }
+.graph-home .ev-meta span { color: var(--ink-2); }
+.graph-home .ev-meta b { color: var(--ink-0); font-weight: 500; font-family: Consolas, "Cascadia Code", monospace; word-break: break-all; }
+
+/* ---------- 底部 ---------- */
+.graph-home .bottom-grid { display: grid; grid-template-columns: minmax(430px, 560px) minmax(0, 1fr); gap: 10px; flex: 0 0 auto; padding: 5px 10px 10px; height: 178px; }
+
+.graph-home .summary-panel .panel-head p { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-1); font-size: 11px; }
+.graph-home .sum-cards { flex: 1 1 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 10px 12px; min-height: 0; }
+.graph-home .sum-card { display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 10px 12px; border-radius: 9px; background: var(--bg-2); border: 1px solid var(--line); min-width: 0; }
+.graph-home .sum-card span { color: var(--ink-2); font-size: 10.5px; white-space: nowrap; }
+.graph-home .sum-card b { font-size: 15px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-home .sum-card.red { border-color: rgba(255, 77, 94, 0.5); background: rgba(255, 77, 94, 0.08); }
+.graph-home .sum-card.red b { color: var(--red); }
+.graph-home .sum-card.green b { color: var(--green); }
+.graph-home .sum-card.amber b { color: var(--amber); }
+.graph-home .sum-card.teal b { color: var(--teal); }
+
+.graph-home .timeline-panel .replay-mini { display: inline-flex; align-items: center; gap: 4px; }
+.graph-home .replay-mini button { width: 24px; height: 22px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg-2); color: var(--ink-0); cursor: pointer; font-size: 10.5px; }
+.graph-home .replay-mini button:hover { border-color: var(--cyan); color: var(--cyan); }
+.graph-home .replay-mini button.playing { border-color: rgba(248, 184, 78, 0.6); color: var(--amber); }
+.graph-home .replay-mini b { margin-left: 4px; color: var(--ink-1); font-size: 10.5px; font-weight: 600; }
+
+.graph-home .tl-track { position: relative; flex: 1 1 auto; min-height: 0; overflow-x: auto; overflow-y: hidden; display: flex; align-items: stretch; padding: 8px 22px 12px; }
+.graph-home .tl-empty { margin: auto; color: var(--ink-2); font-size: 11.5px; }
+.graph-home .tl-line { position: absolute; left: 22px; right: 22px; top: 34px; height: 2px; background: var(--line-strong); }
+.graph-home .tl-step { position: relative; z-index: 1; flex: 1 0 118px; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; cursor: pointer; }
+.graph-home .tl-step .tl-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--blue); border: 2px solid var(--bg-0); box-shadow: 0 0 0 1px var(--line-strong); margin-top: 18px; }
+.graph-home .tl-step.tone-amber .tl-dot { background: var(--amber); }
+.graph-home .tl-step.tone-red .tl-dot { background: var(--red); box-shadow: 0 0 8px rgba(255, 77, 94, 0.7); }
+.graph-home .tl-step.tone-green .tl-dot { background: var(--green); }
+.graph-home .tl-step .tl-name { font-size: 10.5px; color: var(--ink-1); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-home .tl-step.tone-red .tl-name { color: #ffb3ba; }
+.graph-home .tl-step.tone-green .tl-name { color: var(--green); }
+.graph-home .tl-step .tl-time { font-size: 9.5px; color: var(--ink-2); font-family: Consolas, "Cascadia Code", monospace; }
+.graph-home .tl-step.hidden-step { opacity: 0.25; }
+.graph-home .tl-step.current .tl-dot { box-shadow: 0 0 0 3px rgba(64, 230, 255, 0.35); }
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 1380px) {
+  .graph-home .main-grid { grid-template-columns: 300px minmax(0, 1fr) 330px; }
+  .graph-home .bottom-grid { grid-template-columns: minmax(380px, 470px) minmax(0, 1fr); }
+}
+@media (max-width: 1120px) {
+  .graph-home { overflow: auto; height: auto; }
+  .graph-home .app-body { flex-direction: column; }
+  .graph-home .icon-nav { flex-direction: row; width: auto; border-right: none; border-bottom: 1px solid var(--line); }
+  .graph-home .nav-foot { display: none; }
+  .graph-home .main-grid { grid-template-columns: 1fr; }
+  .graph-home .graph-canvas { min-height: 380px; }
+  .graph-home .bottom-grid { grid-template-columns: 1fr; height: auto; }
+}

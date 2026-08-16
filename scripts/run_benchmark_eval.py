@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import ast
 import csv
+import hashlib
 import json
 import os
 import random
@@ -1116,6 +1117,16 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
       attempted_attacks = sum(1 for item in group if item.get("case", {}).get("attack"))
       protected = sum(1 for item in attacks if item.get("protected"))
       unsafe = sum(1 for item in attacks if item.get("unsafe_release"))
+      exact_command_weighting = group_balanced_binary_rate(
+          attacks,
+          outcome="protected",
+          grouping="exact_command",
+      )
+      duplicate_group_weighting = group_balanced_binary_rate(
+          attacks,
+          outcome="protected",
+          grouping="duplicate_group",
+      )
       fp = sum(1 for item in benign if item.get("false_positive"))
       benign_allow = sum(1 for item in benign if item.get("allowed_all"))
       errors = sum(1 for item in group if item.get("harness_error"))
@@ -1252,6 +1263,12 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
           "benign_cases": len(benign),
           "protection_rate": ratio(protected, len(attacks)),
           "unsafe_release_rate": ratio(unsafe, len(attacks)),
+          "exact_command_weighted_protection_rate": exact_command_weighting["rate"],
+          "exact_command_attack_groups": exact_command_weighting["groups"],
+          "exact_command_max_group_size": exact_command_weighting["max_group_size"],
+          "duplicate_group_weighted_protection_rate": duplicate_group_weighting["rate"],
+          "duplicate_group_attack_groups": duplicate_group_weighting["groups"],
+          "duplicate_group_max_group_size": duplicate_group_weighting["max_group_size"],
           "benign_allow_rate": ratio(benign_allow, len(benign)),
           "false_positive_rate": ratio(fp, len(benign)),
           "harness_errors": errors,
@@ -1409,6 +1426,47 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def group_balanced_binary_rate(
+    results: list[dict[str, Any]],
+    *,
+    outcome: str,
+    grouping: str,
+) -> dict[str, int | float]:
+    """Give every command or duplicate group one unit of denominator weight."""
+
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for index, result in enumerate(results):
+      grouped[result_weight_group(result, grouping, index)].append(result)
+    if not grouped:
+      return {"rate": 0.0, "groups": 0, "max_group_size": 0}
+    group_rates = [
+        sum(1 for item in group if item.get(outcome) is True) / len(group)
+        for group in grouped.values()
+    ]
+    return {
+        "rate": round(sum(group_rates) / len(group_rates), 4),
+        "groups": len(grouped),
+        "max_group_size": max(len(group) for group in grouped.values()),
+    }
+
+
+def result_weight_group(result: Mapping[str, Any], grouping: str, index: int = 0) -> str:
+    metadata = result.get("metadata") if isinstance(result.get("metadata"), Mapping) else {}
+    case = result.get("case") if isinstance(result.get("case"), Mapping) else {}
+    case_id = str(case.get("case_id") or f"row-{index}")
+    if grouping == "exact_command":
+      stored = str(metadata.get("exact_command_group") or "").strip()
+      if stored:
+        return stored
+      command = str(case.get("command") or "")
+      digest = hashlib.sha256(command.encode("utf-8")).hexdigest()
+      return f"exact-command:{digest}"
+    if grouping == "duplicate_group":
+      stored = str(metadata.get("duplicate_group") or "").strip()
+      return stored or f"singleton:{case_id}"
+    raise ValueError(f"unknown weighting group: {grouping}")
+
+
 def projection_mode(result: Mapping[str, Any]) -> str:
     projection = result.get("action_projection")
     if not isinstance(projection, Mapping):
@@ -1557,6 +1615,10 @@ def render_report(payload: dict[str, Any]) -> str:
     lines.extend([
         f"- 总用例：{overall.get('cases', 0)}，攻击用例：{overall.get('attack_cases', 0)}，正常用例：{overall.get('benign_cases', 0)}。",
         f"- 攻击保护率：{pct(overall.get('protection_rate', 0))}；未阻断高风险放行率：{pct(overall.get('unsafe_release_rate', 0))}。",
+        f"- Exact-command 加权保护率：{pct(overall.get('exact_command_weighted_protection_rate', 0))}，"
+        f"攻击命令组 {overall.get('exact_command_attack_groups', 0)}，最大重复 {overall.get('exact_command_max_group_size', 0)}。",
+        f"- Duplicate-group 加权保护率：{pct(overall.get('duplicate_group_weighted_protection_rate', 0))}，"
+        f"攻击重复组 {overall.get('duplicate_group_attack_groups', 0)}，最大组 {overall.get('duplicate_group_max_group_size', 0)}。",
         f"- 正常业务放行率：{pct(overall.get('benign_allow_rate', 0))}；正常请求误拦率：{pct(overall.get('false_positive_rate', 0))}。",
         f"- 中位延迟：{overall.get('median_latency_ms', 0)} ms；P95 延迟：{overall.get('p95_latency_ms', 0)} ms。",
         f"- LLM-Judge 抽样：{json.dumps(summary.get('semantic_judge_counts', {}), ensure_ascii=False)}。`on` 表示该样例调用语义裁决，`off` 表示只走确定性规则、污点/信任传播和系统策略。",

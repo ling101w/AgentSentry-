@@ -9,6 +9,7 @@ from agentsentry.app import app
 from agentsentry.llm import OpenAICompatibleClient
 from agentsentry.models import Event
 from agentsentry.app import store
+from agentsentry.security_overview import _openclaw_event
 
 
 def test_llm_config_api(monkeypatch):
@@ -102,6 +103,23 @@ def test_security_overview_api_uses_real_event_shape():
     openclaw = client.get("/api/security/overview?source=openclaw")
     assert openclaw.status_code == 200
     assert openclaw.json()["source"]["mode"] == "openclaw"
+
+
+def test_security_overview_prefers_versioned_openclaw_audit_fields():
+    event = _openclaw_event(
+        {
+            "id": "record-1",
+            "run_id": "run-1",
+            "type": "tool_decision",
+            "severity": "warning",
+            "decision": "deny",
+            "tool_name": "send_email",
+            "payload": {"decision": "allow", "toolName": "read_file"},
+        }
+    )
+
+    assert event["decision"] == "BLOCK"
+    assert event["tool"] == "email"
 
 
 def test_run_stream_uses_run_scoped_event_query():

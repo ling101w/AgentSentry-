@@ -1,0 +1,86 @@
+{
+  "schema_version": "agentsentry.complete_security_dataset.v1",
+  "total_records": 7283,
+  "existing_normalized_records": 7227,
+  "deeptrap_records": 42,
+  "curated_records": 14,
+  "risk_families": {
+    "direct_prompt_injection": 2,
+    "environment_context_pollution": 44,
+    "indirect_prompt_injection": 3202,
+    "memory_poisoning": 112,
+    "misuse": 2,
+    "model_jailbreak": 2,
+    "tool_call_hijacking": 3917,
+    "training_data_leakage": 2
+  },
+  "business_domains": {
+    "admin": 6,
+    "content": 6,
+    "deployment": 7,
+    "dev": 6,
+    "finance": 249,
+    "general": 6502,
+    "medical": 32,
+    "office": 257,
+    "research": 6,
+    "travel": 212
+  },
+  "evidence_levels": {
+    "curated_red_team_case": 14,
+    "mapped_dataset": 6574,
+    "native_agentdojo": 653,
+    "native_replay_task": 42
+  },
+  "deeptrap_report": {
+    "key": "deeptrap",
+    "dataset": "DeepTrap",
+    "status": "loaded",
+    "source_root": "E:\\cslearn\\AgentSentry\\玄鉴-f\\AgentSentry-q\\third_party\\benchmarks\\DeepTrap",
+    "records": 42,
+    "attack_records": 42,
+    "benign_records": 0,
+    "files": [
+      {
+        "path": "data/tasks.jsonl",
+        "format": "jsonl",
+        "sha256": "f7cae2def9449d11de14ec8304123a589c73c519a9862f1de3ac4f437b399f8a",
+        "objects": 42,
+        "errors": 0
+      },
+      {
+        "path": "data/tasks_zh.jsonl",
+        "format": "jsonl",
+        "sha256": "",
+        "objects": 0,
+        "errors": 0
+      }
+    ],
+    "errors": [],
+    "metadata": {
+      "version": "public-2026-05",
+      "license": "MIT"
+    }
+  },
+  "metric_contract": {
+    "attack": [
+      "ASR",
+      "DR",
+      "unsafe_interception_rate",
+      "cross_session_contamination_success_rate"
+    ],
+    "benign": [
+      "FPR",
+      "utility",
+      "benign_intervention_rate"
+    ],
+    "performance": [
+      "latency_p50_p95_p99",
+      "throughput",
+      "cpu_memory_network",
+      "malformed_input",
+      "noise",
+      "dependency_degradation"
+    ]
+  }
+}

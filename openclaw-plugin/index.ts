@@ -41,7 +41,15 @@ import {
   type PolicyStateCheckpoint,
 } from "./core/policy.ts";
 import { clampText, redactObject, safeStringify } from "./core/redact.ts";
-import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
+import {
+  newId,
+  RecordStore,
+  runIdForSession,
+  type AgentSentryDecision,
+  type AgentSentryDisposition,
+  type AgentSentryExecutionStatus,
+  type RecordSeverity,
+} from "./core/records.ts";
 import { RollbackManager, type OperationCheckpoint, type RollbackSnapshot } from "./core/rollback.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
 import {
@@ -64,6 +72,17 @@ import {
   type SandboxTransaction,
 } from "./core/sandbox.ts";
 
+type PendingToolAudit = {
+  toolName: string;
+  toolCallId: string;
+  params: Record<string, unknown>;
+  paramsSha256: string;
+  decision: AgentSentryDecision;
+  disposition: AgentSentryDisposition;
+  agentId: string;
+  openclawRunId: string;
+};
+
 type SessionState = {
   runId: string;
   sessionKey: string;
@@ -85,11 +104,14 @@ type SessionState = {
     rollbackSnapshots?: RollbackSnapshot[];
     sandbox?: SandboxTransaction | null;
   }>;
+  pendingToolAudits: Map<string, PendingToolAudit[]>;
   lastFoundationDigest?: string;
 };
 
 function sessionCanEvict(state: SessionState): boolean {
-  return state.policyState.semanticActionGraph.pendingCalls.size === 0 && state.runtimeCheckpoints.size === 0;
+  return state.policyState.semanticActionGraph.pendingCalls.size === 0
+    && state.runtimeCheckpoints.size === 0
+    && state.pendingToolAudits.size === 0;
 }
 
 const plugin = {
@@ -601,9 +623,29 @@ const plugin = {
         : preliminary;
       const cachedApproval = plugin.approvalCache!.has(operationKey) && result.decision === "ask" && !result.policy.deterministic_block;
       const effectiveDecision = cachedApproval ? "allow" : result.decision;
-      const effectivePolicy = cachedApproval ? { ...result.policy, decision: "allow" as const } : result.policy;
+      const effectivePolicy = cachedApproval
+        ? {
+          ...result.policy,
+          decision: "allow" as const,
+          intervention: result.policy.intervention
+            ? {
+              ...result.policy.intervention,
+              decision: "allow" as const,
+              overridden: true,
+              approval_cache_override: true,
+            }
+            : undefined,
+        }
+        : result.policy;
       const cacheEntry = cachedApproval ? plugin.approvalCache!.recordHit(operationKey) : null;
       const severity = severityForDecision(effectiveDecision);
+      const agentId = contextString(ctx, "agentId");
+      const openclawRunId = contextString(event, "runId") || contextString(ctx, "runId");
+      const toolCallId = contextString(event, "toolCallId");
+      const auditParams = auditToolParams(params, plugin.config!.capture.previewChars);
+      const paramsSha256 = auditParamsSha256(auditParams);
+      const disposition = toolDisposition(plugin.config!.enforcement.mode, effectiveDecision);
+      const executionStatus: AgentSentryExecutionStatus = disposition === "blocked" ? "blocked" : "pending";
       const graphStatus = plugin.config!.enforcement.mode === "approval" && (effectiveDecision === "deny" || effectiveDecision === "ask")
         ? "awaiting_approval"
         : plugin.config!.enforcement.mode === "block" && effectiveDecision === "deny"
@@ -622,7 +664,7 @@ const plugin = {
       const executionParams = sandbox ? paramsWithSandboxCommand(params, sandbox.wrappedCommand) : params;
       const payload = {
         toolName: event.toolName,
-        normalized_tool: result.policy.action.tool,
+        normalized_tool: effectivePolicy.action.tool,
         toolCallId: event.toolCallId || "",
         params: serializeToolParams(params, plugin.config!),
         decision: effectiveDecision,
@@ -634,16 +676,18 @@ const plugin = {
         risk_score: result.risk_score,
         sentry_score: result.policy.sentry_score,
         deterministic_block: result.policy.deterministic_block,
-        reasons: result.policy.reasons,
-        violations: result.policy.violations,
-        verdict: result.policy.findings.some((finding) => finding.verdict === "block")
+        intervention: effectivePolicy.intervention,
+        reasons: effectivePolicy.reasons,
+        violations: effectivePolicy.violations,
+        verdict: effectiveDecision === "deny" ? "block" : effectiveDecision === "ask" ? "require_approval" : "pass",
+        original_verdict: result.policy.findings.some((finding) => finding.verdict === "block")
           ? "block"
           : result.policy.findings.some((finding) => finding.verdict === "require_approval")
             ? "require_approval"
             : "pass",
-        task_spec: result.policy.task_spec,
+        task_spec: effectivePolicy.task_spec,
         contaminated: state.policyState.contaminated,
-        risk_vector: result.policy.risk_vector,
+        risk_vector: effectivePolicy.risk_vector,
         trust: policyTrustSnapshot(state.policyState),
         system_monitor: systemMonitorStatus(),
         sandbox: sandbox ? {
@@ -652,7 +696,7 @@ const plugin = {
           temp_dir: sandbox.tempDir,
           network_isolation: sandbox.useBestEffortNetworkIsolation ? "best-effort-unshare" : "host-network-fallback",
         } : null,
-        findings: result.findings,
+        findings: effectivePolicy.findings,
       };
       const operationCheckpoint = effectiveDecision === "allow"
         ? plugin.rollback!.checkpointOperation({
@@ -663,6 +707,21 @@ const plugin = {
         })
         : null;
       const rollbackSnapshots = operationCheckpoint?.file_snapshots || [];
+
+      const pendingAudit: PendingToolAudit = {
+        toolName: event.toolName,
+        toolCallId,
+        params: auditParams,
+        paramsSha256,
+        decision: effectiveDecision,
+        disposition,
+        agentId,
+        openclawRunId,
+      };
+      if (disposition !== "blocked") {
+        enqueuePendingToolAudit(state, pendingToolAuditKey(toolCallId, event.toolName), pendingAudit);
+        trimPendingToolAudits(state);
+      }
 
       if (plugin.config!.runtimeIsolation.auditAfterExecution && effectiveDecision === "allow") {
         const checkpointKey = runtimeCheckpointKey(event.toolCallId || "", event.toolName);
@@ -682,6 +741,16 @@ const plugin = {
       plugin.store!.add({
         run_id: state.runId,
         session_key: state.sessionKey,
+        session_id: state.sessionId,
+        agent_id: agentId,
+        openclaw_run_id: openclawRunId,
+        tool_name: event.toolName,
+        tool_call_id: toolCallId,
+        params: auditParams,
+        params_sha256: paramsSha256,
+        decision: effectiveDecision,
+        disposition,
+        execution_status: executionStatus,
         type: "tool_decision",
         layer: "Tool Boundary",
         severity,
@@ -745,6 +814,16 @@ const plugin = {
         plugin.store!.add({
           run_id: state.runId,
           session_key: state.sessionKey,
+          session_id: state.sessionId,
+          agent_id: agentId,
+          openclaw_run_id: openclawRunId,
+          tool_name: event.toolName,
+          tool_call_id: toolCallId,
+          params: auditParams,
+          params_sha256: paramsSha256,
+          decision: effectiveDecision,
+          disposition: "approval_required",
+          execution_status: "pending",
           type: "approval_request",
           layer: "Tool Boundary",
           severity: "warning",
@@ -778,6 +857,14 @@ const plugin = {
               const cacheEligible = result.decision === "ask" && !result.policy.deterministic_block;
               if (decision === "allow-always" && cacheEligible) plugin.approvalCache!.add(operationKey, event.toolName);
               const approved = decision.startsWith("allow");
+              const resolutionDisposition = approvalDisposition(decision);
+              const resolutionStatus: AgentSentryExecutionStatus = approved ? "pending" : "skipped";
+              const pendingAuditKey = pendingToolAuditKey(toolCallId, event.toolName);
+              if (approved) {
+                pendingAudit.disposition = resolutionDisposition;
+              } else {
+                removePendingToolAudit(state, pendingAuditKey, pendingAudit);
+              }
               const approvedOperationCheckpoint = approved
                 ? plugin.rollback!.checkpointOperation({
                   action: result.policy.action,
@@ -809,6 +896,16 @@ const plugin = {
               plugin.store!.add({
                 run_id: state.runId,
                 session_key: state.sessionKey,
+                session_id: state.sessionId,
+                agent_id: agentId,
+                openclaw_run_id: openclawRunId,
+                tool_name: event.toolName,
+                tool_call_id: toolCallId,
+                params: auditParams,
+                params_sha256: paramsSha256,
+                decision: effectiveDecision,
+                disposition: resolutionDisposition,
+                execution_status: resolutionStatus,
                 type: "approval_resolution",
                 layer: "Tool Boundary",
                 severity: decision.startsWith("allow") ? "success" : "warning",
@@ -838,6 +935,13 @@ const plugin = {
 
     api.on("after_tool_call", (event, ctx) => {
       const state = getSession(ctx);
+      const auditKey = pendingToolAuditKey(event?.toolCallId || "", event?.toolName || "");
+      const pendingAudit = dequeuePendingToolAudit(state, auditKey);
+      const resultParams = pendingAudit?.params || auditToolParams((event?.params || {}) as Record<string, unknown>, plugin.config!.capture.previewChars);
+      const resultParamsSha256 = pendingAudit?.paramsSha256 || auditParamsSha256(resultParams);
+      const resultDecision = pendingAudit?.decision;
+      const resultDisposition = pendingAudit?.disposition;
+      const resultExecutionStatus: AgentSentryExecutionStatus = event?.error ? "failed" : "executed";
       const findings = resultFindings(
         event?.toolCallId || "",
         event?.result,
@@ -893,6 +997,16 @@ const plugin = {
       plugin.store!.add({
         run_id: state.runId,
         session_key: state.sessionKey,
+        session_id: state.sessionId,
+        agent_id: pendingAudit?.agentId || contextString(ctx, "agentId"),
+        openclaw_run_id: pendingAudit?.openclawRunId || contextString(event, "runId") || contextString(ctx, "runId"),
+        tool_name: pendingAudit?.toolName || event?.toolName || "",
+        tool_call_id: pendingAudit?.toolCallId || event?.toolCallId || "",
+        params: resultParams,
+        params_sha256: resultParamsSha256,
+        decision: resultDecision,
+        disposition: resultDisposition,
+        execution_status: resultExecutionStatus,
         type: "tool_result",
         layer: runtimeFindings.length ? "Tool Boundary" : findings.length ? "Context Provenance" : "Evidence Feedback",
         severity: allFindings.length ? "warning" : severity,
@@ -975,6 +1089,7 @@ const plugin = {
           lastAccessedAt: Date.now(),
           policyState: createPolicyState(),
           runtimeCheckpoints: new Map(),
+          pendingToolAudits: new Map(),
           workspaceDir: "",
         };
         hydratePersistentMemoryLabels(state.policyState, loadPersistentMemoryLabels(plugin.config!));
@@ -997,6 +1112,75 @@ const plugin = {
 
     function runtimeCheckpointKey(toolCallId: string, toolName: string): string {
       return toolCallId || `last:${toolName || "unknown"}`;
+    }
+
+    function pendingToolAuditKey(toolCallId: string, toolName: string): string {
+      return toolCallId || `last:${toolName || "unknown"}`;
+    }
+
+    function enqueuePendingToolAudit(state: SessionState, key: string, audit: PendingToolAudit): void {
+      const queue = state.pendingToolAudits.get(key) || [];
+      queue.push(audit);
+      if (queue.length > 256) queue.shift();
+      state.pendingToolAudits.set(key, queue);
+    }
+
+    function dequeuePendingToolAudit(state: SessionState, key: string): PendingToolAudit | null {
+      const queue = state.pendingToolAudits.get(key);
+      const audit = queue?.shift() || null;
+      if (!queue?.length) state.pendingToolAudits.delete(key);
+      return audit;
+    }
+
+    function removePendingToolAudit(state: SessionState, key: string, audit: PendingToolAudit): void {
+      const queue = state.pendingToolAudits.get(key);
+      if (!queue) return;
+      const index = queue.indexOf(audit);
+      if (index >= 0) queue.splice(index, 1);
+      if (!queue.length) state.pendingToolAudits.delete(key);
+    }
+
+    function trimPendingToolAudits(state: SessionState): void {
+      let count = [...state.pendingToolAudits.values()].reduce((total, queue) => total + queue.length, 0);
+      while (count > 256) {
+        const oldestKey = state.pendingToolAudits.keys().next().value;
+        if (typeof oldestKey !== "string") break;
+        const queue = state.pendingToolAudits.get(oldestKey);
+        queue?.shift();
+        count -= 1;
+        if (!queue?.length) state.pendingToolAudits.delete(oldestKey);
+      }
+    }
+
+    function contextString(value: unknown, key: string): string {
+      if (!value || typeof value !== "object") return "";
+      const candidate = (value as Record<string, unknown>)[key];
+      return typeof candidate === "string" ? candidate.trim() : "";
+    }
+
+    function auditToolParams(params: Record<string, unknown>, previewChars: number): Record<string, unknown> {
+      const redacted = redactObject(params, previewChars);
+      return redacted && typeof redacted === "object" && !Array.isArray(redacted)
+        ? redacted as Record<string, unknown>
+        : { value: redacted };
+    }
+
+    function auditParamsSha256(params: Record<string, unknown>): string {
+      return createHash("sha256").update(safeStringify(params)).digest("hex");
+    }
+
+    function toolDisposition(mode: string, decision: AgentSentryDecision): AgentSentryDisposition {
+      if (mode === "observe") return "observe_only";
+      if (mode === "block" && decision === "deny") return "blocked";
+      if (mode === "approval" && decision !== "allow") return "approval_required";
+      return "allowed";
+    }
+
+    function approvalDisposition(decision: string): AgentSentryDisposition {
+      if (decision === "allow-once" || decision === "allow-always") return "approval_granted";
+      if (decision === "timeout") return "approval_timeout";
+      if (decision === "cancelled") return "approval_cancelled";
+      return "approval_denied";
     }
 
     function firstToolString(params: Record<string, unknown>, keys: string[]): string {

@@ -147,6 +147,38 @@ python3 scripts/run_tool_attack_benchmark_eval.py \
 4. 再看 Memory Guard 和 工具边界域的 System Preflight 是否命中。
 5. 最后看 LLM-Judge 是否补充了语义风险。
 
+## AgentDojo 发布级复跑清单
+
+发布级原生结果必须在干净冻结提交上运行。当前工作区有未提交修改时，不要使用 `--allow-dirty` 生成正式结论；该选项只适合开发验证，而且结果会被标为不可发布。
+
+1. 在目标冻结提交的独立 checkout 中安装项目依赖和 `agentdojo==0.1.35`，确认 AgentDojo `workspace v1.2.2`、选择文件和工具 manifest 与分析计划一致。
+2. 先运行 `--doctor` 和 `--plan`，记录 selection canonical SHA-256、tool manifest SHA-256、bridge profile、预计 140 trials 和当前 Git commit。
+3. 在同一选择集上完整运行 no-defense arm，随后完整运行 `competition` arm；两组都必须达到 140/140 trials、provider/harness error 为 0，才可进入主结果表。
+4. 对 `evidence-gated` 只使用新的完整 arm，不覆盖预注册 `competition` 结果。若发生 Judge 或 provider 错误，保留原始 partial artifact，并在独立 evaluator 提交上重跑；发布协议应分别记录 `policy_commit` 与 `evaluator_commit`，同时使用规范化 manifest 哈希。
+5. 复核官方 AgentDojo ASR、归一化 exact sink、已执行危险副作用、benign Utility、FPR、intervention、attack Utility、Ask Rate 和错误率；报告分子、分母及 Wilson 区间，不把 replay 或本地映射结果并入主表。
+6. 完成后才允许使用 `--publish` 更新 canonical result；将 public JSON、详细报告、selection、manifest、bridge metadata、transcript/trial commitments 一并归档。
+
+典型命令骨架如下，凭据只通过环境变量提供，不写入命令行或结果文件：
+
+```bash
+python3 scripts/run_agentdojo_native.py --doctor \
+  --selection evaluation/native/native_expanded_v1_selection.json \
+  --defense agentsentry --policy-profile evidence-gated
+
+python3 scripts/run_agentdojo_native.py --plan \
+  --selection evaluation/native/native_expanded_v1_selection.json \
+  --defense agentsentry --policy-profile evidence-gated
+
+python3 scripts/run_agentdojo_native.py \
+  --selection evaluation/native/native_expanded_v1_selection.json \
+  --defense agentsentry --policy-profile evidence-gated \
+  --model openai-compatible --model-id "$MODEL_ID" \
+  --openai-compatible-system-role system \
+  --output-root runtime/native-release
+```
+
+不使用 `--max-trials`、`--allow-dirty`、`--allow-no-judge` 或开发中的 `--resume` 结果作为正式发布物。若需要断点恢复，必须保留同一 selection、model、provider、profile、policy commitments 和 checkpoint，并将恢复次数及任何重试写入报告。
+
 ## 故障排查
 
 - 如果 `8765` 打不开，先看 `systemctl --user status openclaw-gateway.service`。

@@ -9,7 +9,7 @@ from .sources import SourceSpec
 
 
 SCHEMA_VERSION = "agentsentry.research_case.v1"
-THREAT_CODES = frozenset({"T1", "T2", "T3", "T4", "T5", "T6"})
+THREAT_CODES = frozenset({"T1", "T2", "T3", "T4", "T5", "T6", "T7"})
 BENCHMARK_CASE_FIELDS = (
     "case_id",
     "source",

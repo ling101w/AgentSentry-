@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { basename, extname, join, relative } from "node:path";
 import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
+import { interventionEvidence } from "./policy/intervention-gate.ts";
 import { clampText } from "./redact.ts";
 import { analyzeTrustContent } from "./trust.ts";
 
@@ -322,6 +323,11 @@ function scanSkillContent(relPath: string, content: string, config: PluginConfig
       path: relPath,
       matched: matches.slice(0, 5),
       preview: clampText(content, config.capture.previewChars),
+      ...interventionEvidence("confirmed_attack", {
+        attack_class: "tool_hijack",
+        causal_certainty: "observed",
+        confidence: 1,
+      }),
     }));
   }
   return findings;

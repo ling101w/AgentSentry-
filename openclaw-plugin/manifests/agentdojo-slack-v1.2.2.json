@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "mapping_version": "1.2.0",
+  "agentdojo": {
+    "package_version": "0.1.35",
+    "benchmark_version": "v1.2.2",
+    "suite": "slack",
+    "source_commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60"
+  },
+  "manifests": [
+    {
+      "toolId": "slack_message_read",
+      "aliases": ["read_channel_messages", "read_inbox"],
+      "dataOrigins": ["workspace"],
+      "sideEffects": ["none"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": false,
+      "defaultTrust": "external",
+      "subjectFields": ["channel"]
+    },
+    {
+      "toolId": "slack_directory_read",
+      "aliases": ["get_channels", "get_users_in_channel"],
+      "dataOrigins": ["workspace"],
+      "sideEffects": ["none"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": false,
+      "defaultTrust": "workspace"
+    },
+    {
+      "toolId": "slack_message_send",
+      "aliases": ["send_direct_message", "send_channel_message"],
+      "dataOrigins": ["user", "workspace"],
+      "sideEffects": ["network_write"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": true,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external",
+      "subjectFields": ["recipient", "channel"]
+    },
+    {
+      "toolId": "slack_admin_write",
+      "aliases": ["add_user_to_channel", "invite_user_to_slack", "remove_user_from_slack"],
+      "dataOrigins": ["user", "workspace"],
+      "sideEffects": ["network_write", "persistent_state"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external",
+      "subjectFields": ["user"]
+    },
+    {
+      "toolId": "slack_web_read",
+      "aliases": ["get_webpage"],
+      "dataOrigins": ["external_web"],
+      "sideEffects": ["network_read"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": false,
+      "defaultTrust": "external"
+    },
+    {
+      "toolId": "slack_web_post",
+      "aliases": ["post_webpage"],
+      "dataOrigins": ["user", "external_web"],
+      "sideEffects": ["network_write"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": true,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external"
+    }
+  ]
+}

@@ -180,10 +180,10 @@ function entropyDrift(state: DynamicSecurityState, nextTool = ""): Record<string
 
 function actionFacts(action: AgentSentryAction, assessment: ActionAssessment): Record<string, boolean> {
   return {
-    externalWrite: action.tool === "send_email" || (action.tool === "call_api" && assessment.externalSink),
-    persistence: assessment.persistence || assessment.systemMutation || action.tool === "memory_write",
+    externalWrite: action.tool === "send_email" || action.tool === "cloud_file_share" || (action.tool === "call_api" && assessment.externalSink),
+    persistence: assessment.persistence || assessment.systemMutation || action.tool === "memory_write" || action.tool === "calendar_write" || action.tool === "cloud_file_write",
     execution: action.tool === "shell_exec" || assessment.dangerousCommand,
-    sideEffect: action.tool === "write_file" || action.tool === "send_email" || action.tool === "call_api" || action.tool === "shell_exec" || action.tool === "memory_write",
+    sideEffect: action.tool === "write_file" || action.tool === "send_email" || action.tool === "call_api" || action.tool === "shell_exec" || action.tool === "memory_write" || action.tool === "calendar_write" || action.tool === "cloud_file_write" || action.tool === "cloud_file_share",
     sensitive: assessment.sensitive,
   };
 }

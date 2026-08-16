@@ -1,5 +1,6 @@
 import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
+import { interventionEvidence } from "./policy/intervention-gate.ts";
 import { clampText, safeStringify } from "./redact.ts";
 
 type SemanticFact = {
@@ -106,6 +107,7 @@ export function semanticActionFindings(
       sinks: graph.externalSinks.slice(0, 6),
       operations: graph.operations,
       encodings: graph.encodings,
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }, config));
   }
 
@@ -117,6 +119,11 @@ export function semanticActionFindings(
       localReads: graph.localReads.slice(0, 5),
       networkWrites: graph.networkWrites.slice(0, 5),
       sensitiveSources: graph.sensitiveSources.slice(0, 5),
+      ...interventionEvidence("attack_signal", {
+        attack_class: "tool_hijack",
+        causal_certainty: "inferred",
+        confidence: 0.9,
+      }),
     }, config));
   }
 
@@ -128,6 +135,7 @@ export function semanticActionFindings(
       privilegedEffects: graph.privilegedEffects.slice(0, 6),
       sensitiveSources: graph.sensitiveSources.slice(0, 6),
       externalSinks: graph.externalSinks.slice(0, 6),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }, config));
   } else if (hasExplicitPersistence || hasPrivilegedEffect) {
     risk += 20;
@@ -148,6 +156,11 @@ export function semanticActionFindings(
       sinks: graph.externalSinks.slice(0, 5),
       persistenceTargets: graph.persistenceTargets.slice(0, 5),
       privilegedEffects: graph.privilegedEffects.slice(0, 5),
+      ...interventionEvidence("attack_signal", {
+        attack_class: "tool_hijack",
+        causal_certainty: "inferred",
+        confidence: 0.75,
+      }),
     }, config));
   }
 

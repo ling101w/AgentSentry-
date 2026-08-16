@@ -1,4 +1,10 @@
-import { applySecurityProfile, isSecurityProfileName, type PluginConfig } from "../config.ts";
+import {
+  applySecurityProfile,
+  isSecurityProfileName,
+  MAX_SEMANTIC_JUDGE_TIMEOUT_MS,
+  MIN_SEMANTIC_JUDGE_TIMEOUT_MS,
+  type PluginConfig,
+} from "../config.ts";
 
 type CommandContext = {
   args?: string;
@@ -22,6 +28,7 @@ type CommandRuntime = {
 const WRITABLE_PREFIXES = [
   "capture.",
   "detection.",
+  "intervention.",
   "semantic.",
   "provenanceScan.",
   "policy.",
@@ -34,6 +41,7 @@ const WRITABLE_PREFIXES = [
 ];
 
 const WRITABLE_ENUM_VALUES: Readonly<Record<string, readonly string[]>> = {
+  "intervention.mode": ["risk-based", "evidence-gated"],
   "semantic.mode": ["off", "risk-tiered", "full"],
   "runtimeIsolation.unavailableAction": ["require_approval", "block"],
   "enforcement.mode": ["observe", "approval", "block"],
@@ -71,7 +79,7 @@ export function handleAgentSentryCommand(
   if (tokens[0] === "profile") {
     const profile = tokens[1] || "";
     if (!isSecurityProfileName(profile)) {
-      return { text: "Usage: /agentsentry profile <observe|balanced|competition|high-security>" };
+      return { text: "Usage: /agentsentry profile <observe|balanced|competition|evidence-gated|high-security>" };
     }
     applySecurityProfile(config, profile);
     runtime.setConfig(config);
@@ -136,16 +144,17 @@ export function formatStatus(config: PluginConfig, runtime: CommandRuntime): str
     `Approval cache: ${runtime.approvalCacheCount} exact operation(s)`,
     `Enforcement: ${config.enforcement.mode}`,
     `Profile: ${config.profile}`,
+    `Intervention: ${config.intervention.mode} (safety boundaries ${config.intervention.preserveSafetyBoundaries ? "preserved" : "not preserved"})`,
     `Deterministic policy: ${config.policy.deterministic ? "enabled" : "disabled"}`,
     `Taint feedback: ${config.policy.taintFeedback ? "enabled" : "disabled"}`,
     `Workspace provenance scan: ${config.provenanceScan.enabled ? "enabled" : "disabled"}`,
     `Detection: ${config.detection.enabled ? "enabled" : "disabled"}`,
-    `Semantic judge: ${config.semantic.enabled ? `${config.semantic.model} via ${config.semantic.apiKeyEnv} (${config.semantic.mode} mode, ${Math.min(10000, Math.max(500, config.semantic.timeoutMs))}ms budget)` : "disabled"}`,
+    `Semantic judge: ${config.semantic.enabled ? `${config.semantic.model} via ${config.semantic.apiKeyEnv} (${config.semantic.mode} mode, ${Math.min(MAX_SEMANTIC_JUDGE_TIMEOUT_MS, Math.max(MIN_SEMANTIC_JUDGE_TIMEOUT_MS, config.semantic.timeoutMs))}ms budget)` : "disabled"}`,
     `Notifications: ${config.notifications.enableProactiveNotifications ? config.notifications.minSeverity : "disabled"}`,
     `Response cover: ${config.responseCover.enabled ? "enabled" : "disabled"}`,
     "Commands:",
     "  /agentsentry status",
-    "  /agentsentry profile <observe|balanced|competition|high-security>",
+    "  /agentsentry profile <observe|balanced|competition|evidence-gated|high-security>",
     "  /agentsentry config get [key]",
     "  /agentsentry config set <key> <value>",
     "  /agentsentry config reset",
@@ -158,7 +167,7 @@ function usage(): string {
   return [
     "Usage:",
     "  /agentsentry status",
-    "  /agentsentry profile <observe|balanced|competition|high-security>",
+    "  /agentsentry profile <observe|balanced|competition|evidence-gated|high-security>",
     "  /agentsentry config get [key]",
     "  /agentsentry config set <key> <value>",
     "  /agentsentry config reset",

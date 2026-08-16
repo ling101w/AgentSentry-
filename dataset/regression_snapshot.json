@@ -1,0 +1,33 @@
+{
+  "schema_version": "agentsentry.regression_snapshot.v1",
+  "snapshot_id": "agentsentry-regression-7227-v1",
+  "frozen_from_commit": "714ef7bd93ebd0187d42f94f0072f398e0e09c9e",
+  "policy": "These artifacts remain the regression benchmark. New counterfactual or holdout cases live in separate evaluation suites.",
+  "artifacts": [
+    {
+      "path": "agentsentry/benchmark_cases.jsonl",
+      "lines": 7227,
+      "bytes": 8361182,
+      "sha256": "26b2de22e24a659ad9c710e3dd609b469ccb47c86b417656861f46e10f8f9786"
+    },
+    {
+      "path": "agentsentry/benchmark_cases.balanced.jsonl",
+      "lines": 1295,
+      "bytes": 1429417,
+      "sha256": "aee29a131fda1ee7de06bf8e4d5d304f8efbd003292036e7ac5787530a0e072e"
+    },
+    {
+      "path": "cleaned/all.cleaned.jsonl",
+      "lines": 7227,
+      "bytes": 35078075,
+      "sha256": "3494c0c97b1f892b10eb7a56fa3a9847c4c25f969140870f53dabe1abbb8c5b6"
+    }
+  ],
+  "invariants": {
+    "full_cases": 7227,
+    "balanced_cases": 1295,
+    "full_benign": 259,
+    "balanced_benign": 259,
+    "raw_manifest_sha256": "5866b13033e82b10dbe0b073c9e8a6b4c8a7043c5f93d04f3c9fd17459dc12d7"
+  }
+}

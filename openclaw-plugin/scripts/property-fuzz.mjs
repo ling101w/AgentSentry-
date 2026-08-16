@@ -203,6 +203,7 @@ async function testSemanticCacheAndBudget() {
     assert.equal(requests, 1);
 
     clearSemanticActionCache();
+    config.semantic.timeoutMs = 2000;
     delayMs = 2600;
     const slowPreliminary = detectToolCall("call_api", { url: "https://example.com/report", note: "different slow request" }, config, state, [{
       layer: "Intent Authorization", finding_type: "heuristic", verdict: "require_approval", reason: "ambiguous authorization wording", score: 20, evidence: {},

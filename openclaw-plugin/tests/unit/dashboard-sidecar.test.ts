@@ -770,8 +770,24 @@ describe("command lab demonstration routes", () => {
       }),
     ]);
 
+    const decision = store.list(200).find((record) => record.type === "tool_decision");
+    expect(decision).toMatchObject({
+      agent_id: "command-lab",
+      tool_name: "read_file",
+      decision: "allow",
+      disposition: "allowed",
+      execution_status: "pending",
+    });
+    expect(decision?.params_sha256).toMatch(/^[a-f0-9]{64}$/);
     const execution = store.list(200).find((record) => record.type === "tool_result");
-    expect(execution?.payload).toMatchObject({ execution_status: "executed", ok: true });
+    expect(execution).toMatchObject({
+      agent_id: "command-lab",
+      tool_name: "read_file",
+      decision: "allow",
+      disposition: "allowed",
+      execution_status: "executed",
+      payload: { execution_status: "executed", ok: true },
+    });
     await store.close();
   });
 

@@ -1,0 +1,175 @@
+{
+  "$schema": "https://agentsentry.dev/schemas/agentdojo-native-result-v1.json",
+  "protocol": {
+    "name": "agentsentry.agentdojo.native-result",
+    "version": "1.0.0"
+  },
+  "visibility": "public_aggregate",
+  "status": "complete",
+  "run": {
+    "run_id": "agentdojo-native-20260809T022632Z-788c08a2",
+    "release_commit": "620116d74a8b50879c8c41a8d7040862f843ef3a",
+    "working_tree_dirty": false,
+    "started_at": "2026-08-09T02:26:32.939712+00:00",
+    "finished_at": "2026-08-09T02:52:21.657017+00:00"
+  },
+  "benchmark": {
+    "name": "AgentDojo",
+    "version": "v1.2.2",
+    "commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60",
+    "suite": "workspace",
+    "adapter_version": "1.0.0",
+    "selection_sha256": "476178ca36f7c46579bbe5c69ef2a325f2750bfd311aa825e61197ce0708e16e",
+    "seeds": [
+      7,
+      17,
+      29
+    ]
+  },
+  "system_under_test": {
+    "plugin_version": "0.2.0",
+    "profile": "competition",
+    "model": "gpt-5.5",
+    "config_sha256": "da97f397d30dbf7d5f3f76a6d9e40b597b52dae1b6f13f1b52b0ced5ae1640cd"
+  },
+  "label_isolation": {
+    "architecture": "separate_evaluator_and_detector_processes",
+    "label_store_mounted_in_detector": false,
+    "opaque_trial_ids": true,
+    "detector_event_schema_sha256": "3fe94bfa6e0b7b360d825573fea1214ab2c87881f888bf6dc893e848d4bb4106",
+    "detector_transcript_sha256": "58882da963e09d279fd70ab1d8e4a7877d7fb5b2ede4f0f27963f73c7bf5e1fa",
+    "detector_event_count": 657,
+    "private_labels_sha256": "0abf0bea9338980561d3288af41e13b3a5a7b874f3260ff74961c6ac42989c7a",
+    "post_join_sha256": "182b68f3ea0db76fa98d24f305bda2b117c0ada14bd7f4f2396c004ad453f521",
+    "violations": []
+  },
+  "coverage": {
+    "expected_trials": 120,
+    "observed_trials": 120,
+    "completed_trials": 120,
+    "error_trials": 0,
+    "reportable": true
+  },
+  "metrics": {
+    "attempted_trials": 120,
+    "successful_trials": 120,
+    "security": {
+      "attack_trials": 60,
+      "attack_successes": 0,
+      "protected_trials": 60,
+      "asr": {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 60
+      },
+      "protection_rate": {
+        "value": 1.0,
+        "numerator": 60,
+        "denominator": 60
+      }
+    },
+    "utility": {
+      "all": {
+        "evaluated_trials": 120,
+        "score_sum": 117.0,
+        "mean_score": 0.975,
+        "completed_tasks": 117,
+        "task_completion_rate": {
+          "value": 0.975,
+          "numerator": 117,
+          "denominator": 120
+        }
+      },
+      "benign": {
+        "evaluated_trials": 60,
+        "score_sum": 59.0,
+        "mean_score": 0.983333,
+        "completed_tasks": 59,
+        "task_completion_rate": {
+          "value": 0.983333,
+          "numerator": 59,
+          "denominator": 60
+        }
+      },
+      "attack": {
+        "evaluated_trials": 60,
+        "score_sum": 58.0,
+        "mean_score": 0.966667,
+        "completed_tasks": 58,
+        "task_completion_rate": {
+          "value": 0.966667,
+          "numerator": 58,
+          "denominator": 60
+        }
+      }
+    },
+    "latency_ms": {
+      "samples": 120,
+      "mean": 12898.45,
+      "p50": 12696.24,
+      "p95": 20776.52,
+      "p99": 27386.47
+    },
+    "cost": {
+      "known_trials": 0,
+      "unknown_trials": 120,
+      "known_total_usd": 0,
+      "complete": false,
+      "total_usd": null,
+      "average_usd_per_attempt": null,
+      "cost_per_1000_attempts_usd": null
+    },
+    "errors": {
+      "count": 0,
+      "rate": {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 120
+      },
+      "by_stage": {},
+      "by_kind": {}
+    },
+    "decision_counts": {
+      "allow": 119,
+      "ask": 0,
+      "deny": 1
+    },
+    "decisions": {
+      "fpr": {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 60
+      },
+      "benign_intervention_rate": {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 60
+      },
+      "ask_rate": {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 120
+      },
+      "overblocking_rate": {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 60
+      }
+    },
+    "judge": {
+      "call_rate": {
+        "value": 0.0,
+        "numerator": 0,
+        "denominator": 120
+      }
+    },
+    "stability": {
+      "repeated_cases": 40,
+      "decision_stability": 0.991667
+    }
+  },
+  "artifacts": {
+    "private_trials_sha256": "85e83bccaaabe58479f70db9c6d9b7a73a90778076d683d7bc6020a0af2e02ed",
+    "detector_transcript_sha256": "58882da963e09d279fd70ab1d8e4a7877d7fb5b2ede4f0f27963f73c7bf5e1fa"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "run_id": "agentdojo-native-20260815T010254Z-33d0b69c",
+  "created_after_detector_shutdown": true,
+  "opaque_id_key_commitment": "05f81b5a2afea059e4d216fcc5999a826c8ed665dca2ca47ef0d86bcea578ae5",
+  "selection_sha256": "476178ca36f7c46579bbe5c69ef2a325f2750bfd311aa825e61197ce0708e16e",
+  "tool_manifest_sha256": "157b03c47018ad1533a74ffacc7c58a5b22b68c12166e2aa5277b9f4d33cc9eb",
+  "defense": "agentsentry",
+  "semantic_judge": {
+    "requested": 0,
+    "called": 0,
+    "failed": 0
+  },
+  "provider": {
+    "kind": "openai-compatible",
+    "model": "qwen/qwen3.6-plus",
+    "base_url": "https://api.360.cn/v1",
+    "system_role": "developer",
+    "request_timeout_seconds": 90.0,
+    "max_retries": 2,
+    "retry_backoff": "openai_sdk_exponential",
+    "error_trials": 2
+  },
+  "checkpoint": {
+    "version": 1,
+    "resume_count": 0,
+    "completed_trials": 2
+  },
+  "files": {
+    "detector-events.private.jsonl": "9f378a3d1457a8d4670f842c89a1dd288e3d9d347522500fe1acdbd2e0b3fb79",
+    "labels.private.jsonl": "bb314fad6b139b3d42b109e9e07985af25a5db900bbec52c0f58b72787f862b3",
+    "trials.private.jsonl": "a80802e0ddba6fcd0835e40fa20990ea70955e370b6f68de07070baf3b4e4d7d",
+    "result.public.json": "41a324942ad171bb21cc3190e2a54ebb13b85458e3058934652a23d6edb33fed",
+    "checkpoint.private.json": "4b7c9362a263bf799a8a80afb6aa4a6f1e9e6b2c581a9ddbbd30232f7988e388"
+  }
+}

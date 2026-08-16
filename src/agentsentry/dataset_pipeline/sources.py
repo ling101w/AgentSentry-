@@ -70,6 +70,15 @@ SOURCE_SPECS: tuple[SourceSpec, ...] = (
         threat_secondary=("T3",),
         raw_format="json",
     ),
+    SourceSpec(
+        key="deeptrap",
+        dataset="DeepTrap",
+        directory="DeepTrap",
+        repo_url="https://github.com/ZJUICSR/DeepTrap.git",
+        threat_primary="T7",
+        raw_format="jsonl",
+        registry_aliases=("DeepTrap / OpenClaw execution-context benchmark",),
+    ),
 )
 
 SOURCE_BY_KEY = {item.key: item for item in SOURCE_SPECS}

@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PluginConfig } from "../../config.ts";
-import { newId, RecordStore, runIdForSession, type AgentSentryRecord } from "../../core/records.ts";
+import {
+  AGENT_SENTRY_AUDIT_SCHEMA,
+  newId,
+  RecordStore,
+  runIdForSession,
+  type AgentSentryRecord,
+} from "../../core/records.ts";
 
 type RecordInput = Omit<AgentSentryRecord, "id" | "created_at"> & { id?: string; created_at?: string };
 
@@ -111,6 +117,64 @@ describe("RecordStore persistence boundary", () => {
         array: expect.arrayContaining([{ password: "[redacted]" }, expect.stringContaining("[redacted]")]),
       },
     });
+  });
+
+  it("persists versioned top-level audit fields and redacts tool parameters", async () => {
+    const store = createStore();
+    const secret = "sk-TOOLPARAMSECRET123456789";
+
+    const returned = store.add(recordInput(1, {
+      agent_id: "agent-1",
+      session_id: "session-1",
+      openclaw_run_id: "openclaw-run-1",
+      tool_name: "send_email",
+      tool_call_id: "call-1",
+      params: {
+        recipients: ["ops@example.com"],
+        api_key: secret,
+        nested: { authorization: `Bearer ${secret}` },
+      },
+      params_sha256: "a".repeat(64),
+      decision: "deny",
+      disposition: "blocked",
+      execution_status: "blocked",
+    }));
+
+    expect(returned).toMatchObject({
+      schema_version: AGENT_SENTRY_AUDIT_SCHEMA,
+      agent_id: "agent-1",
+      session_id: "session-1",
+      openclaw_run_id: "openclaw-run-1",
+      tool_name: "send_email",
+      tool_call_id: "call-1",
+      params_sha256: "a".repeat(64),
+      decision: "deny",
+      disposition: "blocked",
+      execution_status: "blocked",
+      params: {
+        recipients: ["ops@example.com"],
+        api_key: "[redacted]",
+        nested: { authorization: "[redacted]" },
+      },
+    });
+    await store.flush();
+    const disk = readFileSync(store.recordsPath, "utf8");
+    expect(disk).not.toContain(secret);
+    expect(store.list(1)[0]).toMatchObject({ schema_version: AGENT_SENTRY_AUDIT_SCHEMA, tool_name: "send_email" });
+  });
+
+  it("continues to read historical records without versioned audit fields", async () => {
+    const store = createStore();
+    await store.close();
+    const historical = recordInput(1);
+    writeFileSync(store.recordsPath, `${JSON.stringify(historical)}\n`, "utf8");
+    const config = new PluginConfig();
+    config.storage.stateDir = store.stateDir;
+    const reopened = new RecordStore(config);
+    const record = reopened.list(1)[0];
+    expect(record).toMatchObject({ id: "rec-1", payload: { index: 1 } });
+    expect(record.schema_version).toBeUndefined();
+    await reopened.close();
   });
 
   it("compacts to maxRecords and keeps the newest records in chronological file order", async () => {

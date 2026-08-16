@@ -1,5 +1,6 @@
 {
   "profile": "high-security",
+  "intervention": { "mode": "risk-based", "preserveSafetyBoundaries": true },
   "enforcement": { "mode": "block" },
   "semantic": {
     "enabled": true,

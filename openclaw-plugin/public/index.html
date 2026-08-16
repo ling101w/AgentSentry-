@@ -3,150 +3,199 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>玄鉴运行记录与风险观测</title>
+    <title>AgentSentry / OpenClaw · 玄鉴</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=20260711-1" />
+    <link rel="stylesheet" href="/graph.css?v=20260807-1" />
   </head>
-  <body>
+  <body class="graph-home">
     <header class="topbar">
       <div class="brand">
-        <p class="eyebrow">玄鉴 for OpenClaw</p>
-        <h1>运行记录与风险观测</h1>
-        <p class="subtitle">按会话追踪 OpenClaw 提示、工具调用、拦截决策和响应结果。</p>
-      </div>
-      <div class="actions">
-        <div class="mode-control" aria-label="玄鉴运行模式">
-          <label for="modeSelect">模式</label>
-          <select id="modeSelect">
-            <option value="block">阻断</option>
-            <option value="approval">审批</option>
-            <option value="observe">观察</option>
-          </select>
-          <button class="help-dot" type="button" aria-label="查看模式说明">?</button>
-          <div class="help-popover" role="tooltip">
-            <strong id="modeHelpTitle">运行模式</strong>
-            <span id="modeHelpText">读取当前运行配置中。</span>
-          </div>
+        <span class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 2l8 3v6c0 5.2-3.4 9.4-8 11-4.6-1.6-8-5.8-8-11V5l8-3z" fill="none" stroke="#40e6ff" stroke-width="1.8"/><path d="M8.5 12l2.4 2.4 4.6-4.8" fill="none" stroke="#40e6ff" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </span>
+        <div class="brand-text">
+          <strong>AgentSentry / OpenClaw</strong>
+          <span>智能体安全监控平台</span>
         </div>
-        <span id="modeStatus" class="mode-status">模式读取中</span>
-        <a class="button-link primary-link" href="/security-screen">安全态势大屏</a>
-        <a class="button-link" href="/command-lab">命令实验室</a>
-        <button id="refreshBtn" type="button">刷新</button>
-        <button id="autoRefreshBtn" class="ghost" type="button">自动刷新：开</button>
-        <button id="exportJsonBtn" class="ghost" type="button">导出 JSON</button>
-        <button id="exportCsvBtn" class="ghost" type="button">导出 CSV</button>
-        <button id="resetBtn" class="ghost danger-action" type="button">清空</button>
+      </div>
+      <span class="top-divider" aria-hidden="true"></span>
+      <div class="page-title">
+        <h1>攻击事件详情</h1>
+        <span class="chip ghost" id="topEventId">事件 ID：--</span>
+        <span class="chip danger" id="topRiskBadge">高危</span>
+      </div>
+      <div class="top-actions">
+        <span class="defense-pill" id="topDefense"><i class="dot"></i>实时防护已开启</span>
+        <a class="top-link" href="/security-screen" title="安全态势大屏">安全大屏</a>
+        <a class="top-link" href="/command-lab" title="命令实验室">命令实验室</a>
+        <button class="bell" id="bellBtn" type="button" title="告警">
+          <svg viewBox="0 0 24 24" width="17" height="17"><path d="M12 3a6 6 0 0 0-6 6v4l-1.6 2.6h15.2L18 13V9a6 6 0 0 0-6-6z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10 18.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+          <span class="bell-count" id="bellCount">0</span>
+        </button>
+        <span class="team-chip">
+          <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="8" r="3.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5 19c1.2-3.4 4-5 7-5s5.8 1.6 7 5" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+          安全运营团队
+        </span>
       </div>
     </header>
 
-    <main class="page-shell">
-      <section class="defense-stack-panel" aria-label="当前运行防护栈">
-        <div class="defense-stack-heading">
-          <div>
-            <span>当前运行防护栈</span>
-            <strong id="stackReadiness">配置读取中</strong>
-          </div>
-          <span id="stackMode" class="stack-mode">--</span>
+    <div class="app-body">
+      <nav class="icon-nav" aria-label="主导航">
+        <button class="nav-item" type="button" title="总览"><span class="nav-ic">▦</span><span class="nav-label">总览</span></button>
+        <button class="nav-item active" type="button" title="攻击监控"><span class="nav-ic">🛡</span><span class="nav-label">攻击监控</span></button>
+        <button class="nav-item" type="button" title="智能体资产"><span class="nav-ic">🤖</span><span class="nav-label">智能体资产</span></button>
+        <button class="nav-item" type="button" title="策略管理"><span class="nav-ic">📜</span><span class="nav-label">策略管理</span></button>
+        <button class="nav-item" type="button" title="工具管理"><span class="nav-ic">🔧</span><span class="nav-label">工具管理</span></button>
+        <button class="nav-item" type="button" title="告警中心"><span class="nav-ic">🔔</span><span class="nav-label">告警中心</span><span class="nav-badge" id="navAlertCount">0</span></button>
+        <button class="nav-item" type="button" title="审计日志"><span class="nav-ic">🗎</span><span class="nav-label">审计日志</span></button>
+        <button class="nav-item" type="button" title="系统设置"><span class="nav-ic">⚙</span><span class="nav-label">系统设置</span></button>
+        <div class="nav-foot">
+          <span class="nav-ic">🛡</span>
+          <strong>OpenClaw</strong>
+          <span class="nav-ver">v1.2.0</span>
         </div>
-        <div id="securityStack" class="security-stack"></div>
-      </section>
+      </nav>
 
-      <section class="stats-grid" id="statsGrid" aria-label="记录概览"></section>
-
-      <section class="workbench">
-        <aside class="sidebar">
-          <section class="panel filters">
-            <div class="panel-title">
-              <h2>筛选</h2>
-              <span id="status" class="pill">连接中</span>
-            </div>
-            <label>
-              搜索
-              <input id="searchInput" type="search" placeholder="工具 / 会话 / 原因 / payload" />
-            </label>
-            <div class="filter-block">
-              <span>视图重点</span>
-              <div class="segmented" id="focusModeGroup">
-                <button class="segment active" type="button" data-focus="important">重点</button>
-                <button class="segment" type="button" data-focus="all">全量</button>
-                <button class="segment" type="button" data-focus="tools">工具</button>
-                <button class="segment" type="button" data-focus="context">溯源</button>
-              </div>
-            </div>
-            <div class="field-grid">
-              <label>
-                严重级别
-                <select id="severityFilter">
-                  <option value="">全部</option>
-                  <option value="danger">高危</option>
-                  <option value="warning">警告</option>
-                  <option value="success">通过</option>
-                  <option value="info">信息</option>
-                </select>
-              </label>
-              <label>
-                记录类型
-                <select id="typeFilter">
-                  <option value="">全部</option>
-                </select>
-              </label>
-            </div>
-            <label>
-              安全域
-              <select id="layerFilter">
-                <option value="">全部</option>
-              </select>
-            </label>
-            <label>
-              读取数量
-              <select id="limitSelect">
-                <option value="200" selected>200</option>
-                <option value="500">500</option>
-                <option value="1000">1000</option>
-                <option value="2000">2000</option>
-                <option value="5000">5000</option>
-              </select>
-            </label>
-            <div class="hint">
-              <span>记录文件</span>
-              <strong id="recordsPath">~/.openclaw/agentsentry/records.jsonl</strong>
-            </div>
-          </section>
-
-          <section class="panel sessions-panel">
-            <div class="panel-title">
-              <h2>会话</h2>
-              <span id="sessionCount">0</span>
-            </div>
-            <div id="sessionList" class="session-list"></div>
-          </section>
+      <main class="main-grid">
+        <aside class="panel ctx-col" aria-label="对话 / 请求上下文">
+          <div class="panel-head">
+            <h2>对话 / 请求上下文</h2>
+            <button class="head-btn" id="ctxExpand" type="button" title="展开">⤢</button>
+          </div>
+          <div class="ctx-cards">
+            <section class="ctx-card tone-blue">
+              <header><i>1</i> 用户发送的原始文本</header>
+              <p id="ctxUserText">--</p>
+              <footer><span id="ctxUserTime">时间：--</span><span>通道：Web 控制台</span></footer>
+            </section>
+            <section class="ctx-card tone-purple">
+              <header><i>2</i> 提供的工具集</header>
+              <div class="tool-chips" id="ctxTools"><span class="tool-chip">--</span></div>
+            </section>
+            <section class="ctx-card tone-teal">
+              <header><i>3</i> 原始输入 <em>（交给模型/工具前）</em></header>
+              <p id="ctxRawInput">--</p>
+            </section>
+            <section class="ctx-card tone-red">
+              <header><i>4</i> 生成的对抗性输入 <em>（检测到的注入/操纵内容）</em><span class="layer-tag">Prompt 注入层</span></header>
+              <p id="ctxAdversarial">--</p>
+              <footer><span>检测引擎：OpenClaw Prompt Shield</span><span id="ctxAdversarialTime">检测时间：--</span></footer>
+            </section>
+          </div>
         </aside>
 
-        <section class="timeline-column">
-          <section class="panel session-summary" id="sessionSummary"></section>
-
-          <section class="panel">
-            <div class="panel-title">
-              <h2>事件时间线</h2>
-              <span id="recordCount">0 条</span>
+        <section class="panel graph-col" aria-label="攻击因果图 / 语义行动图">
+          <div class="panel-head">
+            <h2>攻击因果图 / 语义行动图 <span class="info-dot" title="语义节点 + 因果边，攻击路径红色高亮">ⓘ</span></h2>
+            <div class="head-actions">
+              <button class="head-btn" id="legendToggle" type="button">▤ 图例</button>
+              <button class="head-btn" id="graphFit" type="button">⛶ 全屏</button>
             </div>
-            <div id="timeline" class="timeline"></div>
-          </section>
+          </div>
+          <div class="graph-legend-row" id="graphLegend">
+            <span><i class="lg-dot blue"></i>正常节点</span>
+            <span><i class="lg-dot amber"></i>中间节点</span>
+            <span><i class="lg-arrow"></i>攻击路径</span>
+            <span><i class="lg-plus"></i>拦截点</span>
+            <span class="graph-pager">
+              <button id="graphPrev" type="button" title="上一条攻击路径">‹</button>
+              <b id="graphPage">0 / 0</b>
+              <button id="graphNext" type="button" title="下一条攻击路径">›</button>
+            </span>
+          </div>
+          <div class="graph-banner" id="graphBanner">检测到攻击后：节点/边高亮 + 自动弹出证据详情（不需要镜头移动和放大）</div>
+          <div class="graph-canvas">
+            <div id="cyGraph" role="img" aria-label="Agent 语义动作图"></div>
+            <div id="graphEmpty" class="graph-empty">等待 OpenClaw 运行产生记录后，自动生成攻击因果图。</div>
+          </div>
+          <p class="graph-hint">提示：点击节点或边可查看证据详情（右侧自动弹出）</p>
         </section>
 
-        <aside class="panel detail">
-          <div class="panel-title detail-title">
-            <div>
-              <h2>详情</h2>
-              <span id="detailMeta">未选择</span>
-            </div>
-            <button id="copyPayloadBtn" class="ghost small" type="button" disabled>复制 JSON</button>
+        <aside class="panel evidence-col" aria-label="证据详情">
+          <div class="panel-head red-head">
+            <h2>证据详情</h2>
+            <span class="auto-pill">自动弹出</span>
+            <button class="head-btn close" id="evidenceClose" type="button" title="收起">×</button>
           </div>
-          <div id="detailBody" class="empty">选择一条记录查看摘要和 payload。</div>
-        </aside>
-      </section>
-    </main>
+          <div class="evidence-body" id="evidenceBody">
+            <p class="ev-selected">当前选中 <b id="evSelected">--</b></p>
 
-    <script src="/app.js?v=20260711-1"></script>
+            <div class="ev-row"><span class="ev-ic">▤</span><span class="ev-label">策略等级</span><span class="chip danger" id="evLevel">高危</span></div>
+
+            <div class="ev-row col"><span class="ev-ic">◔</span><span class="ev-label">检测结论</span><p id="evConclusion">--</p></div>
+
+            <div class="ev-row col"><span class="ev-ic">▣</span><span class="ev-label">规则/策略命中</span><p id="evRule">--</p><span class="mono-chip" id="evRuleVer">运行时行为策略</span></div>
+
+            <div class="ev-row col"><span class="ev-ic">◎</span><span class="ev-label">OpenClaw 助应</span><p id="evResponse">--</p><span class="ok-chip" id="evResponseChip">拦截成功</span></div>
+
+            <div class="ev-row col">
+              <span class="ev-ic">⚙</span><span class="ev-label">处置动作 <em>(allow / ask / deny)</em></span>
+              <div class="ev-actions">
+                <button id="evAllow" type="button">allow</button>
+                <button id="evAsk" type="button">ask</button>
+                <button id="evDeny" type="button">deny</button>
+              </div>
+            </div>
+
+            <div class="ev-row col"><span class="ev-ic">◑</span><span class="ev-label">风险说明</span><p id="evRisk">--</p></div>
+
+            <div class="ev-row col">
+              <span class="ev-ic">▥</span><span class="ev-label">证据片段</span>
+              <button class="copy-btn" id="evCopyBtn" type="button">复制</button>
+              <pre id="evEvidence">--</pre>
+            </div>
+
+            <div class="ev-meta">
+              <span>◷ 时间</span><b id="evTime">--</b>
+              <span>⌾ 会话 ID</span><b id="evSession">--</b>
+              <span>⊕ IP 地址</span><b id="evIp">--</b>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="bottom-grid">
+        <section class="panel summary-panel" aria-label="事件摘要">
+          <div class="panel-head">
+            <h2>事件摘要</h2>
+            <span class="chip danger" id="sumBadge">高危</span>
+            <p id="sumText">--</p>
+          </div>
+          <div class="sum-cards">
+            <div class="sum-card red"><span>攻击路径长度</span><b id="sumPathLen">0</b></div>
+            <div class="sum-card green"><span>拦截节点</span><b id="sumIntercept">--</b></div>
+            <div class="sum-card amber"><span>影响范围</span><b id="sumScope">--</b></div>
+            <div class="sum-card teal"><span>处置结果</span><b id="sumResult">--</b></div>
+          </div>
+        </section>
+
+        <section class="panel timeline-panel" aria-label="事件时间线">
+          <div class="panel-head">
+            <h2>事件时间线 <em>（关键步骤）</em></h2>
+            <div class="head-actions">
+              <span class="replay-mini" aria-label="回放控制">
+                <button id="replayStart" type="button" title="回到起点">⏮</button>
+                <button id="replayStepBack" type="button" title="后退一步">⏴</button>
+                <button id="replayToggle" type="button" title="播放 / 暂停">▶</button>
+                <button id="replayStepForward" type="button" title="前进一步">⏵</button>
+                <button id="replayEnd" type="button" title="跳到最新">⏭</button>
+                <b id="replayStatus">0 / 0</b>
+              </span>
+              <button class="head-btn" id="exportReportBtn" type="button">⤓ 导出报告</button>
+              <button class="head-btn" id="whitelistBtn" type="button">⊕ 加入白名单</button>
+              <button class="head-btn" id="openReplayBtn" type="button">▷ 打开会话回放</button>
+            </div>
+          </div>
+          <div class="tl-track" id="tlSteps"><div class="tl-empty">暂无事件</div></div>
+        </section>
+      </footer>
+    </div>
+
+    <script src="/vendor/cytoscape.min.js"></script>
+    <script src="/vendor/dagre.min.js"></script>
+    <script src="/vendor/cytoscape-dagre.js"></script>
+    <script src="/graph-adapter.js?v=20260807-1"></script>
+    <script src="/semantic-graph.js?v=20260807-1"></script>
+    <script src="/graph-home.js?v=20260807-1"></script>
   </body>
 </html>

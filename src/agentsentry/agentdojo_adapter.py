@@ -17,6 +17,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 
@@ -438,6 +439,7 @@ def make_guarded_runtime_class(
                 )
 
             record: dict[str, Any] = {
+                "recorded_at": datetime.now(UTC).isoformat(),
                 "session_id": self.agentsentry_session_id,
                 "call_id": call_id,
                 "tool_name": function,
@@ -588,6 +590,7 @@ def make_guarded_runtime_class(
             raise_on_error: bool,
         ) -> tuple[Any, str | None]:
             record = {
+                "recorded_at": datetime.now(UTC).isoformat(),
                 "session_id": self.agentsentry_session_id,
                 "call_id": call_id,
                 "tool_name": function,

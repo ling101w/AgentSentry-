@@ -7,8 +7,18 @@ import type {
 import { posix } from "node:path";
 import { hostFromUrl, targetMatches } from "../security/url.ts";
 import { isLowRiskShellReadCommand } from "../policy/safe-ops.ts";
+import { flattenText, isLabeledValue } from "../policy/value-utils.ts";
 
-const SIDE_EFFECT_TOOLS = new Set(["write_file", "send_email", "call_api", "shell_exec", "memory_write"]);
+const SIDE_EFFECT_TOOLS = new Set([
+  "write_file",
+  "send_email",
+  "call_api",
+  "shell_exec",
+  "memory_write",
+  "calendar_write",
+  "cloud_file_write",
+  "cloud_file_share",
+]);
 
 export function authorizeCapability(
   spec: TaskSpec,
@@ -63,6 +73,7 @@ export function isSideEffectToolCall(request: CapabilityActionRequest): boolean 
 }
 
 function descriptorFor(request: CapabilityActionRequest): { action: TaskCapability["action"]; resource: TaskCapability["resourceType"]; method?: string } | null {
+  if (request.tool === "business_read") return { action: "read", resource: "api" };
   if (request.tool === "read_file") return { action: "read", resource: "file" };
   if (request.tool === "write_file") return { action: "write", resource: "file" };
   if (request.tool === "send_email") return { action: "send", resource: "email" };
@@ -74,6 +85,9 @@ function descriptorFor(request: CapabilityActionRequest): { action: TaskCapabili
   if (request.tool === "shell_exec") return { action: "execute", resource: "shell" };
   if (request.tool === "memory_write") return { action: "persist", resource: "memory" };
   if (request.tool === "memory_read") return { action: "read", resource: "memory" };
+  if (request.tool === "calendar_write") return { action: "write", resource: "calendar" };
+  if (request.tool === "cloud_file_write") return { action: "write", resource: "cloud_file" };
+  if (request.tool === "cloud_file_share") return { action: "send", resource: "cloud_file" };
   return null;
 }
 
@@ -108,6 +122,42 @@ function validateConstraints(capability: TaskCapability, request: CapabilityActi
     }
   }
 
+  if (request.tool === "calendar_write") {
+    const operation = calendarOperation(request);
+    if (capability.constraints.allowedOperations?.length
+      && !capability.constraints.allowedOperations.map((item) => item.toLowerCase()).includes(operation)) {
+      return mismatch("calendar_operation_outside_authorization", capability, operation);
+    }
+    const participants = readMany(request.args, ["participants", "recipients", "attendees"])
+      .map((item) => item.toLowerCase());
+    const allowedRecipients = capability.constraints.allowedRecipients;
+    const unauthorized = allowedRecipients?.length
+      ? participants.find((item) => !allowedRecipients.some((allowed) => allowed.toLowerCase() === item))
+      : undefined;
+    if (unauthorized) return mismatch("participant_outside_authorization", capability, unauthorized);
+  }
+
+  if (request.tool === "cloud_file_write") {
+    const operation = cloudFileOperation(request);
+    if (capability.constraints.allowedOperations?.length
+      && !capability.constraints.allowedOperations.map((item) => item.toLowerCase()).includes(operation)) {
+      return mismatch("cloud_file_operation_outside_authorization", capability, operation);
+    }
+    const name = readFirst(request.args, ["filename", "path", "file"]);
+    if (name && capability.constraints.allowedPaths?.length
+      && !capability.constraints.allowedPaths.some((allowed) => pathMatches(name, allowed))) {
+      return mismatch("cloud_file_outside_authorization", capability, name);
+    }
+  }
+
+  if (request.tool === "cloud_file_share") {
+    const recipients = readMany(request.args, ["recipient", "recipients", "to", "email"])
+      .map((item) => item.toLowerCase());
+    const allowed = capability.constraints.allowedRecipients || capability.targets;
+    const unauthorized = recipients.find((recipient) => !allowed.some((item) => item.toLowerCase() === recipient));
+    if (!recipients.length || unauthorized) return mismatch("recipient_outside_authorization", capability, unauthorized || "");
+  }
+
   if (request.tool === "read_file" || request.tool === "write_file") {
     const path = readFirst(request.args, ["path", "file", "filename", "target"]);
     const allowed = capability.constraints.allowedPaths || capability.targets;
@@ -139,7 +189,9 @@ function validateConstraints(capability: TaskCapability, request: CapabilityActi
 
 function constraintMismatchReason(capability: TaskCapability, request: CapabilityActionRequest, method?: string): string {
   if (capability.constraints.allowedMethods?.length && method && !capability.constraints.allowedMethods.includes(method)) return "method_outside_authorization";
-  if (request.tool === "send_email") return "recipient_outside_authorization";
+  if (request.tool === "send_email" || request.tool === "cloud_file_share") return "recipient_outside_authorization";
+  if (request.tool === "calendar_write") return "calendar_operation_outside_authorization";
+  if (request.tool === "cloud_file_write") return "cloud_file_operation_outside_authorization";
   if (request.tool === "read_file" || request.tool === "write_file") return "path_outside_authorization";
   if (request.tool === "read_webpage" || request.tool === "call_api") return "target_outside_authorization";
   if (request.tool === "shell_exec") return "command_outside_authorization";
@@ -147,7 +199,8 @@ function constraintMismatchReason(capability: TaskCapability, request: Capabilit
 }
 
 function isAuthoritative(capability: TaskCapability): boolean {
-  return capability.evidence.source === "user"
+  return (capability.evidence.source === "user"
+    || (capability.evidence.source === "delegated_tool_result" && capability.evidence.delegationVerified === true))
     && capability.evidence.explicitAuthorization
     && !capability.evidence.insideQuotation
     && !capability.evidence.negated
@@ -169,7 +222,37 @@ function targetFor(request: CapabilityActionRequest): string {
   if (request.tool === "read_file" || request.tool === "write_file") return readFirst(request.args, ["path", "file", "filename", "target"]);
   if (request.tool === "read_webpage" || request.tool === "call_api") return readFirst(request.args, ["url", "href", "endpoint", "target"]);
   if (request.tool === "shell_exec") return readFirst(request.args, ["command", "cmd", "script", "input"]);
+  if (request.tool === "calendar_write") return calendarOperation(request);
+  if (request.tool === "cloud_file_write") return cloudFileOperation(request);
+  if (request.tool === "cloud_file_share") return readFirst(request.args, ["recipient", "to", "email"]);
   return request.tool;
+}
+
+function calendarOperation(request: CapabilityActionRequest): string {
+  const tool = (request.originalTool || "").toLowerCase();
+  if (tool.includes("reschedule")) return "reschedule";
+  if (tool.includes("participant")) return "participants";
+  if (tool.includes("cancel")) return "cancel";
+  return "create";
+}
+
+function cloudFileOperation(request: CapabilityActionRequest): string {
+  const tool = (request.originalTool || "").toLowerCase();
+  if (tool.includes("git_delete") || tool.includes("delete_node")) return "delete";
+  if (tool.includes("transfer")) return "transfer";
+  if (tool.includes("invite")) return "invite";
+  if (tool.includes("unstar")) return "unstar";
+  if (tool.includes("star")) return "star";
+  if (tool.includes("issue")) return "issue";
+  if (tool.includes("push")) return "push";
+  if (tool.includes("pull")) return "pull";
+  if (tool.includes("ssh")) return tool.includes("delete") ? "ssh_delete" : "ssh_add";
+  if (tool.includes("download") || tool.includes("clone")) return "pull";
+  if (tool.includes("move") || tool.includes("copy") || tool.includes("create")) return "create";
+  if (tool.includes("append")) return "append";
+  if (tool.includes("delete")) return "delete";
+  if (tool.includes("share")) return "share";
+  return "create";
 }
 
 function pathMatches(actual: string, allowed: string): boolean {
@@ -179,6 +262,15 @@ function pathMatches(actual: string, allowed: string): boolean {
   if (normalizedAllowed === "~/.ssh/authorized_keys") return normalizedActual.endsWith("/.ssh/authorized_keys");
   if (normalizedAllowed.startsWith("~/.openclaw/")) return normalizedActual.endsWith(normalizedAllowed.slice(1));
   if (normalizedAllowed.endsWith("/*")) return normalizedActual.startsWith(normalizedAllowed.slice(0, -1));
+  const actualIsAbsolute = normalizedActual.startsWith("/") || /^[a-z]:\//.test(normalizedActual);
+  const allowedIsSafeRelative = !normalizedAllowed.startsWith("/")
+    && !/^[a-z]:\//.test(normalizedAllowed)
+    && normalizedAllowed !== ".."
+    && !normalizedAllowed.startsWith("../");
+  // Runtime adapters resolve workspace-relative paths before authorization.
+  // Match that resolved path back to the exact user-authorized relative suffix;
+  // allowed-root enforcement separately proves it belongs to the workspace.
+  if (actualIsAbsolute && allowedIsSafeRelative) return normalizedActual.endsWith(`/${normalizedAllowed}`);
   return normalizedActual === normalizedAllowed;
 }
 
@@ -218,20 +310,16 @@ function normalizeNetworkTarget(value: string): string {
 }
 
 function readFirst(args: Record<string, unknown>, keys: string[]): string {
-  for (const key of keys) {
-    const value = args[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (Array.isArray(value) && value.length) return String(value[0]).trim();
-  }
-  return "";
+  return readMany(args, keys)[0] || "";
 }
 
 function readMany(args: Record<string, unknown>, keys: string[]): string[] {
   for (const key of keys) {
-    const value = args[key];
+    const original = args[key];
+    const value = isLabeledValue(original) ? original.value : original;
     if (typeof value === "string" && value.trim()) return [value.trim()];
     if (Array.isArray(value)) {
-      const items = value.map((item) => String(item).trim()).filter(Boolean);
+      const items = value.map((item) => flattenText(item).trim()).filter(Boolean);
       if (items.length) return items;
     }
   }

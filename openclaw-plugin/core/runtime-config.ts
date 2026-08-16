@@ -9,7 +9,8 @@ const INVALID_VALUE = Symbol("invalid-runtime-config-value");
 let knownConfigLeafPaths: readonly string[] | undefined;
 
 const ENUM_VALUES: Readonly<Record<string, readonly string[]>> = {
-  profile: ["observe", "balanced", "competition", "high-security"],
+  profile: ["observe", "balanced", "competition", "evidence-gated", "high-security"],
+  "intervention.mode": ["risk-based", "evidence-gated"],
   "semantic.mode": ["off", "risk-tiered", "full"],
   "runtimeIsolation.unavailableAction": ["require_approval", "block"],
   "enforcement.mode": ["observe", "approval", "block"],

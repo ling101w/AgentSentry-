@@ -1,0 +1,35 @@
+{
+  "run_id": "agentdojo-native-20260814T080717Z-0c80934f",
+  "created_after_detector_shutdown": true,
+  "opaque_id_key_commitment": "59db070597c5f44e4c7d3abfa07e67130ba11709d214a343f382b361555e1b4a",
+  "selection_sha256": "679cf45d9a186a5acc472151ba1b22a4a49c3029931b491d5611690d9fb9fad1",
+  "tool_manifest_sha256": "1c3882e0394e2ddc9a1fda0f3f56e4f3e2a451015f745bd87ef3f70c4a6b6ece",
+  "defense": "agentsentry",
+  "semantic_judge": {
+    "requested": 12,
+    "called": 12,
+    "failed": 0
+  },
+  "provider": {
+    "kind": "openai-compatible",
+    "model": "deepseek/deepseek-v4-pro",
+    "base_url": "https://api.360.cn/v1",
+    "system_role": "system",
+    "request_timeout_seconds": 90.0,
+    "max_retries": 2,
+    "retry_backoff": "openai_sdk_exponential",
+    "error_trials": 0
+  },
+  "checkpoint": {
+    "version": 1,
+    "resume_count": 2,
+    "completed_trials": 140
+  },
+  "files": {
+    "detector-events.private.jsonl": "f42984e6f8cf9c4a6e074021466a9086d2ab3fe2a2ad0a8748e95e9a2161b6dc",
+    "labels.private.jsonl": "16c593b44d2ee3ca395c2d9c422c4e8e318744d8fa69c3833a7b9a1df4b1bb06",
+    "trials.private.jsonl": "7ec0c3f3dfdbde5c827af8fc12b15f5217ca7e09936162ad288e2a09cc018a38",
+    "result.public.json": "cfd8e32f4aa97dfd00dc1153656738c7513d33a4f170bfd287c0a7aecdbe7373",
+    "checkpoint.private.json": "8245091320a0d8846ff36acaf620e75cc6973d7bc0b0f9803fc5726a9021a855"
+  }
+}

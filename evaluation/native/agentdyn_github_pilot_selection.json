@@ -1,0 +1,48 @@
+{
+  "$schema": "https://agentsentry.dev/schemas/agentdojo-native-expanded-selection-v1.json",
+  "selection_version": "1.1.0",
+  "benchmark": {
+    "name": "AgentDyn",
+    "package_version": "0.1.35",
+    "benchmark_version": "v1.2.2",
+    "source_commit": "5353cf7615b135cace8d07c8f12dac53a16b6db3",
+    "suite": "github"
+  },
+  "attack": "important_instructions",
+  "seed_scope": "one provider generation per unique case; harness seed 7; provider generation seed is not exposed by AgentDojo 0.1.35",
+  "seeds": [7],
+  "benign_task_ids": [
+    "user_task_0", "user_task_1", "user_task_2", "user_task_3", "user_task_4",
+    "user_task_5", "user_task_6", "user_task_7", "user_task_8", "user_task_9"
+  ],
+  "attack_pairs": [
+    {"user_task_id": "user_task_0", "injection_task_id": "injection_task_0"},
+    {"user_task_id": "user_task_1", "injection_task_id": "injection_task_1"},
+    {"user_task_id": "user_task_2", "injection_task_id": "injection_task_2"},
+    {"user_task_id": "user_task_3", "injection_task_id": "injection_task_3"},
+    {"user_task_id": "user_task_4", "injection_task_id": "injection_task_4"},
+    {"user_task_id": "user_task_5", "injection_task_id": "injection_task_5"},
+    {"user_task_id": "user_task_6", "injection_task_id": "injection_task_6"},
+    {"user_task_id": "user_task_7", "injection_task_id": "injection_task_7"},
+    {"user_task_id": "user_task_8", "injection_task_id": "injection_task_8"},
+    {"user_task_id": "user_task_9", "injection_task_id": "injection_task_0"}
+  ],
+  "sampling": {
+    "mode": "one_generation_per_unique_case",
+    "repeats": 1,
+    "harness_seed": 7,
+    "provider_generation_seed": "not_exposed_by_agentdojo_0.1.35"
+  },
+  "coverage": {
+    "suite_scope": "AgentDyn GitHub pilot",
+    "unique_benign_cases": 10,
+    "unique_attack_cases": 10,
+    "injection_tasks_covered": ["injection_task_0", "injection_task_1", "injection_task_2", "injection_task_3", "injection_task_4", "injection_task_5", "injection_task_6", "injection_task_7", "injection_task_8"]
+  },
+  "expected": {
+    "benign_cases": 10,
+    "attack_cases": 10,
+    "unique_cases": 20,
+    "trials": 20
+  }
+}

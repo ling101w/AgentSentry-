@@ -7,11 +7,47 @@ import { clampText, redactObject } from "./redact.ts";
 import { EventWriter } from "./persistence/event-writer.ts";
 
 export type RecordSeverity = "info" | "success" | "warning" | "danger";
+export type AgentSentryDecision = "allow" | "ask" | "deny";
+export type AgentSentryDisposition =
+  | "observe_only"
+  | "allowed"
+  | "blocked"
+  | "approval_required"
+  | "approval_granted"
+  | "approval_denied"
+  | "approval_timeout"
+  | "approval_cancelled";
+export type AgentSentryExecutionStatus = "pending" | "executed" | "failed" | "blocked" | "skipped";
+
+export const AGENT_SENTRY_AUDIT_SCHEMA = "agentsentry.audit-record.v1" as const;
+
+export const AUDIT_COMPLETENESS_FIELDS = [
+  "created_at",
+  "run_id",
+  "session_key",
+  "agent_id",
+  "tool_name",
+  "params",
+  "decision",
+  "disposition",
+  "execution_status",
+] as const;
 
 export type AgentSentryRecord = {
   id: string;
+  schema_version?: typeof AGENT_SENTRY_AUDIT_SCHEMA;
   run_id: string;
   session_key: string;
+  session_id?: string;
+  agent_id?: string;
+  openclaw_run_id?: string;
+  tool_name?: string;
+  tool_call_id?: string;
+  params?: Record<string, unknown>;
+  params_sha256?: string;
+  decision?: AgentSentryDecision;
+  disposition?: AgentSentryDisposition;
+  execution_status?: AgentSentryExecutionStatus;
   type: string;
   layer: string;
   severity: RecordSeverity;
@@ -20,6 +56,16 @@ export type AgentSentryRecord = {
   payload: Record<string, unknown>;
   created_at: string;
 };
+
+/** Return required traceability fields missing from a persisted audit event. */
+export function auditRecordMissingFields(record: AgentSentryRecord): string[] {
+  const missing: string[] = [];
+  for (const field of AUDIT_COMPLETENESS_FIELDS) {
+    const value = record[field];
+    if (value === undefined || value === null || (typeof value === "string" && !value.trim())) missing.push(field);
+  }
+  return missing;
+}
 
 export class RecordStore {
   readonly stateDir: string;
@@ -50,9 +96,20 @@ export class RecordStore {
   add(input: Omit<AgentSentryRecord, "id" | "created_at"> & { id?: string; created_at?: string }): AgentSentryRecord {
     const record: AgentSentryRecord = {
       id: input.id || newId("rec"),
+      schema_version: input.schema_version,
       created_at: input.created_at || new Date().toISOString(),
       run_id: input.run_id,
       session_key: input.session_key,
+      session_id: input.session_id,
+      agent_id: input.agent_id,
+      openclaw_run_id: input.openclaw_run_id,
+      tool_name: input.tool_name,
+      tool_call_id: input.tool_call_id,
+      params: input.params,
+      params_sha256: input.params_sha256,
+      decision: input.decision,
+      disposition: input.disposition,
+      execution_status: input.execution_status,
       type: input.type,
       layer: input.layer,
       severity: input.severity,
@@ -212,16 +269,27 @@ export function runIdForSession(sessionKey: string | undefined): string {
 
 function recordForStorage(record: AgentSentryRecord, previewChars: number): AgentSentryRecord {
   let payload: Record<string, unknown>;
+  let params: Record<string, unknown> | undefined;
   try {
     const redacted = redactObject(record.payload, previewChars);
     payload = isPlainRecord(redacted) ? redacted : { value: redacted };
   } catch {
     payload = { persistence_error: "payload could not be safely serialized" };
   }
+  if (record.params !== undefined) {
+    try {
+      const redacted = redactObject(record.params, previewChars);
+      params = isPlainRecord(redacted) ? redacted : { value: redacted };
+    } catch {
+      params = { persistence_error: "params could not be safely serialized" };
+    }
+  }
   return {
     ...record,
+    schema_version: AGENT_SENTRY_AUDIT_SCHEMA,
     title: clampText(record.title, previewChars),
     summary: clampText(record.summary, previewChars),
+    ...(params === undefined ? {} : { params }),
     payload,
   };
 }

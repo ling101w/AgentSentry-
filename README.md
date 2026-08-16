@@ -134,19 +134,22 @@ bash setup.sh --force
 | `observe` | `observe` | 只记录和告警，用作无阻断基线 |
 | `balanced` | `approval` | 日常使用，高风险动作进入审批 |
 | `competition` | `approval` | 比赛演示，启用 provenance judge、写入 root 和响应覆盖 |
+| `evidence-gated` | `approval` | 低干预实验模式：普通风险仅审计，明确攻击信号才询问或拒绝；硬安全边界仍保留 |
 | `high-security` | `block` | 强约束部署，要求高风险运行面具备内核 observer |
 
 常用命令：
 
 ```text
 /agentsentry status
-/agentsentry profile <observe|balanced|competition|high-security>
+/agentsentry profile <observe|balanced|competition|evidence-gated|high-security>
 /agentsentry config get [key]
 /agentsentry config set <key> <value>
 /agentsentry config reset
 /agentsentry approvals [status|reset]
 /agentsentry reset
 ```
+
+`evidence-gated` 不把高风险本身等同于攻击。TaskSpec 缺失、授权歧义或行为漂移会保留在审计记录中，但默认放行；与当前动作存在因果关联的明确攻击信号触发 `ask`，已确认且观察到攻击链到达阻断 sink 时触发 `deny`。该 profile 默认保留 manifest 完整性、路径/沙箱逃逸、secret flow 等硬安全边界。它用于研究低误拦与攻击召回之间的权衡，不替代冻结 `competition` policy 的历史评测结论。
 
 Semantic Judge 默认使用独立的环境变量，不复用业务 API Key：
 

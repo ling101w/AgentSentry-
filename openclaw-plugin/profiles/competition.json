@@ -1,5 +1,6 @@
 {
   "profile": "competition",
+  "intervention": { "mode": "risk-based", "preserveSafetyBoundaries": true },
   "enforcement": { "mode": "approval" },
   "semantic": {
     "enabled": true,

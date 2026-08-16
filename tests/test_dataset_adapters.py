@@ -205,7 +205,7 @@ def _envelope(record: dict) -> dict:
     return value
 
 
-def test_six_source_adapters_are_lossless_deterministic_and_traceable(tmp_path: Path) -> None:
+def test_source_adapters_are_lossless_deterministic_and_traceable(tmp_path: Path) -> None:
     benchmark_root, metadata, values = _fixtures(tmp_path)
 
     records, reports = load_all(benchmark_root, metadata)
@@ -376,7 +376,12 @@ def test_reports_keep_parse_errors_files_and_benign_baselines(tmp_path: Path) ->
     dojo_files = {item["path"]: item for item in by_dataset["AgentDojo"]["files"]}
     assert dojo_files["src/agentdojo/default_suites/v1/workspace/user_tasks.py"]["objects"] == 1
     assert dojo_files["src/agentdojo/default_suites/v1/workspace/injection_tasks.py"]["objects"] == 1
-    assert all(item["status"] == "loaded" for item in reports if item["dataset"] != "MSB")
+    assert all(
+        item["status"] == "loaded"
+        for item in reports
+        if item["dataset"] not in {"MSB", "DeepTrap"}
+    )
+    assert by_dataset["DeepTrap"]["status"] == "missing"
 
     benign_sources = {
         item["source"]["dataset"] for item in records if item["labels"]["attack"] is False

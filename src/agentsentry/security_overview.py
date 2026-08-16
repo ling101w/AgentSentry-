@@ -158,6 +158,13 @@ def _local_event(row: dict[str, Any]) -> dict[str, Any]:
 
 def _openclaw_event(record: dict[str, Any]) -> dict[str, Any]:
     payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+    audit = {
+        **payload,
+        "decision": record.get("decision") or payload.get("decision"),
+        "tool": record.get("tool_name") or record.get("tool") or payload.get("tool"),
+        "severity": record.get("severity") or payload.get("severity"),
+        "action": record.get("action") or payload.get("action"),
+    }
     text = _text(record)
     return {
         "id": str(record.get("id", "")),
@@ -165,9 +172,9 @@ def _openclaw_event(record: dict[str, Any]) -> dict[str, Any]:
         "source": "OpenClaw",
         "type": str(record.get("type", "record")),
         "layer": _layer(record.get("layer") or payload.get("layer") or record.get("type"), text),
-        "severity": _severity({"severity": record.get("severity"), **payload}, text),
-        "decision": _decision(payload | {"severity": record.get("severity"), "action": record.get("action")}, text),
-        "tool": _tool(payload | {"tool": record.get("tool")}, text),
+        "severity": _severity(audit, text),
+        "decision": _decision(audit, text),
+        "tool": _tool(audit, text),
         "title": str(record.get("title") or record.get("type") or "OpenClaw Event"),
         "reason": _reason(payload | {"summary": record.get("summary"), "title": record.get("title")}, record.get("type")),
         "rule": _rule(payload, text),
@@ -516,28 +523,34 @@ def _layer(raw: Any, text: str) -> str:
 
 def _tool(payload: dict[str, Any], text: str) -> str:
     raw = str(payload.get("tool") or payload.get("toolName") or payload.get("normalized_tool") or "").lower()
-    joined = f"{raw} {text}"
-    if "read_file" in joined:
+    explicit = _tool_category(raw)
+    if explicit != "agent":
+        return explicit
+    return _tool_category(text.lower())
+
+
+def _tool_category(value: str) -> str:
+    if "read_file" in value:
         return "read_file"
-    if "write_file" in joined:
+    if "write_file" in value:
         return "write_file"
-    if _has_any(joined, ["send_email", "email", "mail"]):
+    if _has_any(value, ["send_email", "email", "mail"]):
         return "email"
-    if _has_any(joined, ["read_webpage", "webpage", "browser", "url"]):
+    if _has_any(value, ["read_webpage", "webpage", "browser", "url"]):
         return "webpage"
-    if _has_any(joined, ["call_api", " api", "http"]):
+    if _has_any(value, ["call_api", " api", "http"]):
         return "api"
-    if _has_any(joined, ["memory"]):
+    if _has_any(value, ["memory"]):
         return "memory"
-    if _has_any(joined, ["shell", "exec", "bash", "command"]):
+    if _has_any(value, ["shell", "exec", "bash", "command"]):
         return "shell"
-    if _has_any(joined, ["search"]):
+    if _has_any(value, ["search"]):
         return "search"
-    if _has_any(joined, ["sqlite", "database"]):
+    if _has_any(value, ["sqlite", "database"]):
         return "database"
-    if _has_any(joined, ["file"]):
+    if _has_any(value, ["file"]):
         return "file"
-    return raw or "agent"
+    return value or "agent"
 
 
 def _tool_name(value: str) -> str:

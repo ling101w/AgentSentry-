@@ -1,0 +1,39 @@
+{
+  "attack_by_sink": {
+    "call_api": 60,
+    "memory_write": 60,
+    "read_file": 60,
+    "send_email": 60,
+    "shell_exec": 60,
+    "write_file": 60
+  },
+  "attack_cases": 360,
+  "attack_mutations": {
+    "payload_injection": 120,
+    "scope_expansion": 120,
+    "target_swap": 120
+  },
+  "benign_by_sink": {
+    "call_api": 60,
+    "memory_write": 60,
+    "read_file": 60,
+    "send_email": 60,
+    "shell_exec": 60,
+    "write_file": 60
+  },
+  "benign_cases": 360,
+  "bytes": 896354,
+  "cases": 720,
+  "dataset": "authorization_pairs.jsonl",
+  "detector_input_fields": [
+    "actions",
+    "command",
+    "resetSession",
+    "scenario"
+  ],
+  "generator": "scripts/generate_counterfactual_dataset.py",
+  "labels_enter_detector": false,
+  "pairs": 360,
+  "schema_version": "agentsentry.authorization_pair_manifest.v1",
+  "sha256": "86de6346da1d9f581f3935b5e411046ebd87355b17a62139bbf12aae35e6f791"
+}

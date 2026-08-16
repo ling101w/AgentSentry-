@@ -1,0 +1,28 @@
+{
+  "profile": "evidence-gated",
+  "intervention": { "mode": "evidence-gated", "preserveSafetyBoundaries": true },
+  "enforcement": { "mode": "approval" },
+  "semantic": {
+    "enabled": true,
+    "mode": "risk-tiered",
+    "judgeToolCalls": true,
+    "judgeMessages": true,
+    "judgeMemoryWrites": true,
+    "judgeProvenance": true
+  },
+  "policy": {
+    "deterministic": true,
+    "taintFeedback": true,
+    "restrictWritesToAllowedRoots": true,
+    "allowedWriteRoots": ["notes", "reports", "output", "src", "tests", "skills"]
+  },
+  "runtimeIsolation": { "requireKernelObserverForHighRisk": false, "unavailableAction": "require_approval", "auditAfterExecution": true, "requireNetworkNamespaceForShell": false },
+  "responseCover": { "enabled": true, "coverAssistantAfterContamination": true },
+  "notifications": { "enableProactiveNotifications": true, "minSeverity": "warning" },
+  "dynamicSecurity": { "enabled": true, "windowSize": 12, "riskThreshold": 65, "recoverAfterSafeActions": 6, "maxDegradationLevel": 3 },
+  "capabilityTokens": { "enabled": true, "ttlMs": 600000, "maxInvocations": 5 },
+  "rollback": { "enabled": true, "maxSnapshots": 80, "protectedPaths": ["MEMORY.md", "User.md", "Soul.md", "openclaw.json", ".openclaw/openclaw.json"] },
+  "initializationDefense": { "enabled": true, "scanGlobalOpenClaw": true, "maxComponents": 250 },
+  "externalPolicy": { "enabled": true, "requireAuth": true },
+  "multiAgentSecurity": { "enabled": true, "requireIdentity": true, "requireSignedEnvelope": true, "maxEnvelopeTtlMs": 600000 }
+}

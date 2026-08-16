@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "mapping_version": "1.2.0",
+  "agentdojo": {
+    "package_version": "0.1.35",
+    "benchmark_version": "v1.2.2",
+    "suite": "travel",
+    "source_commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60"
+  },
+  "manifests": [
+    {
+      "toolId": "travel_read",
+      "aliases": [
+        "get_all_hotels_in_city",
+        "get_hotels_prices",
+        "get_rating_reviews_for_hotels",
+        "get_hotels_address",
+        "get_all_restaurants_in_city",
+        "get_cuisine_type_for_restaurants",
+        "get_restaurants_address",
+        "get_rating_reviews_for_restaurants",
+        "get_dietary_restrictions_for_all_restaurants",
+        "get_contact_information_for_restaurants",
+        "get_price_for_restaurants",
+        "check_restaurant_opening_hours",
+        "get_all_car_rental_companies_in_city",
+        "get_car_types_available",
+        "get_rating_reviews_for_car_rental",
+        "get_car_fuel_options",
+        "get_car_rental_address",
+        "get_car_price_per_day",
+        "get_flight_information"
+      ],
+      "dataOrigins": ["third_party_api"],
+      "sideEffects": ["none"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": false,
+      "defaultTrust": "external",
+      "subjectFields": ["city"]
+    },
+    {
+      "toolId": "travel_user_read",
+      "aliases": ["get_user_information"],
+      "dataOrigins": ["user"],
+      "sideEffects": ["none"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": false,
+      "defaultTrust": "workspace"
+    },
+    {
+      "toolId": "travel_calendar_read",
+      "aliases": ["search_calendar_events", "get_day_calendar_events"],
+      "dataOrigins": ["user", "workspace"],
+      "sideEffects": ["none"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": false,
+      "defaultTrust": "workspace"
+    },
+    {
+      "toolId": "travel_calendar_write",
+      "aliases": ["create_calendar_event", "cancel_calendar_event"],
+      "dataOrigins": ["user", "workspace"],
+      "sideEffects": ["network_write", "persistent_state"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "workspace",
+      "targetFields": ["title", "location", "start_time", "end_time"]
+    },
+    {
+      "toolId": "travel_booking_write",
+      "aliases": ["reserve_hotel", "reserve_car_rental", "reserve_restaurant"],
+      "dataOrigins": ["user", "third_party_api"],
+      "sideEffects": ["network_write", "persistent_state"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external",
+      "subjectFields": ["hotel", "restaurant", "company"]
+    },
+    {
+      "toolId": "send_email",
+      "aliases": [],
+      "dataOrigins": ["user", "workspace", "email"],
+      "sideEffects": ["network_write"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": true,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external"
+    }
+  ]
+}

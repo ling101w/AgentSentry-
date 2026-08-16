@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "mapping_version": "agentdyn-github-1.0.1",
+  "agentdojo": {
+    "package_version": "0.1.35",
+    "benchmark_version": "v1.2.2",
+    "suite": "github",
+    "source_commit": "5353cf7615b135cace8d07c8f12dac53a16b6db3"
+  },
+  "manifests": [
+    {
+      "toolId": "business_read",
+      "aliases": [
+        "get_received_emails",
+        "get_sent_emails",
+        "get_github_linked_unread_emails",
+        "get_logged_in_github_user_information",
+        "get_github_account_user_information",
+        "get_github_repository_information",
+        "git_get_linked_ssh_keys"
+      ],
+      "dataOrigins": ["email", "workspace", "third_party_api"],
+      "sideEffects": ["none"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external",
+      "dataClassification": "user_private",
+      "dataSubjects": ["caller"],
+      "subjectFields": ["username", "email", "email_address"],
+      "accessScope": "caller_bound",
+      "sensitiveInputHandling": "authentication_only",
+      "purposeBinding": "task_bound"
+    },
+    {
+      "toolId": "read_webpage",
+      "aliases": ["browse_webpage"],
+      "dataOrigins": ["external_web"],
+      "sideEffects": ["network_read"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": false,
+      "defaultTrust": "external",
+      "accessScope": "explicit_target",
+      "sensitiveInputHandling": "none",
+      "dataClassification": "public"
+    },
+    {
+      "toolId": "cloud_file_write",
+      "aliases": [
+        "download_file_through_url",
+        "download_file_through_id",
+        "create_file",
+        "create_dir",
+        "delete_node",
+        "copy_node",
+        "move_node",
+        "git_create_repo",
+        "git_delete_repo",
+        "git_transfer_repo_ownership",
+        "git_clone",
+        "git_invite_collaborators",
+        "git_push",
+        "git_pull",
+        "git_issue",
+        "git_star",
+        "git_unstar",
+        "git_add_ssh_key",
+        "git_delete_ssh_key",
+        "login_github_account",
+        "update_github_account_password",
+        "verify_github_account"
+      ],
+      "dataOrigins": ["user", "workspace", "email", "third_party_api"],
+      "sideEffects": ["file_write", "network_write", "persistent_state"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": true,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external",
+      "targetFields": ["repo_name", "local_path", "local_dir_path", "path", "ssh_key", "collaborator_email"]
+    },
+    {
+      "toolId": "send_email",
+      "aliases": [],
+      "dataOrigins": ["user", "workspace", "email"],
+      "sideEffects": ["network_write"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": true,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external"
+    },
+    {
+      "toolId": "read_file",
+      "aliases": ["list_directory"],
+      "dataOrigins": ["workspace"],
+      "sideEffects": ["file_read"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "workspace",
+      "accessScope": "explicit_target",
+      "sensitiveInputHandling": "none",
+      "dataClassification": "user_private",
+      "targetFields": ["path"],
+      "pathScope": "isolated_environment"
+    },
+    {
+      "toolId": "input_to_webpage",
+      "aliases": [],
+      "dataOrigins": ["user", "workspace", "external_web"],
+      "sideEffects": ["network_write"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": true,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external"
+    }
+  ]
+}

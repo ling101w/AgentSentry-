@@ -34,7 +34,8 @@ import {
   updateTaskSpec,
 } from "../core/policy.ts";
 import type { PolicyState } from "../core/policy.ts";
-import type { AgentSentryRecord, RecordSeverity, RecordStore } from "../core/records.ts";
+import type { AgentSentryDecision, AgentSentryDisposition, AgentSentryRecord, RecordSeverity, RecordStore } from "../core/records.ts";
+import { redactObject, safeStringify } from "../core/redact.ts";
 import { semanticJudgeAmbiguousAction } from "../core/semantic.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfRuntimeAudit } from "../core/system-monitor.ts";
 import { analyzeTrustContent, type TrustLabel, type TrustSource } from "../core/trust.ts";
@@ -902,7 +903,7 @@ function requireToolManifest(value: unknown): ToolSecurityManifest {
 function bootstrapDecisionMetrics(records: AgentSentryRecord[], iterations: number): Record<string, unknown> {
   const decisions = records
     .filter((record) => record.type === "tool_decision" || record.type === "sidecar_policy_decision")
-    .map((record) => String(record.payload?.decision || record.payload?.verdict || "").toLowerCase())
+    .map((record) => String(record.decision || record.payload?.decision || record.payload?.verdict || "").toLowerCase())
     .filter(Boolean);
   const base = decisionRates(decisions);
   const samples: Record<string, number[]> = { allow: [], ask: [], deny: [] };
@@ -1508,7 +1509,29 @@ function semanticJudgeProfile(mode: SemanticJudgeOverride, config: PluginConfig)
 }
 
 function recordsToCsv(records: AgentSentryRecord[]): string {
-  const headers = ["id", "created_at", "severity", "type", "layer", "title", "summary", "run_id", "session_key", "payload"];
+  const headers = [
+    "id",
+    "created_at",
+    "severity",
+    "type",
+    "layer",
+    "title",
+    "summary",
+    "run_id",
+    "session_key",
+    "schema_version",
+    "agent_id",
+    "session_id",
+    "openclaw_run_id",
+    "tool_name",
+    "tool_call_id",
+    "decision",
+    "disposition",
+    "execution_status",
+    "params_sha256",
+    "params",
+    "payload",
+  ];
   const rows = records.map((record) => [
     record.id,
     record.created_at,
@@ -1519,6 +1542,17 @@ function recordsToCsv(records: AgentSentryRecord[]): string {
     record.summary,
     record.run_id,
     record.session_key,
+    record.schema_version || "",
+    record.agent_id || "",
+    record.session_id || "",
+    record.openclaw_run_id || "",
+    record.tool_name || "",
+    record.tool_call_id || "",
+    record.decision || "",
+    record.disposition || "",
+    record.execution_status || "",
+    record.params_sha256 || "",
+    JSON.stringify(record.params || {}),
     JSON.stringify(record.payload),
   ]);
   return [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
@@ -3885,9 +3919,25 @@ async function executeLabActions(input: {
       scenario: input.scenario,
       source: "command-lab",
     };
+    const auditParams = labAuditParams(action.params, config.capture.previewChars);
+    const disposition: AgentSentryDisposition = result.decision === "deny"
+      ? "blocked"
+      : result.decision === "ask"
+        ? "approval_required"
+        : "allowed";
     input.store.add({
       run_id: input.runId,
       session_key: input.sessionKey,
+      session_id: input.sessionKey,
+      agent_id: "command-lab",
+      openclaw_run_id: input.runId,
+      tool_name: action.toolName,
+      tool_call_id: toolCallId,
+      params: auditParams,
+      params_sha256: labAuditParamsSha256(auditParams),
+      decision: result.decision,
+      disposition,
+      execution_status: result.decision === "deny" ? "blocked" : "pending",
       type: "tool_decision",
       layer: "Tool Boundary",
       severity,
@@ -3919,7 +3969,7 @@ async function executeLabActions(input: {
         summary: result.summary,
         payload,
       });
-      addToolResultRecord(input, normalizedAction, toolCallId, result.decision === "deny" ? "blocked" : "skipped", {
+      addToolResultRecord(input, normalizedAction, toolCallId, result.decision, disposition, result.decision === "deny" ? "blocked" : "skipped", {
         ok: false,
         reason: result.summary,
       });
@@ -3933,7 +3983,7 @@ async function executeLabActions(input: {
       executionStatus = execution.ok ? "executed" : "failed";
       executionOk = execution.ok;
       executionError = execution.ok ? "" : String(execution.error || execution.reason || "tool execution failed");
-      addToolResultRecord(input, normalizedAction, toolCallId, execution.ok ? "executed" : "failed", execution);
+      addToolResultRecord(input, normalizedAction, toolCallId, result.decision, disposition, execution.ok ? "executed" : "failed", execution);
       const executionFindings = Array.isArray(execution.findings) ? execution.findings as Array<Record<string, unknown>> : [];
       if (executionFindings.length) {
         const runtimeFindings = executionFindings.filter((finding) => String(finding.layer || "") === "Tool Boundary");
@@ -4114,6 +4164,17 @@ type BusinessExecution = {
   runtime_audit?: EbpfRuntimeAudit | null;
 };
 
+function labAuditParams(params: Record<string, unknown>, previewChars: number): Record<string, unknown> {
+  const redacted = redactObject(params, previewChars);
+  return redacted && typeof redacted === "object" && !Array.isArray(redacted)
+    ? redacted as Record<string, unknown>
+    : { value: redacted };
+}
+
+function labAuditParamsSha256(params: Record<string, unknown>): string {
+  return createHash("sha256").update(safeStringify(params)).digest("hex");
+}
+
 function addToolResultRecord(
   input: {
     store: RecordStore;
@@ -4125,6 +4186,8 @@ function addToolResultRecord(
   },
   action: LabAction,
   toolCallId: string,
+  decision: AgentSentryDecision,
+  disposition: AgentSentryDisposition,
   executionStatus: ExecutionStatus,
   execution: BusinessExecution,
 ): void {
@@ -4135,9 +4198,20 @@ function addToolResultRecord(
       : executionStatus === "blocked"
         ? "danger"
         : "info";
+  const auditParams = labAuditParams(action.params, input.config.capture.previewChars);
   input.store.add({
     run_id: input.runId,
     session_key: input.sessionKey,
+    session_id: input.sessionKey,
+    agent_id: "command-lab",
+    openclaw_run_id: input.runId,
+    tool_name: action.toolName,
+    tool_call_id: toolCallId,
+    params: auditParams,
+    params_sha256: labAuditParamsSha256(auditParams),
+    decision,
+    disposition,
+    execution_status: executionStatus,
     type: "tool_result",
     layer: "Evidence Feedback",
     severity,

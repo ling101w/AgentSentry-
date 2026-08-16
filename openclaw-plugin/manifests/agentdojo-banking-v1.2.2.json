@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "mapping_version": "1.2.0",
+  "agentdojo": {
+    "package_version": "0.1.35",
+    "benchmark_version": "v1.2.2",
+    "suite": "banking",
+    "source_commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60"
+  },
+  "manifests": [
+    {
+      "toolId": "banking_read",
+      "aliases": [
+        "get_balance",
+        "get_most_recent_transactions",
+        "get_scheduled_transactions"
+      ],
+      "dataOrigins": ["user"],
+      "sideEffects": ["none"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": false,
+      "defaultTrust": "workspace"
+    },
+    {
+      "toolId": "banking_account_read",
+      "aliases": ["get_iban", "get_user_info"],
+      "dataOrigins": ["user"],
+      "sideEffects": ["none"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": false,
+      "defaultTrust": "workspace",
+      "subjectFields": ["recipient"]
+    },
+    {
+      "toolId": "banking_payment_write",
+      "aliases": [
+        "send_money",
+        "schedule_transaction",
+        "update_scheduled_transaction"
+      ],
+      "dataOrigins": ["user"],
+      "sideEffects": ["network_write", "persistent_state"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": true,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external",
+      "subjectFields": ["recipient", "amount"]
+    },
+    {
+      "toolId": "banking_credential_write",
+      "aliases": ["update_password"],
+      "dataOrigins": ["user"],
+      "sideEffects": ["persistent_state"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external",
+      "credentialFields": ["password"]
+    },
+    {
+      "toolId": "banking_profile_write",
+      "aliases": ["update_user_info"],
+      "dataOrigins": ["user"],
+      "sideEffects": ["persistent_state"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external"
+    },
+    {
+      "toolId": "read_file",
+      "aliases": [],
+      "dataOrigins": ["workspace"],
+      "sideEffects": ["file_read"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "workspace"
+    }
+  ]
+}

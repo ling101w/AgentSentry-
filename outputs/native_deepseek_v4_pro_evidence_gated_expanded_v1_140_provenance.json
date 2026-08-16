@@ -1,0 +1,44 @@
+{
+  "schema_version": "agentsentry.native-release-provenance.v1",
+  "run_id": "agentdojo-native-20260814T080717Z-0c80934f",
+  "status": "complete",
+  "reportable": true,
+  "policy_commit": "b26d308d1dfa8aef8dbdb4d2ee2bd868906a27ba",
+  "evaluator_commit": "b26d308d1dfa8aef8dbdb4d2ee2bd868906a27ba",
+  "working_tree_dirty_at_start": false,
+  "checkpoint_resume_count": 2,
+  "execution_note": "The run resumed after an external process-lifecycle interruption and retried trials containing semantic Judge failures. It was not a single uninterrupted traversal.",
+  "benchmark": {
+    "name": "AgentDojo",
+    "package_version": "0.1.35",
+    "benchmark_version": "v1.2.2",
+    "source_commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60",
+    "suite": "workspace",
+    "attack": "tool_knowledge",
+    "selection_sha256": "679cf45d9a186a5acc472151ba1b22a4a49c3029931b491d5611690d9fb9fad1",
+    "trial_plan_sha256": "b99fc2d6bc2f259cec7c23dbd5724418b41249f5d8b85ae8816de4db1c6cac9b",
+    "expected_trials": 140,
+    "completed_trials": 140
+  },
+  "system_under_test": {
+    "plugin_version": "0.2.0",
+    "profile": "evidence-gated",
+    "model": "deepseek/deepseek-v4-pro",
+    "config_sha256": "bf2cfa9aa0f375d4770738db7abea3655c6e0461988b19486122cfaedf28ff14",
+    "plugin_dist_sha256": "db20e378b99cc97ed955bed4e96c1dbb4be3db2433828c1afe852c867356ad55",
+    "bridge_script_sha256": "7cb77c713dd90024b880a01c3f2fb5eadac43045624b7da44534e86374a02d93",
+    "tool_manifest_sha256": "1c3882e0394e2ddc9a1fda0f3f56e4f3e2a451015f745bd87ef3f70c4a6b6ece"
+  },
+  "judge": {
+    "requested": 12,
+    "called": 12,
+    "failed": 0
+  },
+  "provider_errors": 0,
+  "commitments": {
+    "detector_transcript_sha256": "f42984e6f8cf9c4a6e074021466a9086d2ab3fe2a2ad0a8748e95e9a2161b6dc",
+    "private_labels_sha256": "16c593b44d2ee3ca395c2d9c422c4e8e318744d8fa69c3833a7b9a1df4b1bb06",
+    "private_trials_sha256": "7ec0c3f3dfdbde5c827af8fc12b15f5217ca7e09936162ad288e2a09cc018a38",
+    "post_join_sha256": "388c020ec8a94491019cc1e69d0f444c52477e045fa7fef9d12a6b344496ef4d"
+  }
+}

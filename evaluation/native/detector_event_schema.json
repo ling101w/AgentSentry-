@@ -4,9 +4,10 @@
   "title": "AgentSentry native detector transcript event",
   "type": "object",
   "additionalProperties": false,
-  "required": ["event_id", "routing", "detector_input", "detector_output"],
+  "required": ["event_id", "recorded_at", "routing", "detector_input", "detector_output"],
   "properties": {
     "event_id": { "type": "string", "pattern": "^event_[0-9]{8}$" },
+    "recorded_at": { "type": "string", "format": "date-time" },
     "routing": {
       "type": "object",
       "additionalProperties": false,

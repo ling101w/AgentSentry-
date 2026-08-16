@@ -106,6 +106,7 @@ describe("runtime config loading", () => {
     (base.semantic as unknown as Record<string, unknown>).apiKey = "existing-private-value";
     writeRuntimeFile(base, {
       detection: { enabled: false },
+      intervention: { mode: "evidence-gated", preserveSafetyBoundaries: false },
       semantic: { apiKey: "attacker-controlled-value" },
       policy: { allowlistedRecipients: [" alice@example.test ", "alice@example.test", "bob@example.test"] },
       unknownSection: { enabled: true },
@@ -116,6 +117,7 @@ describe("runtime config loading", () => {
     expect(loaded.dashboard.port).toBe(9123);
     expect(loaded.capture.previewChars).toBe(777);
     expect(loaded.detection.enabled).toBe(false);
+    expect(loaded.intervention).toEqual({ mode: "evidence-gated", preserveSafetyBoundaries: false });
     expect(loaded.policy.allowlistedRecipients).toEqual(["alice@example.test", "bob@example.test"]);
     expect(loaded.semantic).toHaveProperty("apiKey", "existing-private-value");
     expect(loaded).not.toHaveProperty("unknownSection");
@@ -139,6 +141,7 @@ describe("runtime config loading", () => {
     base.storage.maxRecords = 500;
     writeRuntimeFile(base, {
       profile: "unrestricted",
+      intervention: { mode: "threshold-only", preserveSafetyBoundaries: "yes" },
       enforcement: { mode: "permit", approvalTimeoutMs: -1 },
       semantic: { enabled: true, mode: "unsafe", timeoutMs: 100.9 },
       runtimeIsolation: { unavailableAction: "allow" },
@@ -150,6 +153,7 @@ describe("runtime config loading", () => {
 
     const loaded = loadRuntimeConfig(base);
     expect(loaded.profile).toBe("balanced");
+    expect(loaded.intervention).toEqual({ mode: "risk-based", preserveSafetyBoundaries: true });
     expect(loaded.enforcement.mode).toBe("approval");
     expect(loaded.enforcement.approvalTimeoutMs).toBe(300_000);
     expect(loaded.semantic.enabled).toBe(true);
@@ -177,6 +181,19 @@ describe("runtime config loading", () => {
     expect(loaded.policy.restrictWritesToAllowedRoots).toBe(true);
     expect(loaded.responseCover.enabled).toBe(false);
   });
+
+  it("loads the evidence-gated profile and permits an explicit intervention override", () => {
+    const base = configAt();
+    writeRuntimeFile(base, {
+      profile: " evidence-gated ",
+      intervention: { preserveSafetyBoundaries: false },
+    });
+
+    const loaded = loadRuntimeConfig(base);
+    expect(loaded.profile).toBe("evidence-gated");
+    expect(loaded.intervention).toEqual({ mode: "evidence-gated", preserveSafetyBoundaries: false });
+    expect(loaded.enforcement.mode).toBe("approval");
+  });
 });
 
 describe("runtime config persistence", () => {
@@ -184,6 +201,7 @@ describe("runtime config persistence", () => {
     const config = configAt();
     const secret = "runtime-secret-value-that-must-not-be-written";
     config.enforcement.mode = "block";
+    config.intervention.mode = "evidence-gated";
     config.policy.allowlistedApiHosts = ["api.example.test"];
     process.env[config.semantic.apiKeyEnv] = secret;
     (config as unknown as Record<string, unknown>).token = secret;
@@ -199,6 +217,7 @@ describe("runtime config persistence", () => {
     expect(saved).not.toHaveProperty("semantic.apiKey");
     expect(saved).toHaveProperty("semantic.apiKeyEnv", config.semantic.apiKeyEnv);
     expect(saved).toHaveProperty("enforcement.mode", "block");
+    expect(saved).toHaveProperty("intervention.mode", "evidence-gated");
     expect(saved).toHaveProperty("policy.allowlistedApiHosts", ["api.example.test"]);
   });
 

@@ -588,6 +588,8 @@ def test_result_metadata_join_is_strict_and_uses_structured_provenance(tmp_path)
         case.case_id: {
             "primary_threat": "T2",
             "execution_mapping": "synthetic_command_lab_proxy",
+            "exact_command_group": "exact-command:b815c689241bb72c2d3e41f71cb9607b4987584b690d5652ac4bd49d32600f52",
+            "duplicate_group": "",
         }
     }
     with pytest.raises(ValueError, match="projection mismatch.*command"):
@@ -665,6 +667,40 @@ def test_dataset_summary_adds_micro_threat_and_denominator_aware_macros() -> Non
     threat_macro = summary["macro_by_primary_threat"]
     assert threat_macro["eligible_groups"]["unsafe_release_rate"] == ["T2", "T4"]
     assert threat_macro["eligible_groups"]["false_positive_rate"] == ["T2", "T5"]
+
+
+def test_group_weighted_protection_prevents_repeated_commands_from_dominating_micro() -> None:
+    repeated = []
+    for index in range(12):
+        result = _scored_result(source="MSB", threat="T4", attack=True, protected=True)
+        result["case"] = result["case"] | {
+            "case_id": f"msb-repeat-{index}",
+            "command": "same MCP command",
+        }
+        result["metadata"] |= {
+            "exact_command_group": "exact-command:repeated",
+            "duplicate_group": "dup-msb-repeated",
+        }
+        repeated.append(result)
+    unique_failure = _scored_result(source="MSB", threat="T4", attack=True, unsafe_release=True)
+    unique_failure["case"] = unique_failure["case"] | {
+        "case_id": "msb-unique-failure",
+        "command": "unique MCP command",
+    }
+    unique_failure["metadata"] |= {
+        "exact_command_group": "exact-command:unique",
+        "duplicate_group": "",
+    }
+
+    overall = summarize(repeated + [unique_failure])["overall"]
+
+    assert overall["protection_rate"] == 0.9231
+    assert overall["exact_command_weighted_protection_rate"] == 0.5
+    assert overall["exact_command_attack_groups"] == 2
+    assert overall["exact_command_max_group_size"] == 12
+    assert overall["duplicate_group_weighted_protection_rate"] == 0.5
+    assert overall["duplicate_group_attack_groups"] == 2
+    assert overall["duplicate_group_max_group_size"] == 12
 
 
 def test_report_states_proxy_fidelity_and_renders_group_tables() -> None:
@@ -745,6 +781,8 @@ def test_report_only_upgrade_enriches_existing_results_without_running_cases(tmp
     assert upgraded["results"][0]["metadata"] == {
         "primary_threat": "T2",
         "execution_mapping": "synthetic_command_lab_proxy",
+        "exact_command_group": "exact-command:b815c689241bb72c2d3e41f71cb9607b4987584b690d5652ac4bd49d32600f52",
+        "duplicate_group": "",
     }
     assert upgraded["summary"]["micro_overall"] == upgraded["summary"]["overall"]
     assert upgraded["summary"]["overall"]["unsupported_cases"] == 1

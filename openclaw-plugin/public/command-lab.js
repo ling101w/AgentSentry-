@@ -935,17 +935,18 @@ function renderFlowDecisionSummary(records) {
   if (!target) return;
   const scenarioKey = $("scenarioSelect")?.value || "manual";
   const scenario = scenarioDefaults[scenarioKey] || scenarioDefaults.manual;
-  const decisionRecord = records.find((record) => record.type === "tool_decision" && /deny|block/i.test(String(record.payload?.decision || record.payload?.verdict || "")))
+  const decisionRecord = records.find((record) => record.type === "tool_decision" && /deny|block/i.test(String(record.decision || record.disposition || record.payload?.decision || record.payload?.verdict || "")))
     || records.find((record) => record.type === "tool_decision")
     || records.find((record) => record.type === "alert");
   const payload = decisionRecord?.payload || {};
-  const rawDecision = payload.decision || payload.verdict || payload.original_decision || (decisionRecord ? "info" : "pending");
+  const rawDecision = decisionRecord?.decision || payload.decision || payload.verdict || payload.original_decision || (decisionRecord ? "info" : "pending");
   const authorizationText = records.some((record) => /outside taskspec|lacks explicit capability|intent does not allow|drift/i.test(searchableRecord(record)))
     ? "超出 TaskSpec"
     : rawDecision === "allow"
       ? "边界内授权"
       : "等待证据";
-  const tool = toolNames[payload.normalized_tool || payload.toolName || scenario.tool] || payload.normalized_tool || payload.toolName || scenario.tool || "自动识别";
+  const rawTool = decisionRecord?.tool_name || payload.normalized_tool || payload.toolName || scenario.tool;
+  const tool = toolNames[rawTool] || rawTool || "自动识别";
   const targetValue = $("targetInput")?.value.trim() || "由业务链路确定";
   const verdict = rawDecision === "pending" ? "等待运行" : decisionLabel(rawDecision);
   const tone = decisionTone(rawDecision);
@@ -1042,7 +1043,7 @@ function flowNode(record) {
       <div class="node-summary">${escapeHtml(summaryText(record))}</div>
       <div class="chips">
         ${chip(severityNames[record.severity] || record.severity || "信息", record.severity)}
-        ${payload.decision ? chip(decisionLabel(payload.decision), decisionTone(payload.decision)) : ""}
+        ${(record.decision || payload.decision) ? chip(decisionLabel(record.decision || payload.decision), decisionTone(record.decision || payload.decision)) : ""}
         ${toolValue(record) ? chip(toolValue(record), "success") : ""}
       </div>
     </article>
@@ -1168,7 +1169,7 @@ function summaryText(record) {
   if (record.type === "lab_command") return payload.command || record.summary || "";
   if (record.type === "tool_decision") {
     const reason = (payload.violations || []).join("; ") || (payload.reasons || []).join("; ") || record.summary || "";
-    return `${displayTool(payload.toolName || payload.normalized_tool || "tool")} · ${decisionLabel(payload.decision || payload.verdict)} · ${translateText(reason)}`;
+    return `${displayTool(record.tool_name || payload.toolName || payload.normalized_tool || "tool")} · ${decisionLabel(record.decision || payload.decision || payload.verdict)} · ${translateText(reason)}`;
   }
   if (record.type === "message_write") {
     return previewText(payload.preview) || translateText(record.summary || "");
@@ -1192,7 +1193,7 @@ function previewText(value) {
 
 function toolValue(record) {
   const payload = record.payload || {};
-  return displayTool(payload.toolName || payload.normalized_tool || payload.tool || "");
+  return displayTool(record.tool_name || payload.toolName || payload.normalized_tool || payload.tool || "");
 }
 
 function displayTool(value) {

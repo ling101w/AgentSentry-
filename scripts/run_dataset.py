@@ -17,12 +17,13 @@ from jsonschema import Draft202012Validator
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from agentsentry.dataset_pipeline.io import atomic_write_text, iter_jsonl, sha256_file, write_json  # noqa: E402
+from agentsentry.dataset_pipeline.io import atomic_write_text, iter_jsonl, sha256_file, sha256_text, write_json  # noqa: E402
 from agentsentry.dataset_pipeline.schema import (  # noqa: E402
     BENCHMARK_CASE_FIELDS,
     THREAT_CODES,
     benchmark_case_from_record,
 )
+from agentsentry.evaluation_baselines import BaselineCase, evaluate_baselines  # noqa: E402
 try:  # noqa: E402
     from scripts.run_benchmark_eval import BenchmarkCase, run_case, summarize
 except ModuleNotFoundError:  # Direct script execution can resolve an unrelated installed `scripts` package.
@@ -111,6 +112,7 @@ def main() -> int:
         cases = cases[: args.max_cases]
     result_metadata = load_result_metadata(cases, args.research_input)
     evaluation_mode = build_evaluation_mode(result_metadata)
+    baselines = evaluate_benchmark_baselines(cases, result_metadata)
     if args.dry_run:
         print(
             json.dumps(
@@ -121,6 +123,7 @@ def main() -> int:
                     "research_input": str(args.research_input),
                     "research_input_sha256": sha256_file(args.research_input),
                     "evaluation_mode": evaluation_mode,
+                    "baselines": baselines,
                 },
                 ensure_ascii=False,
             )
@@ -172,6 +175,7 @@ def main() -> int:
         "research_input_sha256": sha256_file(args.research_input),
         "case_count": len(cases),
         "evaluation_mode": evaluation_mode,
+        "baselines": baselines,
         "summary": summarize_dataset(results),
         "results": results,
     }
@@ -269,6 +273,8 @@ def load_result_metadata(cases: list[BenchmarkCase], path: Path) -> dict[str, di
         metadata[record_id] = {
             "primary_threat": primary_threat,
             "execution_mapping": execution_mapping,
+            "exact_command_group": f"exact-command:{sha256_text(case.command)}",
+            "duplicate_group": str(quality.get("duplicate_group") or ""),
         }
 
     missing = sorted(set(case_by_id) - set(metadata))
@@ -324,6 +330,7 @@ def upgrade_results_payload(results_path: Path, research_path: Path) -> dict[str
             "research_input_sha256": sha256_file(research_path),
             "case_count": len(results),
             "evaluation_mode": build_evaluation_mode(result_metadata),
+            "baselines": evaluate_benchmark_baselines(cases, result_metadata),
             "summary": summarize_dataset(results),
             "results": results,
         }
@@ -343,6 +350,31 @@ def build_evaluation_mode(result_metadata: Mapping[str, Mapping[str, str]]) -> d
             "native_command describes a direct command projection only; it does not indicate native upstream benchmark execution."
         ),
     }
+
+
+def evaluate_benchmark_baselines(
+    cases: list[BenchmarkCase],
+    result_metadata: Mapping[str, Mapping[str, str]],
+) -> dict[str, Any]:
+    baseline_cases = []
+    for case in cases:
+        metadata = result_metadata.get(case.case_id, {})
+        baseline_cases.append(
+            BaselineCase(
+                case_id=case.case_id,
+                attack=case.attack,
+                detector_input={
+                    "command": case.command,
+                    "scenario": case.scenario,
+                    "tool": case.tool,
+                    "target": case.target,
+                },
+                sink=case.tool or case.scenario,
+                exact_command_group=str(metadata.get("exact_command_group") or ""),
+                duplicate_group=str(metadata.get("duplicate_group") or ""),
+            )
+        )
+    return evaluate_baselines(baseline_cases)
 
 
 def summarize_dataset(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -407,6 +439,12 @@ def render_report(payload: dict[str, Any]) -> str:
         "",
         f"- Cases: {overall['cases']} (attack {overall['attack_cases']}, benign {overall['benign_cases']})",
         f"- Protection rate: {_format_rate(_group_rate(overall, 'protection_rate'))}",
+        f"- Exact-command weighted protection: {_format_rate(overall.get('exact_command_weighted_protection_rate'))} "
+        f"across {overall.get('exact_command_attack_groups', 0)} groups "
+        f"(largest group {overall.get('exact_command_max_group_size', 0)}).",
+        f"- Duplicate-group weighted protection: {_format_rate(overall.get('duplicate_group_weighted_protection_rate'))} "
+        f"across {overall.get('duplicate_group_attack_groups', 0)} groups "
+        f"(largest group {overall.get('duplicate_group_max_group_size', 0)}).",
         f"- Unsafe release rate: {_format_rate(_group_rate(overall, 'unsafe_release_rate'))}",
         f"- Benign allow rate: {_format_rate(_group_rate(overall, 'benign_allow_rate'))}",
         f"- False positive rate: {_format_rate(_group_rate(overall, 'false_positive_rate'))}",
@@ -458,6 +496,12 @@ def render_report(payload: dict[str, Any]) -> str:
         "|---|---:|---:|---:|---:|---:|",
         _render_macro_row("Source", summary["macro_by_source"]),
         _render_macro_row("Primary threat", summary["macro_by_primary_threat"]),
+        "",
+        "## Simple Baselines",
+        "",
+        "| Baseline | Protection | Benign allow | False positive | Accuracy |",
+        "|---|---:|---:|---:|---:|",
+        *_render_baseline_rows(payload.get("baselines", {})),
         "",
         "## Per Source",
         "",
@@ -518,6 +562,19 @@ def _render_group_table(rows: list[dict[str, Any]]) -> list[str]:
             f"{row['harness_errors']} |"
         )
     return lines
+
+
+def _render_baseline_rows(payload: Any) -> list[str]:
+    rows = payload.get("baselines") if isinstance(payload, Mapping) else {}
+    if not isinstance(rows, Mapping):
+        return ["| unavailable | N/A | N/A | N/A | N/A |"]
+    return [
+        f"| {name} | {_format_rate(row.get('protection_rate'))} | "
+        f"{_format_rate(row.get('benign_allow_rate'))} | {_format_rate(row.get('false_positive_rate'))} | "
+        f"{_format_rate(row.get('accuracy'))} |"
+        for name, row in rows.items()
+        if isinstance(row, Mapping)
+    ] or ["| unavailable | N/A | N/A | N/A | N/A |"]
 
 
 if __name__ == "__main__":

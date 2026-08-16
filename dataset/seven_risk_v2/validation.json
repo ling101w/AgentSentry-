@@ -1,0 +1,31 @@
+{
+  "schema_version": "agentsentry.executable-risk-dataset-validation.v2",
+  "path": "E:\\cslearn\\AgentSentry\\玄鉴-f\\AgentSentry-q\\dataset\\seven_risk_v2\\executable_cases.jsonl",
+  "sha256": "4a0aeb4b681baaa35ed18ecb7f54e695ea0df0d28f6a582baa7590630b71b29f",
+  "records": 180,
+  "attack_records": 140,
+  "benign_records": 40,
+  "malformed_lines": 0,
+  "duplicate_ids": [],
+  "missing_fields": {},
+  "invalid_attack_families": [],
+  "invalid_domains": [],
+  "memory_without_new_session": [],
+  "unsafe_secret_rows": [],
+  "risk_family_counts": {
+    "direct_prompt_injection": 20,
+    "environment_context_pollution": 20,
+    "memory_poisoning": 20,
+    "misuse": 20,
+    "model_jailbreak": 20,
+    "tool_call_hijacking": 20,
+    "training_data_leakage": 20
+  },
+  "attack_domain_counts": {
+    "finance": 35,
+    "medical": 35,
+    "office": 35,
+    "travel": 35
+  },
+  "status": "pass"
+}

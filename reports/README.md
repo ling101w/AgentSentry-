@@ -1,8 +1,8 @@
 # 玄鉴 文档索引
 
-更新时间：2026-08-05
+更新时间：2026-08-14
 
-评测口径先读 `reports/EVALUATION_METHODOLOGY.md`：历史 840 条均为公开数据映射到 `/command-lab` 的开发回归，不是独立盲测，也不是 AgentDojo/InjecAgent 原生端到端运行。
+评测总览先读 `reports/recent_benchmark_detailed_report.md`，证据口径再读 `reports/EVALUATION_METHODOLOGY.md`：历史 840 条和六来源 7,227 条均为公开数据映射到 `/command-lab` 的开发回归；AgentDojo 120/140 case 报告才是原生端到端运行。
 
 玄鉴是本参赛作品名称，当前仓库和插件内部仍沿用 `AgentSentry` 作为代码包名。答辩和报告中建议统一使用：
 
@@ -12,6 +12,9 @@
 
 | 文档 | 用途 |
 |---|---|
+| `reports/benchmark_presentation.html` | Benchmark 工作汇报网页：直接打开即可演示，含真实样本切换、三策略对比、证据边界，并支持打印或导出 PDF |
+| `outputs/native_deepseek_v4_pro_evidence_gated_expanded_v1_140_release.md` | 最新发布级后验 arm：DeepSeek V4 Pro、Expanded v1、evidence-gated 140-trial 复跑，含指标、运行恢复说明和证据承诺 |
+| `reports/recent_benchmark_detailed_report.md` | 近期各次 benchmark 的数据构成、具体样本、原生工具轨迹、结果和证据边界详解 |
 | `reports/START_HERE.md` | 最短入口：先看什么、benchmark 文件在哪、怎么在 `/command-lab` 逐条测试 |
 | `reports/EVALUATION_METHODOLOGY.md` | 评测证据等级、标签隔离、盲测与原生 Benchmark 口径 |
 | `reports/competition_report.md` | 正式安全风险分析与行为监督报告 |
@@ -38,6 +41,11 @@
 
 | 实验 | 报告 | 原始结果 |
 |---|---|---|
+| AgentDojo Expanded v1，DeepSeek V4 Pro，预注册 competition 主实验 | `reports/native_agentdojo/native_deepseek_v4_pro_agentsentry_vs_no_defense_expanded_v1_140.md` | `reports/native_agentdojo/native_deepseek_v4_pro_{agentsentry,no_defense}_expanded_v1_140.public.json` |
+| AgentDojo Expanded v1，DeepSeek V4 Pro，发布级后验 evidence-gated arm | `outputs/native_deepseek_v4_pro_evidence_gated_expanded_v1_140_release.md` | `outputs/native_deepseek_v4_pro_evidence_gated_expanded_v1_140.public.json`、`outputs/native_deepseek_v4_pro_evidence_gated_expanded_v1_140_manifest.json`、`outputs/native_deepseek_v4_pro_evidence_gated_expanded_v1_140_three_layer.public.json`、`outputs/native_deepseek_v4_pro_evidence_gated_expanded_v1_140_provenance.json` |
+| AgentDojo 标准选择集，多模型，每个 arm 120 trials | `reports/native_agentdojo/*_agentsentry_vs_no_defense_120.md` | `reports/native_agentdojo/*.public.json` |
+| 六来源统一全量/平衡回归，7,227/1,295 条 | `dataset/agentsentry/run_report.{full,balanced}.md` | `dataset/agentsentry/run_results.{full,balanced}.json` |
+| 授权反事实，360 对、720 条 | `reports/counterfactual/authorization_report.md` | `runtime/counterfactual/authorization_results.final.json` |
 | 综合攻击回归，520 条，risk-tiered | `reports/benchmark_risk_tiered/benchmark_eval_report.risk_tiered.md` | `reports/benchmark_risk_tiered/benchmark_eval_results.risk_tiered.json` |
 | 非提示注入工具攻击专项，320 条，risk-tiered | `reports/benchmark_risk_tiered/tool_attack_benchmark_report.risk_tiered.md` | `reports/benchmark_risk_tiered/tool_attack_benchmark_results.risk_tiered.json` |
 | risk-tiered 长文本留档 | `reports/benchmark_risk_tiered/xuanjian_benchmark_risk_tiered_record.txt` | `reports/benchmark_risk_tiered/` |
@@ -47,6 +55,11 @@
 
 ## 当前核心指标
 
+- AgentDojo Expanded v1 预注册主实验：无防御官方 ASR `61/100`，玄鉴 `competition` 为 `1/100`；真实高危副作用 `63/100` 降至 `1/100`。正常 Utility 由 `35/40` 降至 `27/40`，玄鉴正常 deny 为 `10/40`、ask/deny 合计 `13/40`。
+- AgentDojo Expanded v1 发布级后验 arm：玄鉴 `evidence-gated` 三层攻击指标均为 `0/100`，正常 Utility `37/40`，攻击环境任务 Utility `83/100`，正常 deny 与 intervention 均为 `0/40`，provider/harness error `0/140`。该运行 `complete/reportable=true`，但包含 checkpoint 续跑与 Judge 失败 trial 重试，不替代预注册主结果。
+- AgentDojo 标准 DeepSeek V4 Pro：无防御官方 ASR `43/60`，玄鉴 `0/60`；正常 FPR `0/60`。GPT-5.5、Qwen 3.7 Plus 和 Qwen 3.5 Plus 的无防御官方 ASR 也为 `0/60`，只能作为当前选择集下的集成/Utility 证据，不能归因成防御收益。
+- 六来源统一全量回归：7,227 条记录中 6,683 条投影可评分，544 条 unsupported；可评分攻击 6,424 条、正常 259 条。其结果属于已知公开集的 Command-Lab 映射回归，不是上游原生 ASR。
+- 授权反事实：360/360 对授权边界判断正确；该集合由项目脚本受控生成，属于机制验证，不是外部未知集。
 - 综合攻击回归，risk-tiered：520 条，攻击保护率 100.0%，高风险漏放率 0.0%，正常业务放行率 100.0%，误拦率 0.0%，harness error 0。
 - 工具攻击专项，risk-tiered：320 条，工具攻击保护率 100.0%，高风险漏放率 0.0%，正常工具放行率 100.0%，误拦率 0.0%，harness error 0。
 - LLM-Judge：当前推荐 `risk-tiered` 调度；full Judge 结果仍保留，用于说明全量语义复核的成本和误拦。
@@ -65,3 +78,4 @@
 ## 保留原则
 
 本目录保留最终报告、最新实验结果和必要复现材料。旧时间戳 benchmark 快照、早期草稿、重复说明文档已清理，避免答辩材料口径混乱。
+本次 Qwen 3.6 Plus 七类风险完整中文报告：`qwen36plus_security_evaluation_zh.md`，Word 版本：`qwen36plus_security_evaluation_zh.docx`。

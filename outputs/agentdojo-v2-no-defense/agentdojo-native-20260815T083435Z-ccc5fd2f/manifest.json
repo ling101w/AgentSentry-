@@ -1,0 +1,35 @@
+{
+  "run_id": "agentdojo-native-20260815T083435Z-ccc5fd2f",
+  "created_after_detector_shutdown": true,
+  "opaque_id_key_commitment": "a083897fadeeb35c486b5f88a704aef3b740b7e1bbeca360df38a7fbe559526c",
+  "selection_sha256": "679cf45d9a186a5acc472151ba1b22a4a49c3029931b491d5611690d9fb9fad1",
+  "tool_manifest_sha256": "157b03c47018ad1533a74ffacc7c58a5b22b68c12166e2aa5277b9f4d33cc9eb",
+  "defense": "no-defense",
+  "semantic_judge": {
+    "requested": 0,
+    "called": 0,
+    "failed": 0
+  },
+  "provider": {
+    "kind": "openai-compatible",
+    "model": "qwen3.6-27b",
+    "base_url": "https://api.wushuang233.com/v1",
+    "system_role": "system",
+    "request_timeout_seconds": 90.0,
+    "max_retries": 1,
+    "retry_backoff": "openai_sdk_exponential",
+    "error_trials": 140
+  },
+  "checkpoint": {
+    "version": 1,
+    "resume_count": 0,
+    "completed_trials": 140
+  },
+  "files": {
+    "detector-events.private.jsonl": "86dd7176bfced302154e8ae647337ee7ffbc94a9f3f52a4d23f75d02b88b9623",
+    "labels.private.jsonl": "07affb4b46377a8dc75427f7c7332aa60a6036033c74b5dcdb549e79520239de",
+    "trials.private.jsonl": "098dd7a0264718b0e9ca4a80999ce7e64b82007f58602c6aecfa39e934af4b8c",
+    "result.public.json": "6b9fed5954ac7f953a61ba5171f2afcb0b8077335e150e66906df61f3044bee0",
+    "checkpoint.private.json": "48d3398e118c7bbd24c4b03170dc8c6457fae51c1f1a16dedaf3f416e2749132"
+  }
+}

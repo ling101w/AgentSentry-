@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from agentsentry.dataset_pipeline.pipeline import prepare_dataset  # noqa: E402
+from agentsentry.dataset_pipeline.regression import verify_regression_snapshot  # noqa: E402
 
 
 def main() -> int:
@@ -40,6 +41,11 @@ def main() -> int:
         max_attack_ratio=args.max_attack_ratio,
         allow_partial=args.allow_partial,
     )
+    if args.dataset_root.resolve() == default_dataset_root.resolve():
+        summary["regression_snapshot"] = verify_regression_snapshot(
+            args.dataset_root,
+            default_dataset_root / "regression_snapshot.json",
+        )
     print(json.dumps(summary, ensure_ascii=False))
     if args.require_records and not summary["normalized_records"]:
         return 2

@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +24,10 @@ from agentsentry.evaluation_protocol import (  # noqa: E402
     detector_payload,
     load_sealed_cases,
 )
+try:  # noqa: E402
+    from scripts._dashboard_auth import dashboard_request
+except ModuleNotFoundError:  # Direct execution can resolve an unrelated installed scripts package.
+    from _dashboard_auth import dashboard_request
 
 
 DEFAULT_CASES = ROOT / "evaluation" / "blind" / "blind_holdout.jsonl"
@@ -80,6 +84,8 @@ def main() -> int:
                 "tool": isolated["tool_name"],
                 "params": isolated["tool_args"],
                 "clientId": opaque_client_id(client_id_secret, case.case_id, repetition),
+                "benchmarkCaseId": opaque_case_id(client_id_secret, case.case_id),
+                "benchmarkSource": "AgentSentryBlindHoldout",
                 "resetSession": True,
                 "semanticJudge": "default",
             }
@@ -171,7 +177,12 @@ def main() -> int:
 
 def post_json(url: str, payload: dict[str, Any], timeout: float) -> dict[str, Any]:
     encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = Request(url, data=encoded, headers={"Content-Type": "application/json"}, method="POST")
+    request = dashboard_request(
+        url,
+        data=encoded,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
     with urlopen(request, timeout=timeout) as response:
         parsed = json.loads(response.read().decode("utf-8"))
     if not isinstance(parsed, dict):
@@ -217,6 +228,11 @@ def sha256_file(path: Path) -> str:
 def opaque_client_id(secret: bytes, case_id: str, repetition: int) -> str:
     message = f"{case_id}\0{repetition}".encode("utf-8")
     return "blind-trial-" + hmac.new(secret, message, hashlib.sha256).hexdigest()[:24]
+
+
+def opaque_case_id(secret: bytes, case_id: str) -> str:
+    message = f"case\0{case_id}".encode("utf-8")
+    return "blind-case-" + hmac.new(secret, message, hashlib.sha256).hexdigest()[:24]
 
 
 def git_commit() -> str:

@@ -36,6 +36,13 @@ describe("AgentSentry command safety", () => {
     expect(text).toContain("Approval cache: 2 exact operation(s)");
   });
 
+  it("reports the full 90-second semantic judge budget without truncating it", () => {
+    const config = new PluginConfig();
+    config.semantic.enabled = true;
+    config.semantic.timeoutMs = 90_000;
+    expect(formatStatus(config, runtime())).toContain("90000ms budget");
+  });
+
   it("applies and persists a named profile while invalidating provenance state", () => {
     const config = new PluginConfig();
     const hooks = runtime();
@@ -51,6 +58,16 @@ describe("AgentSentry command safety", () => {
     expect(hooks.setConfig).toHaveBeenCalledWith(config);
     expect(hooks.persistConfig).toHaveBeenCalledWith(config);
     expect(hooks.clearProvenanceCache).toHaveBeenCalledOnce();
+  });
+
+  it("applies the evidence-gated profile through the command surface", () => {
+    const config = new PluginConfig();
+    const hooks = runtime();
+    const result = handleAgentSentryCommand({ args: "profile evidence-gated" }, config, new PluginConfig(), hooks);
+
+    expect(result.text).toContain("EVIDENCE-GATED / APPROVAL");
+    expect(config.intervention).toEqual({ mode: "evidence-gated", preserveSafetyBoundaries: true });
+    expect(hooks.persistConfig).toHaveBeenCalledWith(config);
   });
 
   it("rejects unknown profiles and read-only or nonexistent paths without mutating config", () => {
@@ -97,6 +114,7 @@ describe("AgentSentry command safety", () => {
   });
 
   it.each([
+    ["intervention.mode", "threshold-only", "risk-based", "risk-based, evidence-gated"],
     ["semantic.mode", "unrestricted", "risk-tiered", "off, risk-tiered, full"],
     ["enforcement.mode", "permissive", "observe", "observe, approval, block"],
     ["runtimeIsolation.unavailableAction", "continue", "require_approval", "require_approval, block"],
@@ -120,6 +138,7 @@ describe("AgentSentry command safety", () => {
   });
 
   it.each([
+    ["intervention.mode", "evidence-gated"],
     ["semantic.mode", "full"],
     ["enforcement.mode", "approval"],
     ["runtimeIsolation.unavailableAction", "block"],
@@ -179,6 +198,7 @@ describe("AgentSentry command safety", () => {
     const hooks = runtime();
     const listed = handleAgentSentryCommand({ args: "config get" }, config, new PluginConfig(), hooks).text;
     expect(listed).toContain("policy.deterministic");
+    expect(listed).toContain("intervention.mode");
     expect(listed).not.toContain("dashboard.host");
     expect(handleAgentSentryCommand({ args: "config get missing.path" }, config, new PluginConfig(), hooks).text).toContain("not found");
     expect(handleAgentSentryCommand({ args: "unknown" }, config, new PluginConfig(), hooks).text).toContain("Usage:");

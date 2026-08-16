@@ -1,0 +1,84 @@
+{
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "qwen": {
+        "baseUrl": "https://api.wushuang233.com/v1",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "QWEN_API_KEY"
+        },
+        "auth": "api-key",
+        "api": "openai-completions",
+        "timeoutSeconds": 120,
+        "models": [
+          {
+            "id": "deepseek-v4-flash",
+            "name": "deepseek-v4-flash",
+            "api": "openai-completions",
+            "contextWindow": 131072,
+            "maxTokens": 16384
+          }
+        ]
+      }
+    }
+  },
+  "meta": {
+    "lastTouchedVersion": "2026.6.10",
+    "lastTouchedAt": "2026-08-16T00:52:16.633Z"
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "qwen/deepseek-v4-flash"
+      }
+    },
+    "list": [
+      {
+        "id": "main"
+      },
+      {
+        "id": "bench-qwen-deepseek-v4-flash",
+        "name": "bench-qwen-deepseek-v4-flash",
+        "workspace": "/tmp/deeptrap/0025/agent_workspace",
+        "agentDir": "/tmp/agentsentry-deepseek-v4-flash-evidence-gated-20260816/agents/bench-qwen-deepseek-v4-flash/agent",
+        "model": "qwen/deepseek-v4-flash"
+      }
+    ]
+  },
+  "plugins": {
+    "entries": {
+      "agent-sentry": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
+        "config": {
+          "profile": "evidence-gated",
+          "enforcement": {
+            "mode": "block"
+          },
+          "dashboard": {
+            "enabled": false
+          },
+          "notifications": {
+            "enableProactiveNotifications": false
+          },
+          "semantic": {
+            "enabled": true,
+            "mode": "risk-tiered",
+            "judgeToolCalls": true,
+            "judgeMessages": true,
+            "judgeMemoryWrites": true,
+            "judgeProvenance": true,
+            "model": "deepseek-v4-flash",
+            "apiKeyEnv": "AGENTSENTRY_API_KEY",
+            "timeoutMs": 90000,
+            "baseUrl": "https://api.wushuang233.com/v1"
+          }
+        }
+      }
+    }
+  }
+}
