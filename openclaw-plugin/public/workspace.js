@@ -69,6 +69,29 @@ const POLICY_LISTS = [
   ["sensitiveAssets", "敏感资产特征", "敏感特征", "填写文件名、密钥或关键词"],
 ];
 
+const POLICY_GROUPS = [
+  {
+    key: "execution",
+    label: "执行控制",
+    description: "约束工具在调用前后的执行边界。",
+    toggles: ["deterministic", "runtimeAudit", "strictShellNetworkIsolation", "rollback"],
+  },
+  {
+    key: "data",
+    label: "数据安全",
+    description: "追踪不可信内容与敏感数据的传播。",
+    toggles: ["taintFeedback", "responseCover"],
+  },
+  {
+    key: "agent",
+    label: "Agent 安全",
+    description: "控制身份链、初始化组件与语义复核。",
+    toggles: ["multiAgentSecurity", "initializationDefense", "semantic"],
+  },
+];
+
+const AUDIT_QUERY_STORAGE_KEY = "agentsentry-audit-saved-query";
+
 const state = {
   page: PAGE_BY_PATH.get(normalizePath(window.location.pathname)) || "overview",
   data: {},
@@ -89,12 +112,18 @@ const state = {
     auditSearch: "",
     auditType: "all",
     auditSeverity: "all",
+    auditTool: "all",
+    auditVerdict: "all",
+    auditTime: "all",
   },
+  policyChanges: new Set(),
+  savedAuditQuery: null,
 };
 
 initialize();
 
 async function initialize() {
+  state.savedAuditQuery = readSavedAuditQuery();
   bindInteractions();
   renderChrome();
   renderIcons();
@@ -139,7 +168,7 @@ function renderWorkspaceActions() {
   const byPage = {
     overview: '<a class="workspace-secondary" href="/"><i data-lucide="siren"></i><span>进入攻击监控</span></a>',
     agents: '<button class="workspace-secondary" type="button" data-action="refresh"><i data-lucide="refresh-cw"></i><span>刷新资产</span></button>',
-    policies: '<button class="workspace-primary" type="button" data-action="save-policy"><i data-lucide="save"></i><span>保存策略</span></button>',
+    policies: '<span class="workspace-action-state"><i data-lucide="shield-check"></i>策略实时生效</span>',
     tools: '<button class="workspace-primary" type="button" data-action="register-tool"><i data-lucide="badge-plus"></i><span>登记工具</span></button>',
     alerts: '<a class="workspace-secondary" href="/"><i data-lucide="waypoints"></i><span>查看因果图</span></a>',
     audit: '<a class="workspace-secondary" href="/api/export?format=csv"><i data-lucide="sheet"></i><span>导出 CSV</span></a><a class="workspace-primary" href="/api/export?format=json"><i data-lucide="download"></i><span>导出审计</span></a>',
@@ -262,9 +291,8 @@ function renderOverview() {
   const overview = state.data.overview || {};
   const metrics = Array.isArray(overview.metrics) ? overview.metrics : [];
   const lifecycle = Array.isArray(overview.lifecycle) ? overview.lifecycle : [];
-  const rules = Array.isArray(overview.rules) ? overview.rules.slice(0, 8) : [];
-  const operations = Array.isArray(overview.recentOperations) ? overview.recentOperations.slice(0, 12) : [];
-  const runs = Array.isArray(overview.runs) ? overview.runs.slice(0, 8) : [];
+  const rules = Array.isArray(overview.rules) ? overview.rules.slice(0, 6) : [];
+  const operations = Array.isArray(overview.recentOperations) ? overview.recentOperations.slice(0, 10) : [];
   const metricByKey = new Map(metrics.map((metric) => [String(metric.key), metric]));
   const secondaryMetrics = ["total", "tools", "taint", "drift"]
     .map((key) => metricByKey.get(key))
@@ -278,28 +306,34 @@ function renderOverview() {
   const pending = Number(metricByKey.get("pending")?.num) || 0;
   const allowed = Number(metricByKey.get("allowed")?.num) || 0;
   const windowRecords = Number(overview?.source?.window_records ?? metricByKey.get("total")?.num) || 0;
+  const riskDimensions = completeRiskDimensions(primaryRisks, metricByKey, windowRecords);
+  const contributors = riskContributions(riskDimensions, overview.protectionIndex);
+  const blockTrend = metricTrendLabel(metricByKey.get("blocks")?.trend);
 
   $("workspaceContent").innerHTML = `
     <section class="overview-command-center" aria-label="当前安全状态">
       <div class="posture-primary">
-        <div class="overview-block-heading"><i data-lucide="shield-check"></i><span>当前安全状态</span></div>
+        <div class="overview-block-heading"><i data-lucide="shield-check"></i><span>安全态势评分</span></div>
         <div class="posture-value"><strong>${formatNumber(overview.protectionIndex)}</strong><span>/100</span></div>
-        <div><span class="posture-state tone-${protection.tone}">防护状态：${escapeHtml(protection.label)}</span></div>
-        <p class="posture-proof"><strong>${formatNumber(blocked)}</strong> 个高危行为已在执行前阻断${pending ? `<span> · </span><strong>${formatNumber(pending)}</strong> 个操作等待确认` : ""}</p>
-        <a href="/alerts" class="overview-text-link">查看高危事件<i data-lucide="arrow-right"></i></a>
+        <div class="posture-status-line"><span class="posture-state tone-${protection.tone}">${escapeHtml(protection.label)}</span><span class="posture-trend"><i data-lucide="trending-up"></i>${escapeHtml(blockTrend)}</span></div>
+        <div class="risk-contributors" aria-label="安全分风险贡献">
+          ${contributors.map((item) => `<span><b>${escapeHtml(item.label)}</b><strong>+${formatNumber(item.points)}</strong></span>`).join("") || `<span><b>当前窗口</b><strong>稳定</strong></span>`}
+        </div>
+        <p class="posture-proof"><strong>${formatNumber(blocked)}</strong> 个高危行为已在执行前阻断</p>
       </div>
 
       <div class="posture-risk">
         <header class="overview-block-header"><div><h3>主要风险</h3><small>${formatNumber(windowRecords)} 条实时记录</small></div></header>
         <div class="lifecycle-list">
-          ${primaryRisks.map((item) => {
+          ${riskDimensions.map((item) => {
             const containment = Number(item?.[1]) || 0;
+            const exposure = Math.max(0, Math.min(100, 100 - containment));
             const total = Number(item?.[2]) || 0;
-            const tone = containment < 45 ? "danger" : containment < 80 ? "warning" : "safe";
+            const tone = exposure >= 55 ? "danger" : exposure >= 25 ? "warning" : "safe";
             return `<div class="lifecycle-row tone-${tone}">
-              <div class="lifecycle-label"><span>${escapeHtml(item?.[0] || "未分类")}</span><small>阻断率 · ${formatNumber(total)} 条事件</small></div>
-              <div class="metric-track" style="--value:${containment}%"><span></span></div>
-              <b>${formatNumber(containment)}%</b>
+              <div class="lifecycle-label"><span>${escapeHtml(item?.[0] || "未分类")}</span><small>${formatNumber(total)} 条相关事件</small></div>
+              <div class="metric-track" style="--value:${exposure}%"><span></span></div>
+              <b>${formatNumber(exposure)}%</b>
             </div>`;
           }).join("") || emptyInline("暂无风险数据")}
         </div>
@@ -308,73 +342,47 @@ function renderOverview() {
       <div class="posture-queue">
         <header class="overview-block-header"><div><h3>需要处理</h3><small>按处置优先级排列</small></div></header>
         <nav class="attention-list" aria-label="待处理事项">
-          ${attentionRow("高危事件", blocked, "复核已阻断动作", "danger", "/alerts")}
-          ${attentionRow("待审批", pending, pending ? "需要人工裁决" : "当前没有积压", "warning", "/alerts")}
-          ${attentionRow("策略放行", allowed, allowed ? "检查例外范围" : "当前没有例外", "neutral", "/audit")}
+          ${attentionRow("高危事件", blocked, "立即复核", "danger", "/alerts")}
+          ${attentionRow("待审批", pending, pending ? "需要人工裁决" : "当前无积压", "warning", "/alerts")}
+          ${attentionRow("策略放行", allowed, allowed ? "检查例外范围" : "当前无例外", "neutral", "/audit")}
         </nav>
       </div>
     </section>
 
     <section class="overview-metric-strip" aria-label="运行指标">
       ${secondaryMetrics.map((metric) => `
-        <div class="overview-metric tone-${metricTone(metric.type, metric.num)}">
+        <article class="overview-metric tone-${metricTone(metric.type, metric.num)}">
+          <span class="metric-icon"><i data-lucide="${metricIcon(metric.key)}"></i></span>
           <small>${escapeHtml(metric.cn || metric.key)}</small>
           <strong>${formatNumber(metric.num)}</strong>
           <span>${escapeHtml(metricTrendLabel(metric.trend))}</span>
-        </div>
+        </article>
       `).join("") || emptyInline("暂无指标")}
     </section>
 
     <div class="workspace-grid-two overview-investigation-grid">
-      <section class="workspace-section workspace-section-flat">
-      ${sectionHeader("activity", "最近运行事件", `${operations.length} 条`)}
-      <div class="workspace-table-wrap">
-        <table class="workspace-table">
-          <thead><tr><th style="width:90px">时间</th><th style="width:130px">类型</th><th style="width:130px">工具</th><th>发生了什么</th><th style="width:105px">裁决</th><th style="width:96px">来源</th></tr></thead>
-          <tbody>
-            ${operations.map((item) => {
-              const record = findRecordForOperation(item);
-              return `<tr ${record ? `data-record-id="${escapeHtml(record.id)}"` : ""}>
-                <td class="mono">${escapeHtml(item.time || "--:--:--")}</td>
-                <td>${escapeHtml(typeLabel(item.type))}</td>
-                <td class="mono">${escapeHtml(item.tool || "-")}</td>
-                <td title="${escapeHtml(item.reason)}">${escapeHtml(item.reason || "未记录")}</td>
-                <td>${decisionBadge(item.decision)}</td>
-                <td>${escapeHtml(sourceLabel(item.source))}</td>
-              </tr>`;
-            }).join("") || tableEmpty(6, "暂无运行事件")}
-          </tbody>
-        </table>
-      </div>
+      <section class="workspace-section operation-stream-section">
+        ${sectionHeader("activity", "最近运行事件", `${operations.length} 条`)}
+        <div class="operation-feed">
+          ${operations.map((item) => {
+            const record = findRecordForOperation(item);
+            return `<button class="operation-row" type="button" ${record ? `data-record-id="${escapeHtml(record.id)}"` : ""}>
+              <time>${escapeHtml(item.time || "--:--:--")}</time>
+              <span class="operation-kind">${escapeHtml(typeLabel(item.type))}</span>
+              <div><strong>${escapeHtml(item.reason || "未记录事件")}</strong><small><code>${escapeHtml(item.tool || "agent")}</code> · ${escapeHtml(sourceLabel(item.source))}</small></div>
+              ${decisionBadge(item.decision)}
+              <i data-lucide="chevron-right"></i>
+            </button>`;
+          }).join("") || emptyInline("暂无运行事件")}
+        </div>
       </section>
 
-      <section class="workspace-section workspace-section-flat">
-        ${sectionHeader("list-checks", "策略命中", `${rules.length} 条规则`)}
+      <section class="workspace-section top-rules-section">
+        ${sectionHeader("list-checks", "Top Rules", `${rules.length} 条规则`)}
         <div class="rule-list">
-          ${rules.map((item) => `<div class="rule-row"><code title="${escapeHtml(item?.[0])}">${escapeHtml(item?.[0] || "未命名规则")}</code><b>${formatNumber(item?.[1])}</b><small>${formatNumber(item?.[2])}%</small></div>`).join("") || emptyInline("暂无策略命中")}
+          ${rules.map((item, index) => `<div class="rule-row"><span>${index + 1}</span><code title="${escapeHtml(item?.[0])}">${escapeHtml(item?.[0] || "未命名规则")}</code><b>${formatNumber(item?.[1])}</b><small>${formatNumber(item?.[2])}%</small></div>`).join("") || emptyInline("暂无策略命中")}
         </div>
-      </section>
-    </div>
-
-    <div class="workspace-grid-equal">
-      <section class="workspace-section workspace-section-flat">
-        ${sectionHeader("route", "最近会话", `${runs.length} 个会话`)}
-        <div class="session-list">
-          ${runs.map((run) => `<a class="session-row" href="/?session=${encodeURIComponent(run.id)}">
-            <div><strong>${escapeHtml(run.task || run.id)}</strong><span>${escapeHtml(run.id)} · ${formatNumber(run.event_count)} 个事件</span></div>
-            <time>${escapeHtml(formatDateTime(run.created_at))}</time>
-          </a>`).join("") || emptyInline("暂无会话")}
-        </div>
-      </section>
-      <section class="workspace-section workspace-section-flat">
-        ${sectionHeader("radar", "当前态势结论", `生成于 ${formatClock(overview.generated_at)}`)}
-        <p class="drawer-copy">${escapeHtml(overview.summary || "暂无态势结论。")}</p>
-        <div class="settings-kv">
-          ${kvRow("审计口径", overview?.source?.primary || "未记录")}
-          ${kvRow("策略命中", `${formatNumber(overview?.meshMeta?.policy_hits)} 次`)}
-          ${kvRow("污染事件", `${formatNumber(overview?.meshMeta?.pollution_events)} 条`)}
-          ${kvRow("裁决事件", `${formatNumber(overview?.meshMeta?.decision_events)} 条`)}
-        </div>
+        <a class="section-text-link" href="/audit">查看完整审计<i data-lucide="arrow-right"></i></a>
       </section>
     </div>`;
 }
@@ -388,50 +396,73 @@ function renderAgents() {
   const sensitive = agents.filter((agent) => agent.mayAuthorizeSensitiveTools).length;
   const untrustedReceivers = agents.filter((agent) => agent.mayReceiveUntrustedData).length;
   const runs = Array.isArray(state.data.overview?.runs) ? state.data.overview.runs : [];
+  const owner = filtered.find((agent) => agent.level === "owner") || filtered[0];
+  const delegates = filtered.filter((agent) => agent !== owner);
 
   $("workspaceContent").innerHTML = `
-    <section class="workspace-section">
-      <div class="agent-summary-band">
-        ${summaryStat("已登记智能体", agents.length)}
-        ${summaryStat("可继续委托", delegators)}
-        ${summaryStat("可授权敏感工具", sensitive)}
-        ${summaryStat("可接收不可信数据", untrustedReceivers)}
-      </div>
+    <section class="workspace-section inventory-toolbar-section">
       <div class="workspace-toolbar identity-toolbar">
         <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" name="agentSearch" data-filter="agentSearch" value="${escapeHtml(state.filters.agentSearch)}" placeholder="搜索名称、ID、租户或命名空间" aria-label="搜索智能体" /></label>
-        <span class="toolbar-spacer"></span><span class="toolbar-context"><strong>身份</strong><small>信任 · 边界</small></span><small>${filtered.length} / ${agents.length} 个资产</small>
-      </div>
-      <div class="workspace-table-wrap">
-        <table class="workspace-table">
-          <thead><tr><th style="width:220px">智能体身份</th><th style="width:130px">信任等级</th><th style="width:125px">信任分</th><th style="width:140px">租户 / 空间</th><th>信任边界</th><th style="width:150px">最近活动</th></tr></thead>
-          <tbody>
-            ${filtered.map((agent) => {
-              const latest = latestAgentRecord(agent, records);
-              return `<tr data-select="agent" data-id="${escapeHtml(agent.id)}">
-                <td><div class="cell-main"><strong>${escapeHtml(agent.label || agent.id)}</strong><small>${escapeHtml(agent.id)}</small></div></td>
-                <td>${trustBadge(agent.level)}</td>
-                <td><div class="trust-score"><strong>${formatNumber(agent.score)}</strong><span>/100</span><small>${escapeHtml(trustSummary(agent.score))}</small><i style="--trust:${Math.max(0, Math.min(100, Number(agent.score) || 0))}%"></i></div></td>
-                <td><div class="cell-main"><strong>${escapeHtml(agent.tenant || "default")}</strong><small>${escapeHtml(agent.namespace || "-")}</small></div></td>
-                <td><div class="boundary-stack">${agentBoundaryItems(agent).map((item) => `<span>${escapeHtml(item)}</span>`).join("") || `<span class="boundary-empty">仅当前身份</span>`}</div></td>
-                <td class="mono">${latest ? escapeHtml(formatDateTime(latest.created_at)) : "未观测"}</td>
-              </tr>`;
-            }).join("") || tableEmpty(6, "没有匹配的智能体")}
-          </tbody>
-        </table>
+        <span class="toolbar-spacer"></span>
+        <div class="inline-stats" aria-label="智能体资产摘要">
+          <span><strong>${formatNumber(agents.length)}</strong> 个身份</span>
+          <span><strong>${formatNumber(delegators)}</strong> 可委托</span>
+          <span><strong>${formatNumber(sensitive)}</strong> 可授权敏感工具</span>
+          <span class="${untrustedReceivers ? "tone-warning" : ""}"><strong>${formatNumber(untrustedReceivers)}</strong> 接收不可信数据</span>
+        </div>
       </div>
     </section>
 
-    <div class="workspace-grid-two">
-      <section class="workspace-section">
+    <section class="agent-card-grid" aria-label="智能体身份清单">
+      ${filtered.map((agent) => {
+        const latest = latestAgentRecord(agent, records);
+        const score = Math.max(0, Math.min(100, Number(agent.score) || 0));
+        const tone = score >= 80 ? "safe" : score >= 55 ? "warning" : "danger";
+        return `<button class="agent-card tone-${tone}" type="button" data-select="agent" data-id="${escapeHtml(agent.id)}">
+          <header>
+            <span class="agent-card-icon"><i data-lucide="${agent.level === "owner" ? "user-round-check" : agent.level === "trusted_agent" ? "wrench" : "bot"}"></i></span>
+            <span class="agent-card-title"><strong>${escapeHtml(agent.label || agent.id)}</strong><code>${escapeHtml(agent.id)}</code></span>
+            ${trustBadge(agent.level)}
+          </header>
+          <div class="agent-trust-score">
+            <div><strong>${formatNumber(score)}</strong><span>/100</span></div>
+            <b>${escapeHtml(trustSummary(score))}</b>
+            <i><span style="--trust:${score}%"></span></i>
+          </div>
+          <div class="agent-scope"><span>${escapeHtml(agent.tenant || "default")}</span><i data-lucide="slash"></i><span>${escapeHtml(agent.namespace || "-")}</span></div>
+          <ul class="agent-capabilities">
+            ${agentCapability("可继续委托", agent.mayDelegate)}
+            ${agentCapability("可授权敏感工具", agent.mayAuthorizeSensitiveTools)}
+            ${agentCapability("可接收不可信数据", agent.mayReceiveUntrustedData, true)}
+          </ul>
+          <footer><span>最近活动</span><time>${latest ? escapeHtml(formatDateTime(latest.created_at)) : "未观测"}</time><i data-lucide="arrow-up-right"></i></footer>
+        </button>`;
+      }).join("") || emptyInline("没有匹配的智能体")}
+    </section>
+
+    <div class="workspace-grid-two agent-insight-grid">
+      <section class="workspace-section activity-timeline-section">
         ${sectionHeader("workflow", "会话活动", `${runs.length} 个真实会话`)}
-        <div class="session-list">
-          ${runs.slice(0, 10).map((run) => `<a class="session-row" href="/?session=${encodeURIComponent(run.id)}"><div><strong>${escapeHtml(run.task || run.id)}</strong><span>${escapeHtml(run.id)} · ${escapeHtml(run.defense_mode || "full")}</span></div><time>${escapeHtml(formatDateTime(run.created_at))}</time></a>`).join("") || emptyInline("暂无会话活动")}
+        <div class="activity-timeline">
+          ${runs.slice(0, 8).map((run, index) => `<a class="activity-timeline-row" href="/?session=${encodeURIComponent(run.id)}">
+            <span class="timeline-marker"><i></i>${index < Math.min(runs.length, 8) - 1 ? "<b></b>" : ""}</span>
+            <time>${escapeHtml(formatDateTime(run.created_at))}</time>
+            <div><strong>${escapeHtml(run.task || run.id)}</strong><small>${escapeHtml(run.id)} · ${escapeHtml(run.defense_mode || "full")}</small></div>
+            <span class="event-count">${formatNumber(run.event_count)} 事件</span>
+          </a>`).join("") || emptyInline("暂无会话活动")}
         </div>
       </section>
-      <section class="workspace-section">
-        ${sectionHeader("shield", "身份链风险", "来自策略配置")}
-        <div class="compact-list">
-          ${agents.map((agent) => `<button class="compact-row" type="button" data-select="agent" data-id="${escapeHtml(agent.id)}"><div><strong>${escapeHtml(agent.label || agent.id)}</strong><span>${escapeHtml(agentBoundary(agent))}</span></div>${toneBadge(trustSummary(agent.score), Number(agent.score) >= 80 ? "safe" : Number(agent.score) >= 55 ? "warning" : "danger")}</button>`).join("") || emptyInline("暂无身份配置")}
+      <section class="workspace-section trust-chain-section">
+        ${sectionHeader("network", "身份与信任关系", "当前授权拓扑")}
+        <div class="trust-chain-map">
+          ${owner ? `<button class="trust-chain-node root" type="button" data-select="agent" data-id="${escapeHtml(owner.id)}"><span><i data-lucide="user-round-check"></i></span><div><strong>${escapeHtml(owner.label || owner.id)}</strong><small>${formatNumber(owner.score)} · ${escapeHtml(trustSummary(owner.score))}</small></div></button>` : ""}
+          ${owner && delegates.length ? `<div class="trust-chain-branches">${delegates.map((agent) => {
+            const risky = agent.mayReceiveUntrustedData || Number(agent.score) < 60;
+            return `<div class="trust-chain-branch tone-${risky ? "warning" : "safe"}">
+              <span class="trust-chain-edge"><i></i><b>${agent.level === "delegated_agent" ? "任务委托" : "工具调用"}</b></span>
+              <button class="trust-chain-node" type="button" data-select="agent" data-id="${escapeHtml(agent.id)}"><span><i data-lucide="${agent.level === "trusted_agent" ? "wrench" : "bot"}"></i></span><div><strong>${escapeHtml(agent.label || agent.id)}</strong><small>${escapeHtml(agentBoundary(agent))}</small></div>${toneBadge(trustSummary(agent.score), risky ? "warning" : "safe")}</button>
+            </div>`;
+          }).join("")}</div>` : emptyInline("暂无身份配置")}
         </div>
       </section>
     </div>`;
@@ -442,27 +473,35 @@ function renderPolicies() {
   const toggles = policy.toggles || {};
   const lists = policy.lists || {};
   const agents = Array.isArray(policy.agents) ? policy.agents : [];
+  const toggleByKey = new Map(POLICY_TOGGLES.map((item) => [item[0], item]));
 
   $("workspaceContent").innerHTML = `
     <form id="policyForm" class="policy-layout">
       <section class="workspace-section">
-        ${sectionHeader("sliders-horizontal", "安全能力开关", `${Object.values(toggles).filter(Boolean).length}/${POLICY_TOGGLES.length} 已启用`)}
-        <div class="policy-toggle-list">
-          ${POLICY_TOGGLES.map(([key, icon, label, description]) => `<label class="policy-toggle">
-            <i data-lucide="${icon}"></i>
-            <span><strong>${label}</strong><small>${description}</small></span>
-            <span class="switch-control"><input type="checkbox" name="toggle-${key}" ${toggles[key] ? "checked" : ""} /><span></span></span>
-          </label>`).join("")}
+        ${sectionHeader("sliders-horizontal", "安全能力", `${Object.values(toggles).filter(Boolean).length}/${POLICY_TOGGLES.length} 已启用`)}
+        <div class="policy-toggle-groups">
+          ${POLICY_GROUPS.map((group) => `<section class="policy-toggle-group">
+            <header><div><strong>${escapeHtml(group.label)}</strong><small>${escapeHtml(group.description)}</small></div><span>${group.toggles.filter((key) => toggles[key]).length}/${group.toggles.length}</span></header>
+            <div class="policy-toggle-list">${group.toggles.map((key) => toggleByKey.get(key)).filter(Boolean).map(([toggleKey, icon, label, description]) => `<label class="policy-toggle">
+              <i data-lucide="${icon}"></i>
+              <span><strong>${label}</strong><small>${description}</small></span>
+              <b class="policy-toggle-state">${toggles[toggleKey] ? "已启用" : "未启用"}</b>
+              <span class="switch-control"><input type="checkbox" name="toggle-${toggleKey}" ${toggles[toggleKey] ? "checked" : ""} /><span></span></span>
+            </label>`).join("")}</div>
+          </section>`).join("")}
         </div>
       </section>
 
       <section class="workspace-section">
-        ${sectionHeader("list-filter", "资源边界与白名单", "保存后立即作用于后续裁决")}
+        ${sectionHeader("list-filter", "资源边界与白名单", "保存后作用于后续裁决")}
         <div class="policy-list-editors structured-boundaries">
           ${POLICY_LISTS.map(([key, label, kind, hint]) => policyRuleEditor(key, label, kind, hint, lists[key] || [])).join("")}
         </div>
-        <div class="policy-save-bar"><span id="policySaveState">${state.dirty ? "存在未保存改动" : `配置档案 ${escapeHtml(policy.profile || "default")}`}</span><button class="workspace-primary" type="submit"><i data-lucide="save"></i>保存策略</button></div>
       </section>
+      <div class="policy-save-bar ${state.dirty ? "is-visible" : ""}" aria-hidden="${state.dirty ? "false" : "true"}">
+        <span id="policySaveState">${state.dirty ? `${Math.max(1, state.policyChanges.size)} 项未保存修改` : `配置档案 ${escapeHtml(policy.profile || "default")}`}</span>
+        <div><button class="workspace-secondary" type="button" data-action="reset-policy"><i data-lucide="rotate-ccw"></i>重置</button><button class="workspace-primary" type="submit"><i data-lucide="save"></i>保存策略</button></div>
+      </div>
     </form>
 
     <section class="workspace-section">
@@ -492,25 +531,32 @@ function renderTools() {
   const exfiltration = envelopes.filter((item) => item.manifest?.canExfiltrate).length;
 
   $("workspaceContent").innerHTML = `
-    <section class="workspace-section">
-      <div class="tool-summary-band">
-        ${summaryStat("登记工具", envelopes.length)}
-        ${summaryStat("签名完整", signed)}
-        ${summaryStat("可外泄", exfiltration)}
-        ${summaryStat("已吊销", revocations.length)}
-      </div>
-      <div class="workspace-toolbar">
+    <section class="workspace-section tool-registry-section">
+      <div class="workspace-toolbar tool-toolbar">
         <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" name="toolSearch" data-filter="toolSearch" value="${escapeHtml(state.filters.toolSearch)}" placeholder="搜索工具、别名、来源或副作用" aria-label="搜索工具" /></label>
         <select class="workspace-select" name="toolTrust" data-filter="toolTrust" aria-label="按信任等级筛选"><option value="all">全部信任等级</option>${["trusted", "workspace", "external", "unknown", "revoked"].map((value) => `<option value="${value}" ${trust === value ? "selected" : ""}>${trustLabel(value)}</option>`).join("")}</select>
-        <span class="toolbar-spacer"></span><small>${rows.length} / ${envelopes.length} 个工具</small>
+        <span class="toolbar-spacer"></span>
+        <div class="inline-stats" aria-label="工具摘要">
+          <span><strong>${formatNumber(envelopes.length)}</strong> 工具</span>
+          <span><strong>${formatNumber(signed)}</strong> 签名有效</span>
+          <span class="${exfiltration ? "tone-danger" : ""}"><i data-lucide="triangle-alert"></i><strong>${formatNumber(exfiltration)}</strong> 可外泄</span>
+          <span><strong>${formatNumber(revocations.length)}</strong> 已吊销</span>
+        </div>
       </div>
       <div class="workspace-table-wrap">
-        <table class="workspace-table">
-          <thead><tr><th style="width:190px">工具</th><th style="width:110px">信任</th><th style="width:190px">数据来源</th><th style="width:220px">副作用</th><th style="width:100px">敏感数据</th><th style="width:90px">可外泄</th><th>完整性</th></tr></thead>
+        <table class="workspace-table tool-table">
+          <thead><tr><th style="width:250px">工具</th><th style="width:120px">信任等级</th><th>能力</th><th style="width:120px">敏感数据</th><th style="width:120px">可外泄</th><th style="width:140px">状态</th></tr></thead>
           <tbody>${rows.map((envelope) => {
             const manifest = envelope.manifest || {};
-            return `<tr data-select="tool" data-id="${escapeHtml(manifest.toolId)}"><td><div class="cell-main"><strong>${escapeHtml(manifest.toolId || "未命名")}</strong><small>${escapeHtml((manifest.aliases || []).join(" · ") || "无别名")}</small></div></td><td>${envelope.revoked ? statusBadge("已吊销", "revoked") : plainAttribute(trustLabel(manifest.defaultTrust))}</td><td>${escapeHtml((manifest.dataOrigins || []).join(" · ") || "-")}</td><td>${escapeHtml((manifest.sideEffects || []).join(" · ") || "-")}</td><td>${plainBoolean(manifest.acceptsSensitiveData)}</td><td>${plainBoolean(manifest.canExfiltrate, true)}</td><td>${integrityStatus(Boolean(envelope.signature))}</td></tr>`;
-          }).join("") || tableEmpty(7, "没有匹配的工具")}</tbody>
+            return `<tr data-select="tool" data-id="${escapeHtml(manifest.toolId)}">
+              <td><div class="tool-identity"><span><i data-lucide="${toolIcon(manifest.toolId)}"></i></span><div><strong>${escapeHtml(manifest.toolId || "未命名")}</strong><small>${escapeHtml((manifest.aliases || []).join(" · ") || toolCategory(manifest.toolId))}</small></div></div></td>
+              <td>${envelope.revoked ? statusBadge("已吊销", "revoked") : plainAttribute(trustLabel(manifest.defaultTrust))}</td>
+              <td><div class="tool-capabilities">${(manifest.sideEffects || ["none"]).slice(0, 3).map((item) => `<code>${escapeHtml(item)}</code>`).join("")}<small>${escapeHtml((manifest.dataOrigins || []).join(" · ") || "未知来源")}</small></div></td>
+              <td>${plainBoolean(manifest.acceptsSensitiveData)}</td>
+              <td><span class="tool-risk-cell ${manifest.canExfiltrate ? "danger" : "safe"}">${manifest.canExfiltrate ? '<i data-lucide="triangle-alert"></i>' : '<i data-lucide="shield-check"></i>'}${plainBoolean(manifest.canExfiltrate, true)}</span></td>
+              <td>${envelope.revoked ? statusBadge("已吊销", "revoked") : integrityStatus(Boolean(envelope.signature))}</td>
+            </tr>`;
+          }).join("") || tableEmpty(6, "没有匹配的工具")}</tbody>
         </table>
       </div>
     </section>`;
@@ -528,26 +574,34 @@ function renderAlerts() {
     const matchesAction = action === "all" || String(alert.action).toLowerCase() === action;
     return matchesSearch && matchesSeverity && matchesAction;
   });
+  const groups = aggregateAlerts(filtered);
+  const criticalCount = alerts.filter((alert) => ["critical", "high"].includes(String(alert.severity).toLowerCase())).length;
+  const blockedCount = alerts.filter((alert) => normalizeVerdict(alert.action) === "deny").length;
+  const collapsedCount = Math.max(0, filtered.length - groups.length);
 
   $("workspaceContent").innerHTML = `
-    <section class="workspace-section">
-      <div class="workspace-toolbar">
+    <section class="workspace-section alert-center-section">
+      <div class="workspace-toolbar alert-toolbar">
         <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" name="alertSearch" data-filter="alertSearch" value="${escapeHtml(state.filters.alertSearch)}" placeholder="搜索攻击类型、工具、规则或原因" aria-label="搜索告警" /></label>
         <select class="workspace-select" name="alertSeverity" data-filter="alertSeverity" aria-label="按风险等级筛选"><option value="all">全部风险</option>${["critical", "high", "medium", "low", "info"].map((value) => `<option value="${value}" ${severity === value ? "selected" : ""}>${severityLabel(value)}</option>`).join("")}</select>
         <select class="workspace-select" name="alertAction" data-filter="alertAction" aria-label="按裁决筛选"><option value="all">全部裁决</option>${["block", "ask", "allow"].map((value) => `<option value="${value}" ${action === value ? "selected" : ""}>${decisionLabel(value)}</option>`).join("")}</select>
-        <span class="toolbar-spacer"></span><small>第 ${formatNumber(payload.page)} / ${formatNumber(payload.pages)} 页</small>
+        <span class="toolbar-spacer"></span>
+        <div class="inline-stats alert-inline-stats"><span><strong>${formatNumber(alerts.length)}</strong> 当前页</span><span class="tone-danger"><strong>${formatNumber(criticalCount)}</strong> 高危</span><span><strong>${formatNumber(blockedCount)}</strong> 已阻断</span>${collapsedCount ? `<span><strong>${formatNumber(collapsedCount)}</strong> 已聚合</span>` : ""}</div>
       </div>
       <div class="alert-feed investigation-queue">
-        ${filtered.map((alert) => `<button class="alert-row tone-${escapeHtml(toneFromSeverity(alert.severity))}" type="button" data-select="alert" data-id="${escapeHtml(alert.id)}">
+        ${groups.map((group) => {
+          const alert = group.alert;
+          return `<button class="alert-row tone-${escapeHtml(toneFromSeverity(alert.severity))}" type="button" data-select="alert" data-id="${escapeHtml(alert.id)}">
           <span class="alert-severity"><strong>${escapeHtml(severityLabel(alert.severity))}</strong><small>${Number(alert.score) > 0 ? `${formatNumber(alert.score)} 分` : "已分析"}</small></span>
-          <div class="alert-identity"><strong>${escapeHtml(alertTitle(alert))}</strong><small><code>${escapeHtml(alert.tool || "agent")}</code> · ${escapeHtml(sourceLabel(alert.source))}</small></div>
+          <div class="alert-identity"><strong>${escapeHtml(alertTitle(alert))}${group.count > 1 ? ` <b>×${formatNumber(group.count)}</b>` : ""}</strong><small><code>${escapeHtml(alert.tool || "agent")}</code> · ${escapeHtml(sourceLabel(alert.source))} · ${escapeHtml(alert.id)}</small>${group.outcomeSummary ? `<em class="alert-aggregate-note">${escapeHtml(group.outcomeSummary)}</em>` : ""}</div>
           <div class="alert-story"><strong>${escapeHtml(alertNarrative(alert))}</strong><small>${escapeHtml(alertPathSummary(alert))}</small></div>
-          <span>${decisionBadge(alert.action, alert.rule)}</span>
-          <time>${escapeHtml(alert.time || "--:--:--")}</time>
+          <span class="alert-resolution">${decisionBadge(alert.action, alert.rule)}<small>${escapeHtml(alert.rule || "行为策略")}</small></span>
+          <time>${escapeHtml(group.timeLabel)}</time>
           <i data-lucide="chevron-right"></i>
-        </button>`).join("") || emptyInline("当前筛选条件下没有告警")}
+        </button>`;
+        }).join("") || emptyInline("当前筛选条件下没有告警")}
       </div>
-      <div class="workspace-pagination"><span>显示 ${formatNumber(payload.start)}-${formatNumber(payload.end)}，共 ${formatNumber(payload.totalAlerts)} 条</span><button class="workspace-secondary" type="button" data-action="alert-page" data-page="${Math.max(1, Number(payload.page || 1) - 1)}" ${Number(payload.page || 1) <= 1 ? "disabled" : ""}><i data-lucide="chevron-left"></i>上一页</button><button class="workspace-secondary" type="button" data-action="alert-page" data-page="${Math.min(Number(payload.pages || 1), Number(payload.page || 1) + 1)}" ${Number(payload.page || 1) >= Number(payload.pages || 1) ? "disabled" : ""}>下一页<i data-lucide="chevron-right"></i></button></div>
+      <div class="workspace-pagination"><span>显示 ${formatNumber(payload.start)}-${formatNumber(payload.end)}，共 ${formatNumber(payload.totalAlerts)} 条 · 第 ${formatNumber(payload.page)} / ${formatNumber(payload.pages)} 页</span><button class="workspace-secondary" type="button" title="上一页" aria-label="上一页" data-action="alert-page" data-page="${Math.max(1, Number(payload.page || 1) - 1)}" ${Number(payload.page || 1) <= 1 ? "disabled" : ""}><i data-lucide="chevron-left"></i></button><button class="workspace-secondary" type="button" title="下一页" aria-label="下一页" data-action="alert-page" data-page="${Math.min(Number(payload.pages || 1), Number(payload.page || 1) + 1)}" ${Number(payload.page || 1) >= Number(payload.pages || 1) ? "disabled" : ""}><i data-lucide="chevron-right"></i></button></div>
     </section>`;
 }
 
@@ -557,12 +611,19 @@ function renderAudit() {
   const search = state.filters.auditSearch.trim().toLowerCase();
   const type = state.filters.auditType;
   const severity = state.filters.auditSeverity;
+  const tool = state.filters.auditTool;
+  const verdict = state.filters.auditVerdict;
+  const time = state.filters.auditTime;
   const types = [...new Set(records.map((record) => record.type).filter(Boolean))].sort();
+  const tools = [...new Set(records.map(recordTool).filter(Boolean))].sort();
   const filtered = records.filter((record) => {
     const matchesSearch = !search || `${record.id} ${record.title} ${record.summary} ${JSON.stringify(record.payload || {})}`.toLowerCase().includes(search);
     const matchesType = type === "all" || record.type === type;
-    const matchesSeverity = severity === "all" || String(record.severity).toLowerCase() === severity;
-    return matchesSearch && matchesType && matchesSeverity;
+    const matchesSeverity = severity === "all" || toneFromSeverity(record.severity) === severity;
+    const matchesTool = tool === "all" || recordTool(record) === tool;
+    const matchesVerdict = verdict === "all" || normalizeVerdict(recordDecision(record)) === verdict;
+    const matchesTime = recordInTimeWindow(record, time);
+    return matchesSearch && matchesType && matchesSeverity && matchesTool && matchesVerdict && matchesTime;
   });
   const pages = Math.max(1, Math.ceil(filtered.length / state.auditPageSize));
   state.auditPage = Math.min(state.auditPage, pages);
@@ -570,26 +631,35 @@ function renderAudit() {
   const pageRows = filtered.slice(start, start + state.auditPageSize);
 
   $("workspaceContent").innerHTML = `
-    <section class="workspace-section">
-      <div class="agent-summary-band">
-        ${summaryStat("审计记录", stats.totalRecords ?? records.length)}
-        ${summaryStat("会话", stats.sessions)}
-        ${summaryStat("运行批次", stats.runs)}
-        ${summaryStat("当前窗口", stats.windowRecords ?? records.length)}
+    <section class="workspace-section audit-workbench-section">
+      <div class="audit-summary-line">
+        <span><strong>${formatNumber(stats.totalRecords ?? records.length)}</strong> records</span>
+        <i></i><span><strong>${formatNumber(stats.sessions)}</strong> sessions</span>
+        <i></i><span><strong>${formatNumber(stats.runs)}</strong> runs</span>
+        <span class="toolbar-spacer"></span><small>${formatNumber(filtered.length)} 条匹配记录</small>
       </div>
-      <div class="workspace-toolbar">
+      <div class="workspace-toolbar audit-toolbar">
         <label class="workspace-search"><i data-lucide="search"></i><input class="workspace-input" name="auditSearch" data-filter="auditSearch" value="${escapeHtml(state.filters.auditSearch)}" placeholder="搜索记录 ID、标题、工具、路径或规则" aria-label="搜索审计记录" /></label>
+        <select class="workspace-select" name="auditTime" data-filter="auditTime" aria-label="按时间范围筛选"><option value="all" ${time === "all" ? "selected" : ""}>全部时间</option><option value="24h" ${time === "24h" ? "selected" : ""}>最近 24 小时</option><option value="7d" ${time === "7d" ? "selected" : ""}>最近 7 天</option></select>
         <select class="workspace-select" name="auditType" data-filter="auditType" aria-label="按记录类型筛选"><option value="all">全部类型</option>${types.map((value) => `<option value="${escapeHtml(value)}" ${type === value ? "selected" : ""}>${escapeHtml(typeLabel(value))}</option>`).join("")}</select>
+        <select class="workspace-select" name="auditTool" data-filter="auditTool" aria-label="按工具筛选"><option value="all">全部工具</option>${tools.map((value) => `<option value="${escapeHtml(value)}" ${tool === value ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select>
+        <select class="workspace-select" name="auditVerdict" data-filter="auditVerdict" aria-label="按裁决筛选"><option value="all">全部裁决</option>${["deny", "review", "allow", "observe"].map((value) => `<option value="${value}" ${verdict === value ? "selected" : ""}>${escapeHtml(verdictMeta(value).label)}</option>`).join("")}</select>
         <select class="workspace-select" name="auditSeverity" data-filter="auditSeverity" aria-label="按风险等级筛选"><option value="all">全部等级</option>${["danger", "warning", "info", "success"].map((value) => `<option value="${value}" ${severity === value ? "selected" : ""}>${severityLabel(value)}</option>`).join("")}</select>
-        <span class="toolbar-spacer"></span><small>${filtered.length} / ${records.length} 条</small>
+        <button class="workspace-secondary save-query-button" type="button" data-action="save-audit-query"><i data-lucide="bookmark-plus"></i><span>保存查询</span></button>
       </div>
+      ${state.savedAuditQuery ? `<div class="saved-query-strip"><span><i data-lucide="bookmark-check"></i>已保存查询</span><button type="button" data-action="load-audit-query">${escapeHtml(state.savedAuditQuery.label || "审计查询")}</button><button type="button" title="删除已保存查询" aria-label="删除已保存查询" data-action="clear-audit-query"><i data-lucide="x"></i></button></div>` : ""}
       <div class="workspace-table-wrap">
-        <table class="workspace-table">
-          <thead><tr><th style="width:155px">时间</th><th style="width:145px">记录类型</th><th style="width:160px">会话</th><th>事件</th><th style="width:125px">工具</th><th style="width:95px">裁决</th><th style="width:90px">等级</th></tr></thead>
-          <tbody>${pageRows.map((record) => `<tr data-record-id="${escapeHtml(record.id)}"><td class="mono">${escapeHtml(formatDateTime(record.created_at))}</td><td>${escapeHtml(typeLabel(record.type))}</td><td class="mono" title="${escapeHtml(record.session_key || record.run_id)}">${escapeHtml(record.session_key || record.run_id || "-")}</td><td><div class="cell-main audit-event"><strong>${escapeHtml(record.title || record.summary || "未命名事件")}</strong><small>${escapeHtml(record.summary || "事实记录")}</small><code>${escapeHtml(record.id)}</code></div></td><td class="mono">${escapeHtml(recordTool(record) || "-")}</td><td>${decisionBadge(recordDecision(record))}</td><td>${toneBadge(severityLabel(record.severity), toneFromSeverity(record.severity))}</td></tr>`).join("") || tableEmpty(7, "没有匹配的审计记录")}</tbody>
+        <table class="workspace-table audit-table">
+          <thead><tr><th style="width:160px">时间</th><th>事件</th><th style="width:210px">上下文</th><th style="width:135px">工具</th><th style="width:105px">裁决</th><th style="width:90px">等级</th></tr></thead>
+          <tbody>${pageRows.map((record) => `<tr data-record-id="${escapeHtml(record.id)}">
+            <td class="mono">${escapeHtml(formatDateTime(record.created_at))}</td>
+            <td><div class="cell-main audit-event"><strong>${escapeHtml(record.title || record.summary || "未命名事件")}</strong><small>${escapeHtml(record.summary || "事实记录")}</small><code>${escapeHtml(record.id)}</code></div></td>
+            <td><div class="cell-main audit-context"><strong>${escapeHtml(typeLabel(record.type))}</strong><small class="mono" title="${escapeHtml(record.session_key || record.run_id)}">${escapeHtml(record.session_key || record.run_id || "-")}</small></div></td>
+            <td class="mono">${escapeHtml(recordTool(record) || "-")}</td><td>${decisionBadge(recordDecision(record))}</td><td>${toneBadge(severityLabel(record.severity), toneFromSeverity(record.severity))}</td>
+          </tr>`).join("") || tableEmpty(6, "没有匹配的审计记录")}</tbody>
         </table>
       </div>
-      <div class="workspace-pagination"><span>第 ${state.auditPage} / ${pages} 页</span><button class="workspace-secondary" type="button" data-action="audit-page" data-page="${Math.max(1, state.auditPage - 1)}" ${state.auditPage <= 1 ? "disabled" : ""}><i data-lucide="chevron-left"></i>上一页</button><button class="workspace-secondary" type="button" data-action="audit-page" data-page="${Math.min(pages, state.auditPage + 1)}" ${state.auditPage >= pages ? "disabled" : ""}>下一页<i data-lucide="chevron-right"></i></button></div>
+      <div class="workspace-pagination"><span>第 ${state.auditPage} / ${pages} 页</span><button class="workspace-secondary" type="button" title="上一页" aria-label="上一页" data-action="audit-page" data-page="${Math.max(1, state.auditPage - 1)}" ${state.auditPage <= 1 ? "disabled" : ""}><i data-lucide="chevron-left"></i></button><button class="workspace-secondary" type="button" title="下一页" aria-label="下一页" data-action="audit-page" data-page="${Math.min(pages, state.auditPage + 1)}" ${state.auditPage >= pages ? "disabled" : ""}><i data-lucide="chevron-right"></i></button></div>
     </section>`;
 }
 
@@ -604,30 +674,28 @@ function renderSettings() {
   const items = Array.isArray(checkpoints.checkpoints) ? checkpoints.checkpoints : [];
   const capabilities = Array.isArray(health.capabilities) ? health.capabilities : [];
   const capabilityGroups = groupCapabilities(capabilities);
+  const activeMode = modes.find((mode) => mode.value === enforcement.mode);
 
   $("workspaceContent").innerHTML = `
-    <section class="workspace-section">
-      <div class="settings-summary-band">
-        ${verdictSummaryStat("当前裁决模式", enforcement.mode)}
-        ${summaryStat("已启用安全层", `${formatNumber(enforcement.enabledSecurityLayers)}/${stack.length}`, false)}
-        ${summaryStat("执行前策略", monitor.pre_exec_policy === "active" ? "ACTIVE" : "INACTIVE", false)}
-        ${summaryStat("回滚检查点", items.length, false)}
+    <section class="workspace-section settings-hero">
+      <div class="settings-mode-panel">
+        <span class="settings-kicker"><i data-lucide="shield-check"></i>当前安全模式</span>
+        <div class="mode-segments">
+          ${modes.map((mode) => `<label class="mode-option verdict-${escapeHtml(normalizeVerdict(mode.value))} ${mode.value === enforcement.mode ? "selected" : ""}"><input type="radio" name="runtime-mode" value="${escapeHtml(mode.value)}" ${mode.value === enforcement.mode ? "checked" : ""} /><strong>${escapeHtml(mode.label)}</strong></label>`).join("")}
+        </div>
+        <p><strong>${escapeHtml(activeMode?.label || decisionLabel(enforcement.mode))}：</strong>${escapeHtml(activeMode?.summary || "所有行为按当前安全策略执行。")}</p>
+      </div>
+      <div class="settings-status-rail">
+        <div><span><i data-lucide="layers"></i>安全层</span><strong>${formatNumber(enforcement.enabledSecurityLayers)}<small>/${stack.length}</small></strong></div>
+        <div><span><i data-lucide="activity"></i>执行前策略</span>${statusBadge(monitor.pre_exec_policy === "active" ? "ACTIVE" : "INACTIVE", monitor.pre_exec_policy === "active" ? "active" : "unsigned")}</div>
+        <div><span><i data-lucide="history"></i>回滚检查点</span><strong>${formatNumber(items.length)}</strong></div>
       </div>
     </section>
 
-    <div class="settings-layout">
-      <section class="workspace-section">
-        ${sectionHeader("shield-check", "执行模式", `当前 ${escapeHtml(enforcement.mode || "unknown")}`)}
-        <div class="mode-segments">
-          ${modes.map((mode) => `<label class="mode-option verdict-${escapeHtml(normalizeVerdict(mode.value))} ${mode.value === enforcement.mode ? "selected" : ""}"><input type="radio" name="runtime-mode" value="${escapeHtml(mode.value)}" ${mode.value === enforcement.mode ? "checked" : ""} /><strong>${escapeHtml(mode.label)}</strong><small>${escapeHtml(mode.summary)}</small></label>`).join("")}
-        </div>
-      </section>
-
-      <section class="workspace-section">
-        ${sectionHeader("layers", "安全栈", `${stack.filter((item) => item.enabled).length}/${stack.length} 已启用`)}
-        <div class="stack-list">${stack.map((item) => `<div class="stack-row"><div><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.key)}</span></div>${item.enabled ? statusBadge("已启用", "active") : toneBadge("未启用", "warning")}</div>`).join("") || emptyInline("暂无安全栈状态")}</div>
-      </section>
-    </div>
+    <section class="workspace-section security-stack-section">
+      ${sectionHeader("layers", "安全栈", `${stack.filter((item) => item.enabled).length}/${stack.length} 已启用`)}
+      <div class="stack-list">${stack.map((item) => `<div class="stack-row ${item.enabled ? "enabled" : "disabled"}"><span class="stack-state-icon"><i data-lucide="${item.enabled ? "check" : "circle"}"></i></span><div><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.key)}</span></div>${item.enabled ? statusBadge("已启用", "active") : toneBadge("未启用", "info")}</div>`).join("") || emptyInline("暂无安全栈状态")}</div>
+    </section>
 
     <div class="workspace-grid-equal">
       <section class="workspace-section">
@@ -635,22 +703,16 @@ function renderSettings() {
         <div class="settings-kv">
           ${kvRow("配置档案", enforcement.profile || policy.profile || "-")}
           ${kvRow("审批超时", `${formatNumber(enforcement.approvalTimeoutMs)} ms`)}
-          ${kvRow("配置路径", enforcement.runtimeConfigPath || "-")}
-          ${kvRow("审计路径", health.recordsPath || "-")}
+          ${pathKvRow("配置路径", enforcement.runtimeConfigPath || "-")}
+          ${pathKvRow("审计路径", health.recordsPath || "-")}
           ${kvRow("隔离模式", monitor?.isolation?.mode || "-")}
           ${kvRow("eBPF", monitor.ebpf || "-")}
           ${kvRow("内核执行器", monitor?.observer?.kernel_enforcer_active ? "active" : "unavailable")}
         </div>
       </section>
       <section class="workspace-section capability-section">
-        ${sectionHeader("badge-check", "运行能力", `${capabilities.length} 项 · 默认收起`)}
-        <div class="capability-overview">
-          ${capabilityGroups.map((group) => `<div><strong>${formatNumber(group.items.length)}</strong><span>${escapeHtml(group.label)}</span></div>`).join("") || emptyInline("暂无能力声明")}
-        </div>
-        <details class="capability-details">
-          <summary><span><i data-lucide="list-tree"></i>查看全部运行能力</span><i data-lucide="chevron-down"></i></summary>
-          <div class="capability-groups">${capabilityGroups.map((group) => `<section><header><span>${escapeHtml(group.label)}</span><small>${formatNumber(group.items.length)} 项</small></header><div>${group.items.map((capability) => `<code>${escapeHtml(capability)}</code>`).join("")}</div></section>`).join("")}</div>
-        </details>
+        ${sectionHeader("badge-check", "运行能力", `${capabilities.length} 项 · 分类收起`)}
+        <div class="capability-details"><div class="capability-category-list">${capabilityGroups.map((group) => `<details class="capability-category"><summary><span><i data-lucide="${capabilityGroupIcon(group.key)}"></i>${escapeHtml(group.label)}</span><b>${formatNumber(group.items.length)}</b><i data-lucide="chevron-down"></i></summary><div>${group.items.map((capability) => `<code>${escapeHtml(capability)}</code>`).join("")}</div></details>`).join("") || emptyInline("暂无能力声明")}</div></div>
       </section>
     </div>
 
@@ -696,9 +758,7 @@ function handleContentInput(event) {
     return;
   }
   if (event.target.closest("#policyForm")) {
-    state.dirty = true;
-    const status = $("policySaveState");
-    if (status) status.textContent = "存在未保存改动";
+    markPolicyDirty(event.target.name || "policy");
   }
 }
 
@@ -713,9 +773,10 @@ function handleContentChange(event) {
   const mode = event.target.closest('input[name="runtime-mode"]');
   if (mode) void updateEnforcementMode(mode.value);
   if (event.target.closest("#policyForm")) {
-    state.dirty = true;
-    const status = $("policySaveState");
-    if (status) status.textContent = "存在未保存改动";
+    markPolicyDirty(event.target.name || "policy");
+    const toggle = event.target.closest('.policy-toggle input[type="checkbox"]');
+    const label = toggle?.closest(".policy-toggle")?.querySelector(".policy-toggle-state");
+    if (label) label.textContent = toggle.checked ? "已启用" : "未启用";
   }
 }
 
@@ -739,6 +800,12 @@ function handleContentClick(event) {
     const action = actionTarget.dataset.action;
     if (action === "refresh") void refreshData();
     if (action === "save-policy") $("policyForm")?.requestSubmit();
+    if (action === "reset-policy") {
+      state.dirty = false;
+      state.policyChanges.clear();
+      renderPolicies();
+      renderIcons();
+    }
     if (action === "add-policy-rule") addPolicyRule(actionTarget.closest("[data-policy-rule-key]"));
     if (action === "remove-policy-rule") removePolicyRule(actionTarget.closest("[data-policy-rule-key]"), actionTarget.dataset.value);
     if (action === "register-tool") openRegisterToolDialog();
@@ -754,6 +821,10 @@ function handleContentClick(event) {
     if (action === "revoke-tool") openRevokeToolDialog(actionTarget.dataset.toolId);
     if (action === "restore-tool") openRestoreToolDialog(actionTarget.dataset.toolId);
     if (action === "restore-checkpoint") openCheckpointDialog(actionTarget.dataset.operationKey);
+    if (action === "save-audit-query") saveAuditQuery();
+    if (action === "load-audit-query") loadAuditQuery();
+    if (action === "clear-audit-query") clearAuditQuery();
+    if (action === "copy-value") void copyValue(actionTarget.dataset.value);
     return;
   }
 
@@ -794,6 +865,73 @@ async function updateEnforcementMode(mode) {
   }
 }
 
+function markPolicyDirty(key) {
+  state.dirty = true;
+  state.policyChanges.add(String(key || "policy"));
+  const bar = document.querySelector(".policy-save-bar");
+  bar?.classList.add("is-visible");
+  bar?.setAttribute("aria-hidden", "false");
+  const status = $("policySaveState");
+  if (status) status.textContent = `${Math.max(1, state.policyChanges.size)} 项未保存修改`;
+}
+
+function readSavedAuditQuery() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(AUDIT_QUERY_STORAGE_KEY) || "null");
+    return value && typeof value === "object" && value.filters ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAuditQuery() {
+  const filters = Object.fromEntries(Object.entries(state.filters).filter(([key]) => key.startsWith("audit")));
+  const active = Object.entries(filters).filter(([, value]) => value && value !== "all");
+  const label = active.length ? `审计查询 · ${active.length} 个条件` : "全部审计记录";
+  state.savedAuditQuery = { label, filters };
+  try {
+    window.localStorage.setItem(AUDIT_QUERY_STORAGE_KEY, JSON.stringify(state.savedAuditQuery));
+  } catch {
+    // The query remains available for the current page when storage is unavailable.
+  }
+  renderAudit();
+  renderIcons();
+  showToast("当前审计查询已保存", "success");
+}
+
+function loadAuditQuery() {
+  if (!state.savedAuditQuery?.filters) return;
+  for (const [key, value] of Object.entries(state.savedAuditQuery.filters)) {
+    if (key in state.filters) state.filters[key] = value;
+  }
+  state.auditPage = 1;
+  renderAudit();
+  renderIcons();
+}
+
+function clearAuditQuery() {
+  state.savedAuditQuery = null;
+  try {
+    window.localStorage.removeItem(AUDIT_QUERY_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures; the in-memory query is already cleared.
+  }
+  renderAudit();
+  renderIcons();
+  showToast("已删除保存的查询");
+}
+
+async function copyValue(value) {
+  const text = String(value || "");
+  if (!text || text === "-") return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("路径已复制", "success");
+  } catch {
+    showToast("浏览器未允许复制，请在详情中选取路径", "warning");
+  }
+}
+
 function addPolicyRule(editor) {
   if (!editor) return;
   const input = editor.querySelector("[data-policy-rule-input]");
@@ -825,9 +963,7 @@ function syncPolicyRuleEditor(editor, values) {
     : `<span class="policy-rule-empty">尚未设置边界</span>`;
   const count = editor.querySelector("[data-policy-rule-count]");
   if (count) count.textContent = `${normalized.length} 项`;
-  state.dirty = true;
-  const status = $("policySaveState");
-  if (status) status.textContent = "存在未保存改动";
+  markPolicyDirty(editor.dataset.policyRuleKey || "boundary");
   renderIcons();
 }
 
@@ -844,6 +980,7 @@ async function savePolicy(form) {
     });
     state.data.policy = policy;
     state.dirty = false;
+    state.policyChanges.clear();
     renderPolicies();
     renderIcons();
     showToast("策略配置已保存并开始作用于后续裁决", "success");
@@ -916,6 +1053,7 @@ async function openRecordDrawer(id) {
     $("drawerTitle").textContent = brandText(record.title || record.summary || record.id);
     $("drawerBody").innerHTML = `
       <section class="drawer-section"><header>发生了什么</header><p class="drawer-copy">${escapeHtml(record.summary || record.title || "未记录事件摘要")}</p></section>
+      <section class="drawer-section audit-chain-drawer"><header>完整审计链</header><div class="audit-trace-chain">${auditTraceSteps(record).map((step, index) => `<div><span><i data-lucide="${step.icon}"></i></span><small>${escapeHtml(step.label)}</small><strong>${escapeHtml(step.value)}</strong>${index < 4 ? '<i data-lucide="arrow-right"></i>' : ""}</div>`).join("")}</div></section>
       <section class="drawer-section"><header>审计属性</header><div class="drawer-kv">${kvRow("记录 ID", record.id)}${kvRow("创建时间", formatDateTime(record.created_at))}${kvRow("会话", record.session_key || record.run_id || "-")}${kvRow("类型", typeLabel(record.type))}${kvRow("安全层", record.layer || "-")}${kvRow("等级", severityLabel(record.severity))}${kvRow("工具", recordTool(record) || "-")}${kvRow("裁决", decisionLabel(recordDecision(record)))}</div></section>
       <details class="drawer-section"><summary>技术详情 / 原始 Trace</summary><code class="drawer-code">${escapeHtml(JSON.stringify(record.payload || {}, null, 2))}</code></details>
       ${record.session_key || record.run_id ? `<div class="workspace-actions"><a class="workspace-primary" href="/?session=${encodeURIComponent(record.session_key || record.run_id)}"><i data-lucide="waypoints"></i>查看会话因果图</a></div>` : ""}
@@ -1136,6 +1274,111 @@ function summaryStat(label, value) {
   return `<div class="summary-stat"><small>${escapeHtml(label)}</small><strong>${escapeHtml(String(value ?? 0))}</strong></div>`;
 }
 
+function riskContributions(risks, score) {
+  const gap = Math.max(0, 100 - (Number(score) || 0));
+  const weighted = risks.map((item) => {
+    const containment = Math.max(0, Math.min(100, Number(item?.[1]) || 0));
+    const events = Math.max(1, Number(item?.[2]) || 0);
+    return { label: String(item?.[0] || "未分类风险"), weight: Math.max(1, 100 - containment) * events };
+  });
+  const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0) || 1;
+  return weighted.map((item) => ({ ...item, points: Math.max(gap ? 1 : 0, Math.round(gap * item.weight / totalWeight)) }));
+}
+
+function completeRiskDimensions(risks, metricByKey, totalRecords) {
+  const dimensions = [...risks];
+  const total = Math.max(1, Number(totalRecords) || 0);
+  const fallbacks = [
+    ["数据外泄", "taint"],
+    ["意图风险", "drift"],
+    ["身份风险", "pending"],
+  ];
+  for (const [label, key] of fallbacks) {
+    if (dimensions.length >= 3) break;
+    if (dimensions.some((item) => String(item?.[0]).includes(label))) continue;
+    const count = Math.max(0, Number(metricByKey.get(key)?.num) || 0);
+    const exposure = Math.min(100, Math.round(count / total * 100));
+    dimensions.push([label, 100 - exposure, count]);
+  }
+  return dimensions.slice(0, 3);
+}
+
+function metricIcon(key) {
+  return ({ total: "logs", tools: "wrench", taint: "git-branch", drift: "route" })[String(key)] || "activity";
+}
+
+function agentCapability(label, enabled, warningWhenEnabled = false) {
+  const tone = warningWhenEnabled ? (enabled ? "warning" : "safe") : (enabled ? "safe" : "restricted");
+  const icon = warningWhenEnabled ? (enabled ? "triangle-alert" : "shield-check") : (enabled ? "check" : "x");
+  return `<li class="tone-${tone}"><i data-lucide="${icon}"></i><span>${escapeHtml(label)}</span><b>${enabled ? "是" : "否"}</b></li>`;
+}
+
+function toolIcon(toolId) {
+  const text = String(toolId || "").toLowerCase();
+  if (/mail|email/.test(text)) return "mail";
+  if (/file|read|write/.test(text)) return "file-text";
+  if (/shell|exec|command|terminal/.test(text)) return "square-terminal";
+  if (/web|http|api|network/.test(text)) return "globe-2";
+  if (/database|sql|store|memory/.test(text)) return "database";
+  return "wrench";
+}
+
+function toolCategory(toolId) {
+  const icon = toolIcon(toolId);
+  return ({ mail: "Email 工具", "file-text": "文件工具", "square-terminal": "Shell 工具", "globe-2": "网络 / API", database: "数据工具", wrench: "通用工具" })[icon];
+}
+
+function aggregateAlerts(alerts) {
+  const groups = new Map();
+  for (const alert of alerts) {
+    const key = [alertTitle(alert), alert.tool, normalizeVerdict(alert.action), alert.rule, alertPathSummary(alert)].map((item) => String(item || "")).join("|");
+    const group = groups.get(key) || { alert, count: 0, times: [], decisions: [] };
+    group.count += 1;
+    if (alert.time) group.times.push(String(alert.time));
+    group.decisions.push(normalizeVerdict(alert.action));
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((group) => ({
+    ...group,
+    timeLabel: group.times.length > 1 ? `${group.times.at(-1)} – ${group.times[0]}` : group.times[0] || "--:--:--",
+    outcomeSummary: group.count > 1 ? `${formatNumber(group.count)} 次均${aggregateOutcomeLabel(group.decisions[0])}` : "",
+  }));
+}
+
+function aggregateOutcomeLabel(value) {
+  const labels = { deny: "已阻断", review: "待确认", allow: "已放行", observe: "已记录" };
+  return labels[normalizeVerdict(value)] || "已记录";
+}
+
+function recordInTimeWindow(record, windowKey) {
+  if (!windowKey || windowKey === "all") return true;
+  const createdAt = new Date(record.created_at).getTime();
+  if (!Number.isFinite(createdAt)) return false;
+  const duration = windowKey === "24h" ? 24 * 60 * 60 * 1000 : windowKey === "7d" ? 7 * 24 * 60 * 60 * 1000 : Infinity;
+  return Date.now() - createdAt <= duration;
+}
+
+function auditTraceSteps(record) {
+  const payload = record?.payload || {};
+  const input = payload.raw_input || payload.command || (payload.task_spec ? "TaskSpec 已解析" : record.summary || "已接收行为输入");
+  const policy = payload.rule || payload.violations?.[0] || record.layer || "默认行为策略";
+  const output = payload.blocked === true
+    ? "执行前阻断"
+    : payload.ok === true ? "执行成功" : payload.result || payload.status || typeLabel(record.type);
+  return [
+    { label: "Input", value: compactValue(input), icon: "message-square-text" },
+    { label: "Tool", value: recordTool(record) || "Agent", icon: "wrench" },
+    { label: "Policy", value: compactValue(policy), icon: "shield-check" },
+    { label: "Decision", value: decisionLabel(recordDecision(record)), icon: verdictMeta(recordDecision(record)).icon },
+    { label: "Output", value: compactValue(output), icon: "square-check-big" },
+  ];
+}
+
+function compactValue(value) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return String(text || "-").replace(/\s+/g, " ").slice(0, 64);
+}
+
 function verdictSummaryStat(label, value) {
   const meta = verdictMeta(value);
   return `<div class="summary-stat verdict-summary verdict-${meta.key}"><small>${escapeHtml(label)}</small><strong>${escapeHtml(meta.label)}</strong><code>${escapeHtml(meta.code)}</code></div>`;
@@ -1222,16 +1465,27 @@ function groupCapabilities(capabilities) {
   return groups.filter((group) => group.items.length);
 }
 
+function capabilityGroupIcon(key) {
+  return ({ security: "shield-check", audit: "notebook-tabs", agent: "bot", lab: "flask-conical" })[String(key)] || "boxes";
+}
+
 function attentionRow(label, value, detail, tone, href) {
   return `<a class="attention-row tone-${escapeHtml(tone)}" href="${escapeHtml(href)}">
     <strong>${formatNumber(value)}</strong>
     <span><b>${escapeHtml(label)}</b><small>${escapeHtml(detail)}</small></span>
+    <em>处理</em>
     <i data-lucide="chevron-right"></i>
   </a>`;
 }
 
 function kvRow(label, value) {
   return `<div class="drawer-kv-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value ?? "-"))}</strong></div>`;
+}
+
+function pathKvRow(label, value) {
+  const fullValue = String(value ?? "-");
+  const filename = fullValue.split(/[\\/]/).filter(Boolean).at(-1) || fullValue;
+  return `<div class="drawer-kv-row path-kv-row"><span>${escapeHtml(label)}</span><code title="${escapeHtml(fullValue)}">${escapeHtml(filename)}</code><button type="button" title="复制完整路径" aria-label="复制${escapeHtml(label)}" data-action="copy-value" data-value="${escapeHtml(fullValue)}"><i data-lucide="copy"></i></button></div>`;
 }
 
 function tableEmpty(columns, label) {

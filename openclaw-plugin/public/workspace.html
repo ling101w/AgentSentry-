@@ -3,24 +3,20 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#030b13" />
+    <meta name="theme-color" content="#f7f8fa" />
     <meta name="description" content="玄鉴智能体行为安全裁决系统运营工作台。" />
     <title>玄鉴 · 安全运营</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=20260809-5" />
-    <link rel="stylesheet" href="/workspace.css?v=20260809-3" />
-    <link rel="stylesheet" href="/themes.css?v=20260809-3" />
-    <script src="/theme.js?v=20260809-2"></script>
+    <link rel="stylesheet" href="/styles.css?v=20260809-7" />
+    <link rel="stylesheet" href="/workspace.css?v=20260809-5" />
+    <link rel="stylesheet" href="/themes.css?v=20260810-1" />
+    <script src="/theme.js?v=20260810-1"></script>
   </head>
   <body>
     <div class="app-shell workspace-shell">
       <header class="app-header">
-        <a class="brand-lockup" href="/overview">
-          <img src="/brand-mark.png?v=20260809-1" width="42" height="44" alt="" />
-          <span>
-            <strong>玄鉴</strong>
-            <small>智能体行为安全裁决系统</small>
-          </span>
+        <a class="brand-lockup" href="/overview" aria-label="玄鉴智能体行为安全裁决系统">
+          <img class="brand-art" src="/xuanjian-brand-lockup.png?v=20260809-1" width="252" height="64" alt="" />
         </a>
 
         <div class="incident-heading workspace-heading">
@@ -63,14 +59,14 @@
       <div class="app-body workspace-body">
         <aside class="side-navigation" aria-label="主导航">
           <nav>
-            <a href="/overview" data-nav="overview"><i data-lucide="house"></i><span>总览</span></a>
-            <a href="/" data-nav="monitor"><i data-lucide="siren"></i><span>攻击监控</span></a>
-            <a href="/agents" data-nav="agents"><i data-lucide="bot"></i><span>智能体资产</span></a>
-            <a href="/policies" data-nav="policies"><i data-lucide="shield-check"></i><span>策略管理</span></a>
-            <a href="/tools" data-nav="tools"><i data-lucide="circle-gauge"></i><span>工具管理</span></a>
-            <a href="/alerts" data-nav="alerts" class="nav-alert"><i data-lucide="bell-ring"></i><span>告警中心</span><b id="navAlertCount" hidden>0</b></a>
-            <a href="/audit" data-nav="audit"><i data-lucide="notebook-tabs"></i><span>审计日志</span></a>
-            <a href="/settings" data-nav="settings"><i data-lucide="settings"></i><span>系统设置</span></a>
+            <a href="/overview" data-nav="overview" aria-label="总览"><i data-lucide="house"></i><span>总览</span></a>
+            <a href="/" data-nav="monitor" aria-label="攻击监控"><i data-lucide="siren"></i><span>攻击监控</span></a>
+            <a href="/agents" data-nav="agents" aria-label="智能体资产"><i data-lucide="bot"></i><span>智能体资产</span></a>
+            <a href="/policies" data-nav="policies" aria-label="策略管理"><i data-lucide="shield-check"></i><span>策略管理</span></a>
+            <a href="/tools" data-nav="tools" aria-label="工具管理"><i data-lucide="circle-gauge"></i><span>工具管理</span></a>
+            <a href="/alerts" data-nav="alerts" class="nav-alert" aria-label="告警中心"><i data-lucide="bell-ring"></i><span>告警中心</span><b id="navAlertCount" hidden>0</b></a>
+            <a href="/audit" data-nav="audit" aria-label="审计日志"><i data-lucide="notebook-tabs"></i><span>审计日志</span></a>
+            <a href="/settings" data-nav="settings" aria-label="系统设置"><i data-lucide="settings"></i><span>系统设置</span></a>
           </nav>
           <div class="side-footer">
             <strong><i data-lucide="shield-check"></i>玄鉴</strong>
@@ -123,6 +119,6 @@
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script src="/vendor/lucide.min.js?v=0.468.0"></script>
-    <script type="module" src="/workspace.js?v=20260809-4"></script>
+    <script type="module" src="/workspace.js?v=20260809-6"></script>
   </body>
 </html>
