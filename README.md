@@ -134,13 +134,14 @@ bash setup.sh --force
 | `observe` | `observe` | 只记录和告警，用作无阻断基线 |
 | `balanced` | `approval` | 日常使用，高风险动作进入审批 |
 | `competition` | `approval` | 比赛演示，启用 provenance judge、写入 root 和响应覆盖 |
+| `evidence-gated` | `approval` | 按攻击因果证据分级干预；保留硬安全边界 |
 | `high-security` | `block` | 强约束部署，要求高风险运行面具备内核 observer |
 
 常用命令：
 
 ```text
 /agentsentry status
-/agentsentry profile <observe|balanced|competition|high-security>
+/agentsentry profile <observe|balanced|competition|evidence-gated|high-security>
 /agentsentry config get [key]
 /agentsentry config set <key> <value>
 /agentsentry config reset
