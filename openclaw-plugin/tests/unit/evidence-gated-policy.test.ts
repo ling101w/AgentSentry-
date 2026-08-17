@@ -5,9 +5,11 @@ import { sealAgentMessageParameters } from "../../core/agent-trust.ts";
 import { detectToolCall } from "../../core/detect.ts";
 import {
   applyExposureTaint,
+  checkpointPolicyState,
   createPolicyState,
   decideAction,
   labelToolResult,
+  restorePolicyStateCheckpoint,
   updateTaskSpec,
   type AgentSentryAction,
 } from "../../core/policy.ts";
@@ -915,5 +917,22 @@ describe("evidence-gated policy integration", () => {
       evidence_class: "safety_boundary",
       safety_boundary_preserved: true,
     });
+  });
+
+  it("round-trips the action sequence used by the causal evidence window", () => {
+    const state = createPolicyState();
+    state.currentTask = "review the incident";
+    state.actionSequence = 17;
+    state.history.push({ tool: "read_file", decision: "allow", risk_score: 8 });
+    state.semanticActionGraph.pendingCalls.set("call-1", ["node-1"]);
+    const checkpoint = checkpointPolicyState(state);
+
+    const restored = createPolicyState();
+    expect(restorePolicyStateCheckpoint(restored, checkpoint)).toBe(true);
+    expect(restored.currentTask).toBe("review the incident");
+    expect(restored.actionSequence).toBe(17);
+    expect(restored.history).toEqual(state.history);
+    expect(restored.semanticActionGraph.pendingCalls).toEqual(new Map([["call-1", ["node-1"]]]));
+    expect(restorePolicyStateCheckpoint(restored, null)).toBe(false);
   });
 });

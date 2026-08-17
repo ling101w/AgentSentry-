@@ -195,6 +195,69 @@ describe("evidence-gated intervention policy", () => {
       causal_certainty: "inferred",
     });
   });
+
+  it("preserves an approval safety boundary even without a blocking finding", () => {
+    const result = applyInterventionGate({
+      mode: "evidence-gated",
+      rawDecision: "deny",
+      findings: [finding("require_approval", interventionEvidence("safety_boundary"))],
+      preserveSafetyBoundaries: true,
+    });
+
+    expect(result).toMatchObject({
+      decision: "ask",
+      evidence_class: "safety_boundary",
+      safety_boundary_preserved: true,
+    });
+  });
+
+  it("orders multiple attack evidence classes by strength and clamps malformed confidence", () => {
+    const result = applyInterventionGate({
+      mode: "evidence-gated",
+      rawDecision: "allow",
+      findings: [
+        finding("require_approval", {
+          intervention_evidence: {
+            evidence_class: "confirmed_attack",
+            attack_class: "tool_hijack",
+            causal_certainty: "inferred",
+            confidence: 1,
+          },
+        }),
+        finding("require_approval", interventionEvidence("attack_signal", {
+          attack_class: "prompt_injection",
+          causal_certainty: "inferred",
+        })),
+      ],
+      preserveSafetyBoundaries: true,
+    });
+
+    expect(result).toMatchObject({
+      decision: "ask",
+      evidence_class: "confirmed_attack",
+      attack_classes: ["prompt_injection", "tool_hijack"],
+      risk_only_finding_count: 0,
+    });
+  });
+
+  it("treats malformed evidence payloads as risk-only", () => {
+    const result = applyInterventionGate({
+      mode: "evidence-gated",
+      rawDecision: "deny",
+      findings: [
+        finding("block", { intervention_evidence: [] }),
+        finding("block", { intervention_evidence: { evidence_class: "unknown", confidence: Number.POSITIVE_INFINITY } }),
+      ],
+      preserveSafetyBoundaries: true,
+    });
+
+    expect(result).toMatchObject({
+      decision: "allow",
+      evidence_class: "risk_only",
+      qualified_finding_count: 0,
+      risk_only_finding_count: 2,
+    });
+  });
 });
 
 function finding(
