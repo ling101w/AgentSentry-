@@ -25,7 +25,7 @@ export type ActionAssessment = {
 };
 
 const FILE_PATH_TOOLS = new Set(["read_file", "write_file", "memory_read", "memory_write"]);
-const READ_ONLY_TOOLS = new Set(["read_file", "read_webpage", "memory_read"]);
+const READ_ONLY_TOOLS = new Set(["read_file", "read_webpage", "memory_read", "business_read"]);
 const SYSTEM_MUTATION_PATH_PATTERNS = [
   /^\/(?:etc|usr|bin|sbin|boot|root|proc|sys|dev)(?:\/|$)/i,
   /^\/var\/spool\/cron(?:\/|$)/i,
@@ -60,9 +60,11 @@ export function assessActionWithSensitiveAssets(action: PolicyActionInput, sensi
   let systemMutation = false;
   let dangerousCommand = false;
 
-  if (action.tool === "read_file" || action.tool === "read_webpage" || action.tool === "memory_read") actionClass = "read";
+  if (action.tool === "read_file" || action.tool === "read_webpage" || action.tool === "memory_read" || action.tool === "business_read") actionClass = "read";
   if (action.tool === "write_file") actionClass = "write";
+  if (action.tool === "calendar_write" || action.tool === "cloud_file_write") actionClass = "write";
   if (action.tool === "send_email") actionClass = "external_sink";
+  if (action.tool === "cloud_file_share") actionClass = "external_sink";
   if (action.tool === "call_api") actionClass = "network";
   if (action.tool === "shell_exec") actionClass = "execution";
   if (action.tool === "memory_write") actionClass = "memory";
@@ -70,6 +72,10 @@ export function assessActionWithSensitiveAssets(action: PolicyActionInput, sensi
   if (action.tool === "send_email") {
     externalSink = true;
     reasons.push("email is an external sink");
+  }
+  if (action.tool === "cloud_file_share") {
+    externalSink = true;
+    reasons.push("cloud file sharing is an external sink");
   }
   if (action.tool === "call_api") {
     const url = readFirstString(action.args, ["url", "href", "endpoint", "target"]);
@@ -88,6 +94,14 @@ export function assessActionWithSensitiveAssets(action: PolicyActionInput, sensi
   if (action.tool === "memory_write") {
     persistence = true;
     reasons.push("memory write is persistent");
+  }
+  if (action.tool === "calendar_write") {
+    persistence = true;
+    reasons.push("calendar write changes persistent business state");
+  }
+  if (action.tool === "cloud_file_write") {
+    persistence = true;
+    reasons.push("cloud file write changes persistent business state");
   }
   if (path && FILE_PATH_TOOLS.has(action.tool) && !READ_ONLY_TOOLS.has(action.tool) && isSystemMutationPath(path)) {
     systemMutation = true;
@@ -130,6 +144,7 @@ export function shouldHardBlockTaskMismatch(
 
 export function isTrustSensitiveSink(action: PolicyActionInput, assessment: ActionAssessment): boolean {
   if (action.tool === "send_email") return true;
+  if (action.tool === "cloud_file_share") return true;
   if (action.tool === "shell_exec") return assessment.highRisk;
   if (action.tool === "memory_write") return true;
   if (action.tool === "call_api") return assessment.externalSink;
@@ -139,6 +154,7 @@ export function isTrustSensitiveSink(action: PolicyActionInput, assessment: Acti
 
 export function sinkForAction(action: PolicyActionInput, assessment: ActionAssessment): TaintSink | null {
   if (action.tool === "send_email") return "send_email";
+  if (action.tool === "cloud_file_share") return "call_api";
   if (action.tool === "call_api" && assessment.externalSink) return "call_api";
   if (action.tool === "shell_exec" && assessment.highRisk) return "shell_exec";
   if (action.tool === "memory_write") return "memory_write";

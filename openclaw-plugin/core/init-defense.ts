@@ -245,7 +245,8 @@ function isLowRiskSkill(capabilities: string[], risk: number): boolean {
 
 function isComponentCandidate(filePath: string): boolean {
   const name = basename(filePath).toLowerCase();
-  return COMPONENT_FILES.has(name) || COMPONENT_EXTENSIONS.has(extname(filePath).toLowerCase()) && /(^|\/)(skills?|plugin-skills?|plugins?|\.openclaw)(\/|$)/i.test(filePath);
+  const normalized = filePath.replace(/\\/g, "/");
+  return COMPONENT_FILES.has(name) || COMPONENT_EXTENSIONS.has(extname(filePath).toLowerCase()) && /(^|\/)(skills?|plugin-skills?|plugins?|\.openclaw)(\/|$)/i.test(normalized);
 }
 
 function componentKind(filePath: string): FoundationComponentKind {
@@ -261,7 +262,7 @@ function componentKind(filePath: string): FoundationComponentKind {
 function nearestManifest(filePath: string): string {
   let dir = dirname(filePath);
   for (let depth = 0; depth < 4; depth += 1) {
-    for (const name of ["agentsentry.tool-manifest.json", "openclaw.plugin.json", "package.json", "skill.md"]) {
+    for (const name of ["agentsentry.tool-manifest.json", "openclaw.plugin.json", "package.json"]) {
       const candidate = join(dir, name);
       if (existsSync(candidate) && safeIsFile(candidate)) return candidate;
     }

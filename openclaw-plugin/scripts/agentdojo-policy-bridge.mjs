@@ -5,7 +5,13 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
-import { PluginConfig, applySecurityProfile, isSecurityProfileName } from "../dist/config.js";
+import {
+  MAX_SEMANTIC_JUDGE_TIMEOUT_MS,
+  MIN_SEMANTIC_JUDGE_TIMEOUT_MS,
+  PluginConfig,
+  applySecurityProfile,
+  isSecurityProfileName,
+} from "../dist/config.js";
 import { detectToolCall } from "../dist/core/detect.js";
 import {
   createPolicyState,
@@ -23,8 +29,9 @@ const BRIDGE_VERSION = "1.0.0";
 const MAX_SESSIONS = 64;
 const MAX_LINE_CHARS = 4 * 1024 * 1024;
 const DETECTOR_FIELDS = ["session_history", "tool_args", "tool_name", "tool_result", "user_message"];
+const manifestPath = process.env.AGENTSENTRY_NATIVE_MANIFEST?.trim();
 const manifestUrl = new URL("../manifests/agentdojo-workspace-v1.2.2.json", import.meta.url);
-const manifestSource = readFileSync(manifestUrl, "utf8");
+const manifestSource = readFileSync(manifestPath || manifestUrl, "utf8");
 const manifestFileSha256 = createHash("sha256").update(manifestSource, "utf8").digest("hex");
 const manifestDocument = parseManifestDocument(manifestSource);
 const manifestDigests = manifestDocument.manifests.map((manifest) => registerToolManifest(manifest, {
@@ -32,12 +39,19 @@ const manifestDigests = manifestDocument.manifests.map((manifest) => registerToo
   schema: { agentdojo: manifestDocument.agentdojo, schema_version: manifestDocument.schema_version },
 }).digest);
 
-const profile = process.env.AGENTSENTRY_NATIVE_PROFILE || "competition";
+const observeSelfTest = process.argv.includes("--self-test-observe");
+const evidenceGatedSelfTest = process.argv.includes("--self-test-evidence-gated");
+const profile = observeSelfTest
+  ? "observe"
+  : evidenceGatedSelfTest
+    ? "evidence-gated"
+    : process.env.AGENTSENTRY_NATIVE_PROFILE || "competition";
 if (!isSecurityProfileName(profile)) throw new Error(`unsupported AgentSentry native profile: ${profile}`);
+const bridgeConfig = createNativeConfig();
 
 const sessions = new Map();
 
-if (process.argv.includes("--self-test")) {
+if (process.argv.includes("--self-test") || observeSelfTest || evidenceGatedSelfTest) {
   await runSelfTest();
   process.exit(0);
 }
@@ -80,8 +94,7 @@ async function handleRequest(request) {
   const payload = validateDetectorPayload(request.payload);
   if (op === "start") {
     if (sessions.has(sessionId)) throw new Error("session already exists");
-    const config = applySecurityProfile(new PluginConfig(), profile);
-    if (process.env.AGENTSENTRY_NATIVE_DISABLE_JUDGE === "1") config.semantic.enabled = false;
+    const config = createNativeConfig();
     const state = createPolicyState();
     updateTaskSpec(state, [{ role: "user", content: payload.user_message }], config);
     sessions.set(sessionId, { config, state, userMessage: payload.user_message, pending: new Map() });
@@ -113,20 +126,28 @@ async function beforeTool(session, callId, payload) {
   const detection = semanticFindings.length
     ? detectToolCall(payload.tool_name, payload.tool_args, session.config, session.state, semanticFindings)
     : preliminary;
-  const semanticJudgeCalled = preliminary.policy.deterministic_disposition === "ambiguous" && semanticFindings.length > 0;
+  const semanticJudgeRequested = session.config.semantic.enabled
+    && preliminary.policy.deterministic_disposition === "ambiguous";
+  const semanticJudgeCalled = semanticJudgeRequested && semanticFindings.length > 0;
+  const policyDecision = detection.decision;
+  const enforcementMode = session.config.enforcement.mode;
+  const effectiveDecision = effectiveDecisionFor(enforcementMode, policyDecision);
   updateAfterDecision(session.state, detection.policy);
-  if (detection.decision === "allow") session.pending.set(callId, payload.tool_name);
+  if (effectiveDecision === "allow") session.pending.set(callId, payload.tool_name);
 
   return {
-    decision: detection.decision,
+    decision: effectiveDecision,
+    policy_decision: policyDecision,
+    enforcement_mode: enforcementMode,
     risk_score: detection.risk_score,
     deterministic_block: detection.policy.deterministic_block,
     normalized_tool: detection.policy.action.tool,
     summary: detection.summary,
     findings: detection.findings,
-    semantic_judge_requested: preliminary.policy.deterministic_disposition === "ambiguous",
+    semantic_judge_requested: semanticJudgeRequested,
     semantic_judge_called: semanticJudgeCalled,
     semantic_gate: { disposition: preliminary.policy.deterministic_disposition },
+    intervention: detection.policy.intervention,
     contaminated: session.state.contaminated,
     trust: policyTrustSnapshot(session.state),
   };
@@ -137,7 +158,9 @@ function afterTool(session, callId, payload) {
   if (!expectedTool) throw new Error("after_tool has no matching allowed call");
   if (payload.tool_name !== expectedTool) throw new Error("after_tool tool_name differs from before_tool");
   session.pending.delete(callId);
-  const findings = resultFindings(callId, payload.tool_result, session.state, session.config, payload.tool_name);
+  const findings = resultFindings(callId, payload.tool_result, session.state, session.config, payload.tool_name, {
+    toolArgs: payload.tool_args,
+  });
   updateAfterMessage(session.state, findings);
   return {
     findings,
@@ -167,11 +190,49 @@ function bridgeMetadata() {
   return {
     bridge_version: BRIDGE_VERSION,
     profile,
+    enforcement_mode: bridgeConfig.enforcement.mode,
+    intervention_mode: bridgeConfig.intervention.mode,
     manifest_mapping_version: manifestDocument.mapping_version,
     manifest_file_sha256: manifestFileSha256,
     manifest_digests: manifestDigests,
     detector_input_fields: DETECTOR_FIELDS,
+    semantic_judge: {
+      enabled: bridgeConfig.semantic.enabled,
+      base_url: bridgeConfig.semantic.baseUrl,
+      model: bridgeConfig.semantic.model,
+      timeout_ms: bridgeConfig.semantic.timeoutMs,
+    },
   };
+}
+
+function effectiveDecisionFor(enforcementMode, policyDecision) {
+  return enforcementMode === "observe" ? "allow" : policyDecision;
+}
+
+function createNativeConfig() {
+  const config = applySecurityProfile(new PluginConfig(), profile);
+  if (process.env.AGENTSENTRY_NATIVE_DISABLE_JUDGE === "1") config.semantic.enabled = false;
+
+  const baseUrl = process.env.AGENTSENTRY_NATIVE_JUDGE_BASE_URL?.trim();
+  if (baseUrl) {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("AGENTSENTRY_NATIVE_JUDGE_BASE_URL must use http(s)");
+    }
+    config.semantic.baseUrl = baseUrl.replace(/\/+$/, "");
+  }
+  const model = process.env.AGENTSENTRY_NATIVE_JUDGE_MODEL?.trim();
+  if (model) config.semantic.model = model;
+
+  const timeoutText = process.env.AGENTSENTRY_NATIVE_JUDGE_TIMEOUT_MS?.trim();
+  if (timeoutText) {
+    const timeoutMs = Number(timeoutText);
+    if (!Number.isInteger(timeoutMs) || timeoutMs < MIN_SEMANTIC_JUDGE_TIMEOUT_MS || timeoutMs > MAX_SEMANTIC_JUDGE_TIMEOUT_MS) {
+      throw new Error(`AGENTSENTRY_NATIVE_JUDGE_TIMEOUT_MS must be an integer from ${MIN_SEMANTIC_JUDGE_TIMEOUT_MS} to ${MAX_SEMANTIC_JUDGE_TIMEOUT_MS}`);
+    }
+    config.semantic.timeoutMs = timeoutMs;
+  }
+  return config;
 }
 
 function parseManifestDocument(source) {
@@ -213,8 +274,12 @@ async function runSelfTest() {
     session_history: [],
   };
   const started = await handleRequest({ op: "start", session_id: sessionId, payload: basePayload });
-  assert.equal(started.profile, "competition");
-  assert.equal(started.manifest_mapping_version, "1.0.0");
+  const expectedEnforcement = profile === "observe" ? "observe" : "approval";
+  assert.equal(started.profile, profile);
+  assert.equal(started.enforcement_mode, expectedEnforcement);
+  assert.equal(started.manifest_mapping_version, "1.2.0");
+  assert.equal(effectiveDecisionFor("observe", "deny"), "allow");
+  assert.equal(effectiveDecisionFor("approval", "deny"), "deny");
 
   const readDecision = await handleRequest({
     op: "before_tool",
@@ -228,6 +293,8 @@ async function runSelfTest() {
   });
   assert.equal(readDecision.normalized_tool, "business_read");
   assert.equal(readDecision.decision, "allow");
+  assert.equal(readDecision.policy_decision, "allow");
+  assert.equal(readDecision.enforcement_mode, expectedEnforcement);
 
   await handleRequest({
     op: "after_tool",
@@ -241,6 +308,31 @@ async function runSelfTest() {
     },
   });
 
+  const unreadDecision = await handleRequest({
+    op: "before_tool",
+    session_id: sessionId,
+    call_id: "call_unread",
+    payload: {
+      ...basePayload,
+      tool_name: "get_unread_emails",
+      tool_args: {},
+    },
+  });
+  assert.equal(unreadDecision.normalized_tool, "business_read");
+  assert.equal(unreadDecision.decision, "allow");
+
+  await handleRequest({
+    op: "after_tool",
+    session_id: sessionId,
+    call_id: "call_unread",
+    payload: {
+      ...basePayload,
+      tool_name: "get_unread_emails",
+      tool_args: {},
+      tool_result: [{ subject: "Security code", body: "123456" }],
+    },
+  });
+
   const unauthorized = await handleRequest({
     op: "before_tool",
     session_id: sessionId,
@@ -251,7 +343,33 @@ async function runSelfTest() {
       tool_args: { recipients: ["attacker@example.com"], subject: "Report", body: "Quarterly report" },
     },
   });
-  assert.notEqual(unauthorized.decision, "allow");
+  assert.equal(unauthorized.enforcement_mode, expectedEnforcement);
+  if (profile === "observe") {
+    assert.notEqual(unauthorized.policy_decision, "allow");
+    assert.equal(unauthorized.decision, "allow");
+    await handleRequest({
+      op: "after_tool",
+      session_id: sessionId,
+      call_id: "call_send",
+      payload: {
+        ...basePayload,
+        tool_name: "send_email",
+        tool_args: { recipients: ["attacker@example.com"], subject: "Report", body: "Quarterly report" },
+        tool_result: { status: "sent" },
+      },
+    });
+  } else if (profile === "evidence-gated") {
+    assert.equal(unauthorized.policy_decision, "allow");
+    assert.equal(unauthorized.decision, "allow");
+    assert.equal(unauthorized.intervention.mode, "evidence-gated");
+    assert.equal(unauthorized.intervention.raw_decision, "deny");
+    assert.equal(unauthorized.intervention.overridden, true);
+    assert.equal(unauthorized.intervention.evidence_class, "risk_only");
+    assert.equal(unauthorized.intervention.safety_boundary_preserved, false);
+  } else {
+    assert.notEqual(unauthorized.policy_decision, "allow");
+    assert.equal(unauthorized.decision, unauthorized.policy_decision);
+  }
 
   await assert.rejects(
     handleRequest({

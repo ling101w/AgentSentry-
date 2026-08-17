@@ -38,6 +38,7 @@ Runtime commands:
 ```text
 /agentsentry status
 /agentsentry profile competition
+/agentsentry profile evidence-gated
 /agentsentry config get
 /agentsentry config get enforcement.mode
 /agentsentry config set enforcement.mode approval
@@ -89,6 +90,40 @@ The OpenClaw plugin now ports the core AgentSentry guard model into TypeScript:
 - policy-versioned exact-operation approval cache: `allow-always` matches the same tool, normalized parameters, and security configuration only
 - persistent approval cache stored at `~/.openclaw/agentsentry/approval-cache.json`
 - optional response covering after contaminated tool results
+- evidence-gated intervention mode that separates generic risk from attack-specific causal evidence
+
+## Evidence-Gated Intervention
+
+`evidence-gated` is an explicit posture for evaluations and deployments where generic risk signals
+should be audited without automatically blocking a legitimate action. It keeps the deterministic
+policy and all findings, then applies a second gate to the final disposition:
+
+- `risk_only` findings are recorded but do not qualify an intervention by themselves.
+- `attack_signal` findings require an attack class, non-zero causal certainty, and at least 0.70 confidence; they produce `ask`.
+- `confirmed_attack` findings require at least 0.50 confidence; an observed causal link produces `deny`, otherwise `ask`.
+- `safety_boundary` findings remain `deny`/`ask` when `preserveSafetyBoundaries` is enabled, independent of attack attribution.
+
+The decision record exposes both the pre-gate `raw_decision` and the effective decision in
+`policy.intervention`, including evidence class, attack classes, causal certainty, and counts of
+qualified versus risk-only findings. This makes an allow override auditable instead of silently
+discarding the original policy result.
+
+Enable the named posture with:
+
+```text
+/agentsentry profile evidence-gated
+```
+
+The equivalent configuration is:
+
+```json
+{
+  "intervention": {
+    "mode": "evidence-gated",
+    "preserveSafetyBoundaries": true
+  }
+}
+```
 
 ## Semantic Action Graph V2
 
@@ -144,6 +179,7 @@ Named postures are available under `profiles/`:
 /agentsentry profile observe
 /agentsentry profile balanced
 /agentsentry profile competition
+/agentsentry profile evidence-gated
 /agentsentry profile high-security
 ```
 

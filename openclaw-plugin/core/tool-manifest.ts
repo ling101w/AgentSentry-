@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import type { PluginConfig } from "../config.ts";
 import { loadOrCreateStateSecret } from "./state-secret.ts";
 import type { DetectionFinding } from "./detect.ts";
+import { interventionEvidence } from "./policy/intervention-gate.ts";
 
 export type ToolDataOrigin = "user" | "workspace" | "external_web" | "email" | "third_party_api" | "memory" | "unknown";
 export type ToolSideEffect = "none" | "file_read" | "file_write" | "network_read" | "network_write" | "process_exec" | "persistent_state";
@@ -13,6 +14,7 @@ export type SensitiveInputHandling = "none" | "authentication_only" | "business_
 export type ToolDataClassification = "public" | "internal" | "user_private" | "secret" | "unknown";
 export type ToolDataSubject = "caller" | "named_subject" | "third_party" | "unknown";
 export type ToolPurposeBinding = "task_bound" | "operator_defined" | "unknown";
+export type ToolPathScope = "host_workspace" | "isolated_environment";
 
 export interface ToolSecurityManifest {
   toolId: string;
@@ -46,6 +48,11 @@ export interface ToolSecurityManifest {
    * account or identity operation.
    */
   purposeBinding?: ToolPurposeBinding;
+  /**
+   * Distinguishes host filesystem paths from paths owned by an isolated tool
+   * runtime (for example, a benchmark environment or remote workspace).
+   */
+  pathScope?: ToolPathScope;
 }
 
 export interface ToolManifestEnvelope {
@@ -84,6 +91,7 @@ const SENSITIVE_INPUT_HANDLING = new Set<SensitiveInputHandling>(["none", "authe
 const DATA_CLASSIFICATIONS = new Set<ToolDataClassification>(["public", "internal", "user_private", "secret", "unknown"]);
 const DATA_SUBJECTS = new Set<ToolDataSubject>(["caller", "named_subject", "third_party", "unknown"]);
 const PURPOSE_BINDINGS = new Set<ToolPurposeBinding>(["task_bound", "operator_defined", "unknown"]);
+const PATH_SCOPES = new Set<ToolPathScope>(["host_workspace", "isolated_environment"]);
 
 for (const manifest of builtinManifests()) registerToolManifest(manifest, { issuer: "builtin" });
 
@@ -412,6 +420,9 @@ function validateManifest(manifest: ToolSecurityManifest): void {
   if (manifest.purposeBinding !== undefined && !PURPOSE_BINDINGS.has(manifest.purposeBinding)) {
     throw new TypeError("tool manifest contains an invalid purpose binding");
   }
+  if (manifest.pathScope !== undefined && !PATH_SCOPES.has(manifest.pathScope)) {
+    throw new TypeError("tool manifest contains an invalid path scope");
+  }
 }
 
 function inferUnknownEffects(params: Record<string, unknown>): ToolSideEffect[] {
@@ -472,7 +483,12 @@ function finding(verdict: "require_approval" | "block", reason: string, evidence
     verdict,
     reason,
     score: verdict === "block" ? 100 : 45,
-    evidence,
+    evidence: {
+      ...evidence,
+      ...(verdict === "block"
+        ? interventionEvidence("safety_boundary", { causal_certainty: "observed" })
+        : interventionEvidence("risk_only")),
+    },
   };
 }
 

@@ -22,7 +22,7 @@ _COMMIT = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 _TRIAL_ID = re.compile(r"^trial_[0-9a-f]{24}$")
 _DECISIONS = frozenset({"allow", "ask", "deny"})
 _BLOCKED_SCOPES = frozenset({"none", "action", "task"})
-_ERROR_STAGES = frozenset({"setup", "agent", "detector", "benchmark", "evaluator", "teardown"})
+_ERROR_STAGES = frozenset({"setup", "provider", "agent", "detector", "benchmark", "evaluator", "teardown"})
 _SECRET_PATTERN = re.compile(
     r"-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----"
     r"|\bsk-[A-Za-z0-9_-]{12,}\b"
@@ -768,8 +768,8 @@ def _validate_benchmark(value: Any) -> None:
         {"name", "version", "commit", "suite", "adapter_version", "selection_sha256", "seeds"},
         "result.benchmark",
     )
-    if payload["name"] != "AgentDojo":
-        raise NativeProtocolError("result.benchmark.name must be AgentDojo")
+    if payload["name"] not in {"AgentDojo", "AgentDyn"}:
+        raise NativeProtocolError("result.benchmark.name must be AgentDojo or AgentDyn")
     for key in ("version", "suite", "adapter_version"):
         _require_text(payload[key], f"result.benchmark.{key}")
     if payload["commit"] is not None:

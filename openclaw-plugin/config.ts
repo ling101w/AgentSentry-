@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 
 export type EnforcementMode = "observe" | "approval" | "block";
+export type InterventionMode = "risk-based" | "evidence-gated";
+export const MIN_SEMANTIC_JUDGE_TIMEOUT_MS = 500;
+export const MAX_SEMANTIC_JUDGE_TIMEOUT_MS = 90_000;
 export type NotificationSeverity = "warning" | "danger";
 export type SemanticJudgeMode = "off" | "risk-tiered" | "full";
 export type RuntimeIsolationUnavailableAction = "require_approval" | "block";
-export type SecurityProfileName = "observe" | "balanced" | "competition" | "high-security";
+export type SecurityProfileName = "observe" | "balanced" | "competition" | "evidence-gated" | "high-security";
 export type AgentIdentityLevel = "owner" | "trusted_agent" | "delegated_agent" | "external_agent";
 
 export type AgentIdentityConfig = {
@@ -20,6 +23,10 @@ export type AgentIdentityConfig = {
 
 export interface SecurityProfileDefinition {
   profile: SecurityProfileName;
+  intervention: {
+    mode: InterventionMode;
+    preserveSafetyBoundaries: boolean;
+  };
   enforcement: {
     mode: EnforcementMode;
   };
@@ -87,6 +94,10 @@ export interface SecurityProfileDefinition {
 
 export class PluginConfig {
   profile: SecurityProfileName;
+  intervention: {
+    mode: InterventionMode;
+    preserveSafetyBoundaries: boolean;
+  };
   dashboard: {
     enabled: boolean;
     host: string;
@@ -198,6 +209,10 @@ export class PluginConfig {
 
   constructor() {
     this.profile = "observe";
+    this.intervention = {
+      mode: "risk-based",
+      preserveSafetyBoundaries: true,
+    };
     this.dashboard = {
       enabled: true,
       host: "127.0.0.1",
@@ -316,6 +331,18 @@ export class PluginConfig {
 
     const profile = readString(obj.profile, config.profile);
     if (isSecurityProfileName(profile)) applySecurityProfile(config, profile);
+
+    const intervention = objectAt(obj, "intervention");
+    if (intervention) {
+      const mode = readString(intervention.mode, config.intervention.mode);
+      if (mode === "risk-based" || mode === "evidence-gated") {
+        config.intervention.mode = mode;
+      }
+      config.intervention.preserveSafetyBoundaries = readBoolean(
+        intervention.preserveSafetyBoundaries,
+        config.intervention.preserveSafetyBoundaries,
+      );
+    }
 
     const dashboard = objectAt(obj, "dashboard");
     if (dashboard) {
@@ -520,6 +547,7 @@ export function applySecurityProfile(config: PluginConfig, profile: SecurityProf
   const definition = loadSecurityProfileDefinition(profile);
 
   config.profile = definition.profile;
+  config.intervention = { ...definition.intervention };
   config.enforcement.mode = definition.enforcement.mode;
   config.semantic.enabled = definition.semantic.enabled;
   config.semantic.mode = definition.semantic.mode;
@@ -592,6 +620,7 @@ function parseSecurityProfileDefinition(value: unknown, expectedProfile: Securit
   const root = requireProfileObject(value, "profile");
   assertOnlyProfileKeys(root, "profile", [
     "profile",
+    "intervention",
     "enforcement",
     "semantic",
     "policy",
@@ -606,6 +635,7 @@ function parseSecurityProfileDefinition(value: unknown, expectedProfile: Securit
     "multiAgentSecurity",
   ], [
     "profile",
+    "intervention",
     "enforcement",
     "semantic",
     "policy",
@@ -614,11 +644,19 @@ function parseSecurityProfileDefinition(value: unknown, expectedProfile: Securit
     "notifications",
   ]);
 
-  const declaredProfile = requireProfileEnum(root.profile, "profile.profile", ["observe", "balanced", "competition", "high-security"]);
+  const declaredProfile = requireProfileEnum(root.profile, "profile.profile", [
+    "observe",
+    "balanced",
+    "competition",
+    "evidence-gated",
+    "high-security",
+  ]);
   if (declaredProfile !== expectedProfile) {
     throw new Error(`profile.profile must be "${expectedProfile}", received "${declaredProfile}"`);
   }
 
+  const intervention = requireProfileObject(root.intervention, "profile.intervention");
+  assertOnlyProfileKeys(intervention, "profile.intervention", ["mode", "preserveSafetyBoundaries"]);
   const enforcement = requireProfileObject(root.enforcement, "profile.enforcement");
   assertOnlyProfileKeys(enforcement, "profile.enforcement", ["mode"]);
   const semantic = requireProfileObject(root.semantic, "profile.semantic");
@@ -681,6 +719,13 @@ function parseSecurityProfileDefinition(value: unknown, expectedProfile: Securit
 
   return {
     profile: declaredProfile,
+    intervention: {
+      mode: requireProfileEnum(intervention.mode, "profile.intervention.mode", ["risk-based", "evidence-gated"]),
+      preserveSafetyBoundaries: requireProfileBoolean(
+        intervention.preserveSafetyBoundaries,
+        "profile.intervention.preserveSafetyBoundaries",
+      ),
+    },
     enforcement: {
       mode: requireProfileEnum(enforcement.mode, "profile.enforcement.mode", ["observe", "approval", "block"]),
     },
@@ -779,7 +824,11 @@ function parseSecurityProfileDefinition(value: unknown, expectedProfile: Securit
 }
 
 export function isSecurityProfileName(value: string): value is SecurityProfileName {
-  return value === "observe" || value === "balanced" || value === "competition" || value === "high-security";
+  return value === "observe"
+    || value === "balanced"
+    || value === "competition"
+    || value === "evidence-gated"
+    || value === "high-security";
 }
 
 function profileLoadError(profile: SecurityProfileName, profileUrl: URL, reason: string, cause: unknown): Error {

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PluginConfig } from "../../config.ts";
 import { detectToolCall } from "../../core/detect.ts";
 import { createPolicyState, updateTaskSpec } from "../../core/policy.ts";
-import { matchWorkspaceReadPath, pathInsideCanonicalRoot } from "../../core/path-security.ts";
+import { matchAllowedWritePath, matchWorkspaceReadPath, pathInsideCanonicalRoot } from "../../core/path-security.ts";
 
 const roots: string[] = [];
 
@@ -91,6 +91,26 @@ describe("canonical filesystem boundaries", () => {
     expect(pathInsideCanonicalRoot(String.raw`D:\safe\root\file.txt`, String.raw`C:\safe\root`, "win32")).toBe(false);
     expect(pathInsideCanonicalRoot(String.raw`\\server\share\root\file.txt`, String.raw`\\server\share\root`, "win32")).toBe(true);
     expect(pathInsideCanonicalRoot(String.raw`\\server\other\root\file.txt`, String.raw`\\server\share\root`, "win32")).toBe(false);
+  });
+
+  it("rejects network and foreign absolute paths independently of the host platform", () => {
+    const { workspace } = fixture();
+    const uncPath = String.raw`\\server\share\ordinary.txt`;
+
+    expect(matchWorkspaceReadPath(uncPath, workspace)).toMatchObject({
+      allowed: false,
+      reason: "read network path is not allowed",
+    });
+    expect(matchAllowedWritePath(uncPath, [workspace], workspace)).toMatchObject({
+      allowed: false,
+      reason: "write network path is not allowed",
+    });
+    if (process.platform !== "win32") {
+      expect(matchWorkspaceReadPath(String.raw`C:\outside\ordinary.txt`, workspace)).toMatchObject({
+        allowed: false,
+        reason: "read path uses a foreign absolute path",
+      });
+    }
   });
 
   it("resolves relative write roots from the supplied workspace rather than process cwd", () => {

@@ -36,6 +36,8 @@ export function pathWithinRoot(
   allowedRoot: string,
   operation: PathBoundaryOperation = "write",
 ): PathBoundaryResult {
+  const portableRejection = rejectNonLocalPath(targetPath, operation);
+  if (portableRejection) return portableRejection;
   if (!isAbsolute(allowedRoot)) {
     return { allowed: false, target: resolve(targetPath), reason: `allowed ${operation} root must be absolute: ${allowedRoot}` };
   }
@@ -66,6 +68,8 @@ export function pathInsideCanonicalRoot(target: string, root: string, style: "na
 }
 
 export function matchAllowedWritePath(requestedPath: string, allowedRoots: string[], baseDir = process.cwd()): PathBoundaryResult {
+  const portableRejection = rejectNonLocalPath(requestedPath, "write");
+  if (portableRejection) return portableRejection;
   const targetPath = isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(baseDir, requestedPath);
   if (!allowedRoots.length) return { allowed: false, target: targetPath, reason: "no allowed write roots are configured" };
 
@@ -89,6 +93,8 @@ export function matchWorkspaceReadPath(requestedPath: string, workspaceDir: stri
   if (!requestedPath.trim()) {
     return { allowed: false, target: resolve(workspaceDir), reason: "missing read path" };
   }
+  const portableRejection = rejectNonLocalPath(requestedPath, "read");
+  if (portableRejection) return portableRejection;
 
   const workspaceRoot = resolve(workspaceDir);
   const targetPath = isAbsolute(requestedPath) ? resolve(requestedPath) : resolve(workspaceRoot, requestedPath);
@@ -103,4 +109,15 @@ function statExists(value: string): boolean {
     if (isMissingPathError(error)) return false;
     throw error;
   }
+}
+
+function rejectNonLocalPath(inputPath: string, operation: PathBoundaryOperation): PathBoundaryResult | null {
+  const value = inputPath.trim();
+  if (/^(?:\\\\|\/\/)/.test(value)) {
+    return { allowed: false, target: value, reason: `${operation} network path is not allowed` };
+  }
+  if (win32.isAbsolute(value) && !isAbsolute(value)) {
+    return { allowed: false, target: value, reason: `${operation} path uses a foreign absolute path` };
+  }
+  return null;
 }

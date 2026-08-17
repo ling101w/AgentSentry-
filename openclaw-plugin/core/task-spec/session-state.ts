@@ -10,6 +10,9 @@ const CANONICAL_TOOLS = [
   "memory_read",
   "memory_write",
   "shell_exec",
+  "calendar_write",
+  "cloud_file_write",
+  "cloud_file_share",
 ];
 const AUTHORIZATION_IDLE_TURNS = 12;
 
@@ -168,6 +171,7 @@ function mergeTaskSpecs(left: TaskSpec, right: TaskSpec, message: string): TaskS
     forbidden_tools: CANONICAL_TOOLS.filter((tool) => !allowed.includes(tool)),
     allowed_targets: unique([...left.allowed_targets, ...right.allowed_targets]),
     sensitive_assets: unique([...left.sensitive_assets, ...right.sensitive_assets]),
+    delegations: mergeDelegations(left.delegations, right.delegations),
     output_policy: allowed.includes("send_email")
       ? "External delivery is limited to explicitly authorized recipients and payloads."
       : left.output_policy || right.output_policy,
@@ -188,6 +192,7 @@ function mergeCapabilities(capabilities: TaskCapability[]): TaskCapability[] {
     current.constraints.allowedPaths = mergeOptional(current.constraints.allowedPaths, capability.constraints.allowedPaths);
     current.constraints.allowedHosts = mergeOptional(current.constraints.allowedHosts, capability.constraints.allowedHosts);
     current.constraints.allowedRecipients = mergeOptional(current.constraints.allowedRecipients, capability.constraints.allowedRecipients);
+    current.constraints.allowedOperations = mergeOptional(current.constraints.allowedOperations, capability.constraints.allowedOperations);
     current.evidence.explicitSpan = `${current.evidence.explicitSpan}; ${capability.evidence.explicitSpan}`.slice(0, 320);
     current.evidence.confidence = Math.max(current.evidence.confidence, capability.evidence.confidence);
   }
@@ -201,7 +206,7 @@ function sameTaskFamily(left: TaskSpec, right: TaskSpec): boolean {
 
 function isOrdinaryPreference(text: string, spec: TaskSpec): boolean {
   if (!spec.allowed_tools.includes("memory_write")) return false;
-  if (spec.allowed_tools.some((tool) => ["send_email", "shell_exec", "call_api"].includes(tool))) return false;
+  if (spec.allowed_tools.some((tool) => ["send_email", "shell_exec", "call_api", "calendar_write", "cloud_file_write", "cloud_file_share"].includes(tool))) return false;
   return !/(忽略|绕过|禁用|关闭|静默|无需|不必).{0,40}(安全|审批|策略|审计|确认|规则)/i.test(text)
     && !/(私钥|密钥|凭据|token|api[_ -]?key|\.env|openclaw\.json|curl\s*\|)/i.test(text);
 }
@@ -239,6 +244,19 @@ function stripQuotedAndCode(text: string): string {
 function mergeOptional(left?: string[], right?: string[]): string[] | undefined {
   const merged = unique([...(left || []), ...(right || [])]);
   return merged.length ? merged : undefined;
+}
+
+function mergeDelegations(
+  left: TaskSpec["delegations"],
+  right: TaskSpec["delegations"],
+): TaskSpec["delegations"] {
+  const merged = [...(left || []), ...(right || [])];
+  const uniqueDelegations = merged.filter((item, index, all) => all.findIndex((candidate) =>
+    candidate.sourceType === item.sourceType
+    && candidate.sender === item.sender
+    && candidate.subject === item.subject
+  ) === index);
+  return uniqueDelegations.length ? uniqueDelegations : undefined;
 }
 
 function unique<T>(items: T[]): T[] {

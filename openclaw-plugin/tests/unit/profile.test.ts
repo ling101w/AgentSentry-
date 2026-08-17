@@ -5,17 +5,37 @@ describe("security profiles", () => {
   it("enables the competition posture without changing the deployment default", () => {
     const defaults = new PluginConfig();
     expect(defaults.profile).toBe("observe");
+    expect(defaults.intervention).toEqual({ mode: "risk-based", preserveSafetyBoundaries: true });
     expect(defaults.enforcement.mode).toBe("observe");
 
     applySecurityProfile(defaults, "competition");
     expect(defaults).toMatchObject({
       profile: "competition",
+      intervention: { mode: "risk-based", preserveSafetyBoundaries: true },
       enforcement: { mode: "approval" },
       semantic: { enabled: true, mode: "risk-tiered", judgeToolCalls: true, judgeMessages: true, judgeMemoryWrites: true, judgeProvenance: true },
       policy: { deterministic: true, taintFeedback: true, restrictWritesToAllowedRoots: true },
       responseCover: { enabled: true },
     });
     expect(defaults.policy.allowedWriteRoots).toEqual(["notes", "reports", "output", "src", "tests", "skills"]);
+  });
+
+  it("provides an evidence-gated posture with competition-equivalent controls", () => {
+    const competition = new PluginConfig();
+    const evidenceGated = new PluginConfig();
+    applySecurityProfile(competition, "competition");
+    applySecurityProfile(evidenceGated, "evidence-gated");
+
+    expect(evidenceGated).toMatchObject({
+      profile: "evidence-gated",
+      intervention: { mode: "evidence-gated", preserveSafetyBoundaries: true },
+      enforcement: { mode: "approval" },
+      semantic: { enabled: true, mode: "risk-tiered" },
+      policy: { deterministic: true, taintFeedback: true, restrictWritesToAllowedRoots: true },
+    });
+    const { profile: _competitionProfile, intervention: _competitionIntervention, ...competitionControls } = competition;
+    const { profile: _evidenceProfile, intervention: _evidenceIntervention, ...evidenceControls } = evidenceGated;
+    expect(evidenceControls).toEqual(competitionControls);
   });
 
   it("applies an explicit profile before nested overrides", () => {
@@ -34,6 +54,7 @@ describe("security profiles", () => {
       storage: { stateDir: " .state ", maxRecords: 123 },
       capture: { includeMessageText: false, includeToolParams: false, includeSystemPromptPreview: true, previewChars: 321 },
       detection: { enabled: false, askThreshold: 90, denyThreshold: 80 },
+      intervention: { mode: "evidence-gated", preserveSafetyBoundaries: false },
       semantic: {
         enabled: true,
         mode: "full",
@@ -68,6 +89,7 @@ describe("security profiles", () => {
     expect(config.dashboard).toEqual({ enabled: false, host: "0.0.0.0", port: 9999, allowRemote: false, authToken: "" });
     expect(config.storage).toEqual({ stateDir: ".state", maxRecords: 123, sessionIdleTtlMs: 30 * 60 * 1000, maxSessions: 256 });
     expect(config.detection.askThreshold).toBe(70);
+    expect(config.intervention).toEqual({ mode: "evidence-gated", preserveSafetyBoundaries: false });
     expect(config.semantic).toMatchObject({ enabled: true, mode: "full", baseUrl: "https://judge.example/v1", judgeMessages: true });
     expect(config.policy.allowlistedRecipients).toEqual(["a@example.com"]);
     expect(config.runtimeIsolation).toEqual({
@@ -86,6 +108,7 @@ describe("security profiles", () => {
     expect(PluginConfig.fromPluginConfig(null)).toBeInstanceOf(PluginConfig);
     const malformed = PluginConfig.fromPluginConfig({
       profile: "not-a-profile",
+      intervention: { mode: "not-a-mode", preserveSafetyBoundaries: "yes" },
       dashboard: { port: -1 },
       semantic: { mode: "invalid" },
       enforcement: { mode: "invalid" },
@@ -95,8 +118,9 @@ describe("security profiles", () => {
     });
     expect(malformed.profile).toBe("observe");
     expect(malformed.dashboard.port).toBe(8765);
+    expect(malformed.intervention).toEqual({ mode: "risk-based", preserveSafetyBoundaries: true });
 
-    for (const profile of ["observe", "balanced", "competition", "high-security"] as const) {
+    for (const profile of ["observe", "balanced", "competition", "evidence-gated", "high-security"] as const) {
       applySecurityProfile(malformed, profile);
       expect(malformed.profile).toBe(profile);
     }

@@ -346,7 +346,7 @@
         "seeds"
       ],
       "properties": {
-        "name": { "const": "AgentDojo" },
+        "name": { "enum": ["AgentDojo", "AgentDyn"] },
         "version": { "$ref": "#/$defs/nonEmptyString" },
         "commit": { "$ref": "#/$defs/nullableGitCommit" },
         "suite": { "$ref": "#/$defs/nonEmptyString" },

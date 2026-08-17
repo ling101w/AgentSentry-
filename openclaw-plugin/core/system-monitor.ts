@@ -2,6 +2,7 @@ import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { RuntimeIsolationUnavailableAction } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
+import { interventionEvidence } from "./policy/intervention-gate.ts";
 import { isLowRiskShellReadCommand, isSafeSystemReadPath } from "./policy/safe-ops.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
 import { createRiskVector, finding, type RiskVector } from "./trust.ts";
@@ -152,6 +153,7 @@ export function systemPreflight(
         matched: exfilMatches,
         monitor,
         isolation_plan: isolationPlan("block"),
+        ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
       }));
     }
     if (privilegeMatches.length) {
@@ -161,6 +163,7 @@ export function systemPreflight(
         matched: privilegeMatches,
         monitor,
         isolation_plan: isolationPlan("block"),
+        ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
       }));
     }
     if (escapeMatches.length) {
@@ -170,6 +173,7 @@ export function systemPreflight(
         matched: escapeMatches,
         monitor,
         isolation_plan: isolationPlan("block"),
+        ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
       }));
     }
     if (egressUrls.length) {
@@ -190,6 +194,7 @@ export function systemPreflight(
       paths: redactEvidenceStrings(sensitivePaths, 8, previewChars),
       monitor,
       isolation_plan: isolationPlan("block"),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
 
@@ -203,6 +208,7 @@ export function systemPreflight(
       paths: redactEvidenceStrings(protectedPersistencePaths, 8, previewChars),
       monitor,
       isolation_plan: isolationPlan("block"),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
 
@@ -216,6 +222,7 @@ export function systemPreflight(
       urls: redactEvidenceStrings(gatewayUrls, 6, previewChars),
       monitor,
       isolation_plan: isolationPlan("block"),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
 
@@ -278,6 +285,7 @@ function kernelRuntimeGateFindings(input: {
         toolName: clampText(input.toolName, input.previewChars),
         command: clampText(input.command, input.previewChars),
         runtime_gate: { required: true, control: "network_namespace", unavailable_action: "block" },
+        ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
       },
     ));
   }
@@ -295,6 +303,7 @@ function kernelRuntimeGateFindings(input: {
       reason: "high-risk runtime surface requires kernel-assisted audit before execution",
       unavailable_action: input.unavailableAction,
     },
+    ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
   };
 
   if (input.monitor.ebpf === "attached") {

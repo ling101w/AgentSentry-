@@ -1,10 +1,10 @@
 export type CapabilityAction = "read" | "write" | "send" | "execute" | "request" | "persist";
 
-export type CapabilityResource = "file" | "email" | "api" | "shell" | "memory" | "skill";
+export type CapabilityResource = "file" | "email" | "api" | "shell" | "memory" | "skill" | "calendar" | "cloud_file";
 
 export type CapabilityEffect = "read_only" | "external_side_effect" | "persistent_change";
 
-export type CapabilitySource = "user" | "memory" | "tool_result" | "system";
+export type CapabilitySource = "user" | "memory" | "tool_result" | "delegated_tool_result" | "system";
 
 export interface TaskCapability {
   action: CapabilityAction;
@@ -16,6 +16,7 @@ export interface TaskCapability {
     allowedPaths?: string[];
     allowedHosts?: string[];
     allowedRecipients?: string[];
+    allowedOperations?: string[];
     maxBytes?: number;
   };
   evidence: {
@@ -27,6 +28,12 @@ export interface TaskCapability {
     negated: boolean;
     targetIsConcrete: boolean;
     confidence: number;
+    delegationVerified?: boolean;
+    delegation?: {
+      sourceType: "email";
+      sender: string;
+      subject: string;
+    };
   };
   expiresAfterTurn: number;
 }
@@ -44,6 +51,11 @@ export interface TaskSpec {
   allowed_targets: string[];
   sensitive_assets: string[];
   output_policy: string;
+  delegations?: Array<{
+    sourceType: "email";
+    sender: string;
+    subject: string;
+  }>;
 }
 
 export interface CapabilityActionRequest {

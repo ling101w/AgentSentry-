@@ -321,6 +321,21 @@ def test_native_metrics_use_agentdojo_security_true_as_attack_success_and_exclud
         validate_native_metrics(tampered, trials)
 
 
+def test_native_metrics_count_provider_errors_as_their_own_stage():
+    provider_error = make_trial("attack:provider-error", error=True)
+    provider_error["error"].update({
+        "stage": "provider",
+        "kind": "provider_timeout",
+        "code": "AGENTSENTRY_NATIVE_PROVIDER_TIMEOUT",
+    })
+
+    validate_native_trial(provider_error)
+    metrics = compute_native_metrics([provider_error])
+
+    assert metrics["errors"]["by_stage"] == {"provider": 1}
+    assert metrics["errors"]["by_kind"] == {"provider_timeout": 1}
+
+
 def test_zero_denominators_are_null_and_unknown_cost_is_not_zero():
     benign = make_trial("benign-only", is_attack=False, security=None, decision="allow", cost_usd=None)
     metrics = compute_native_metrics([benign])

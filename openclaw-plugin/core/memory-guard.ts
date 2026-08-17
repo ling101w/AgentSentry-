@@ -1,6 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
+import { interventionEvidence } from "./policy/intervention-gate.ts";
 import { clampText, safeStringify } from "./redact.ts";
 import { loadOrCreateStateSecret } from "./state-secret.ts";
 import {
@@ -151,6 +152,7 @@ export function memoryGuardScanRead(input: {
       expected_sha256: envelope.passport.content_sha256,
       actual_sha256: contentHash,
       passport_id: envelope.passport.id,
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
   if (isLowTrustMemory(envelope.passport) && riskMax(analysis.risk_vector) >= 45) {
@@ -165,6 +167,11 @@ export function memoryGuardScanRead(input: {
       key,
       passport: publicPassport(envelope.passport),
       preview: clampText(content, input.config.capture.previewChars),
+      ...interventionEvidence("confirmed_attack", {
+        attack_class: "memory_poisoning",
+        causal_certainty: "observed",
+        confidence: 0.95,
+      }),
     }));
   }
   return { key, envelope, findings: dedupeFindings(findings), integrity_ok: integrityOk };
@@ -283,6 +290,7 @@ function memoryStructuralFindings(
     findings.push(finding("State Integrity", "deterministic", "block", "memory write targets a protected key", 100, {
       key,
       passport: publicPassport(passport),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
   if (passport.size_bytes > MAX_MEMORY_BYTES) {
@@ -290,6 +298,7 @@ function memoryStructuralFindings(
       key,
       size_bytes: passport.size_bytes,
       max_bytes: MAX_MEMORY_BYTES,
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   } else if (passport.size_bytes > WARN_MEMORY_BYTES) {
     findings.push(finding("State Integrity", "heuristic", "require_approval", "memory payload is unusually large", 45, {
@@ -302,6 +311,7 @@ function memoryStructuralFindings(
     findings.push(finding("State Integrity", "deterministic", "block", "memory write attempts to persist secrets or credentials", 100, {
       key,
       preview: clampText(redactMemorySecrets(content), config.capture.previewChars),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
   if (isAuthoritativeMemory(content) && trustRankForPassport(passport) <= 2) {
@@ -310,12 +320,18 @@ function memoryStructuralFindings(
       source_class: passport.source_class,
       trust_level: passport.trust_level,
       preview: clampText(content, config.capture.previewChars),
+      ...interventionEvidence("confirmed_attack", {
+        attack_class: "memory_poisoning",
+        causal_certainty: "observed",
+        confidence: 0.95,
+      }),
     }));
   }
   if (existing && existing.passport.content_sha256 !== sha256(legacyMemoryValue(existing))) {
     findings.push(finding("State Integrity", "deterministic", "block", "existing memory record failed integrity check before update", 100, {
       key,
       passport: publicPassport(existing.passport),
+      ...interventionEvidence("safety_boundary", { causal_certainty: "observed" }),
     }));
   }
   return findings;
