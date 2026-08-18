@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">玄鉴图标</title>
+  <desc id="desc">玄鉴安全盾牌扫描图标，透明背景 SVG</desc>
+  <defs>
+    <linearGradient id="shieldStroke" x1="70" y1="36" x2="186" y2="188" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#28D9B5"/>
+      <stop offset="0.55" stop-color="#12B79E"/>
+      <stop offset="1" stop-color="#0A8478"/>
+    </linearGradient>
+    <linearGradient id="glassFill" x1="102" y1="82" x2="154" y2="134" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F5FFFD" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#DDF5EF" stop-opacity=".92"/>
+    </linearGradient>
+    <linearGradient id="orbitalLine" x1="20" y1="130" x2="234" y2="130" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A9EFE3" stop-opacity=".8"/>
+      <stop offset=".5" stop-color="#4ED6C0" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#CFEFEB" stop-opacity=".75"/>
+    </linearGradient>
+    <linearGradient id="nodeGrad" x1="40" y1="120" x2="205" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#74E3D1"/>
+      <stop offset="1" stop-color="#10A693"/>
+    </linearGradient>
+    <linearGradient id="circuitGrad" x1="74" y1="178" x2="183" y2="228" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#B7EEE6" stop-opacity=".95"/>
+      <stop offset="1" stop-color="#D9F6F1" stop-opacity=".55"/>
+    </linearGradient>
+    <radialGradient id="baseGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#8EE7D8" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#8EE7D8" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+  </defs>
+
+  <!-- base soft glow -->
+  <ellipse cx="128" cy="224" rx="34" ry="14" fill="url(#baseGlow)"/>
+
+  <!-- orbit rings -->
+  <path d="M25 126 C47 106 88 102 120 110" fill="none" stroke="url(#orbitalLine)" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M136 110 C167 104 205 108 231 126" fill="none" stroke="url(#orbitalLine)" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M28 126 C50 148 89 152 110 146" fill="none" stroke="url(#orbitalLine)" stroke-width="2.2" stroke-linecap="round" opacity=".85"/>
+  <path d="M146 146 C167 152 205 148 228 126" fill="none" stroke="url(#orbitalLine)" stroke-width="2.2" stroke-linecap="round" opacity=".85"/>
+
+  <!-- shield -->
+  <path d="M128 30
+           C145 44 165 56 181 61
+           V112
+           C181 146 161 175 128 194
+           C95 175 75 146 75 112
+           V61
+           C91 56 111 44 128 30 Z"
+        fill="none" stroke="url(#shieldStroke)" stroke-width="7" stroke-linejoin="round"/>
+
+  <!-- scanner circle -->
+  <circle cx="128" cy="108" r="32" fill="url(#glassFill)" stroke="url(#shieldStroke)" stroke-width="4.2"/>
+  <path d="M103 81 L153 131" stroke="#DBF3EE" stroke-width="9" stroke-linecap="round" opacity=".75"/>
+  <path d="M118 78 C142 79 161 97 161 122" fill="none" stroke="#30BDA8" stroke-width="1.6" stroke-linecap="round" opacity=".8"/>
+  <path d="M104 138 C91 130 84 115 84 99 C84 77 98 59 119 52" fill="none" stroke="#B4EEE5" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="3 4" opacity=".9"/>
+
+  <!-- star -->
+  <path d="M128 95
+           C126 101 122 107 117 111
+           C122 112 126 116 128 123
+           C130 116 134 112 139 111
+           C134 107 130 101 128 95 Z"
+        fill="#21C7AE"/>
+
+  <!-- handle -->
+  <path d="M128 140 L128 172" fill="none" stroke="url(#shieldStroke)" stroke-width="4.5" stroke-linecap="round"/>
+  <circle cx="128" cy="182" r="7.6" fill="none" stroke="url(#shieldStroke)" stroke-width="5"/>
+  <circle cx="128" cy="182" r="2.4" fill="#FFFFFF" opacity=".9"/>
+
+  <!-- nodes -->
+  <circle cx="36" cy="126" r="3.7" fill="url(#nodeGrad)"/>
+  <circle cx="220" cy="112" r="4.2" fill="url(#nodeGrad)"/>
+  <circle cx="78" cy="175" r="4.2" fill="url(#nodeGrad)"/>
+
+  <!-- circuit stems -->
+  <path d="M128 188 L128 210" fill="none" stroke="url(#circuitGrad)" stroke-width="2.2" stroke-linecap="round"/>
+  <path d="M104 197 L95 197 L88 204 L88 216" fill="none" stroke="url(#circuitGrad)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M152 197 L161 197 L168 204 L168 216" fill="none" stroke="url(#circuitGrad)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M105 210 L97 210 L92 215" fill="none" stroke="url(#circuitGrad)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M151 210 L159 210 L164 215" fill="none" stroke="url(#circuitGrad)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- circuit nodes -->
+  <circle cx="88" cy="197" r="2.3" fill="#E4F9F5" stroke="#B9EEE6" stroke-width="1.2"/>
+  <circle cx="168" cy="197" r="2.3" fill="#E4F9F5" stroke="#B9EEE6" stroke-width="1.2"/>
+  <circle cx="92" cy="210" r="2.3" fill="#E4F9F5" stroke="#B9EEE6" stroke-width="1.2"/>
+  <circle cx="164" cy="210" r="2.3" fill="#E4F9F5" stroke="#B9EEE6" stroke-width="1.2"/>
+
+  <!-- subtle center glow -->
+  <circle cx="128" cy="108" r="48" fill="#8EE7D8" opacity=".05" filter="url(#softGlow)"/>
+</svg>

@@ -19,7 +19,12 @@ export type AgentSentryRecord = {
   summary: string;
   payload: Record<string, unknown>;
   created_at: string;
+  previous_hash?: string;
+  event_hash?: string;
 };
+
+export const AUDIT_GENESIS_HASH = createHash("sha256").update("agentsentry-audit-genesis", "utf8").digest("hex");
+export type RecordListener = (record: AgentSentryRecord) => void | Promise<void>;
 
 export class RecordStore {
   readonly stateDir: string;
@@ -33,6 +38,9 @@ export class RecordStore {
   private resetPending = false;
   private countCache: { size: number; mtimeMs: number; count: number } | null = null;
   private statsCache = new Map<number, { size: number; mtimeMs: number; value: Record<string, unknown> }>();
+  private auditHashChainEnabled = true;
+  private auditHead: string;
+  private listeners = new Set<RecordListener>();
 
   constructor(config: PluginConfig) {
     this.stateDir = config.storage.stateDir || process.env.OPENCLAW_STATE_DIR?.trim() || join(homedir(), ".openclaw");
@@ -45,6 +53,21 @@ export class RecordStore {
     restrictAuditPermissions(this.dataDir, this.recordsPath);
     this.knownCount = countValidRecords(this.recordsPath);
     this.writer = new EventWriter(this.recordsPath, { maxRecords: this.maxRecords });
+    this.auditHead = latestAuditHash(this.recordsPath) || AUDIT_GENESIS_HASH;
+  }
+
+  configureAudit(options: { hashChain?: boolean; batchSize?: number } = {}): void {
+    if (typeof options.hashChain === "boolean") this.auditHashChainEnabled = options.hashChain;
+    if (options.batchSize !== undefined) this.writer.setBatchSize(options.batchSize);
+  }
+
+  auditConfig(): { hashChain: boolean } {
+    return { hashChain: this.auditHashChainEnabled };
+  }
+
+  subscribe(listener: RecordListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
   add(input: Omit<AgentSentryRecord, "id" | "created_at"> & { id?: string; created_at?: string }): AgentSentryRecord {
@@ -60,13 +83,23 @@ export class RecordStore {
       summary: input.summary,
       payload: input.payload,
     };
-    const persistedRecord = recordForStorage(record, this.previewChars);
+    const persistedRecord = withAuditHash(recordForStorage(record, this.previewChars), this.auditHashChainEnabled, this.auditHead);
     if (this.writer.enqueue(persistedRecord)) {
+      if (persistedRecord.event_hash) this.auditHead = persistedRecord.event_hash;
       this.recentRecords.push(persistedRecord);
       if (this.recentRecords.length > this.maxRecords) this.recentRecords = this.recentRecords.slice(-this.maxRecords);
       this.knownCount = Math.min(this.maxRecords, this.knownCount + 1);
       this.countCache = null;
       this.statsCache.clear();
+      for (const listener of this.listeners) {
+        queueMicrotask(() => {
+          try {
+            void Promise.resolve(listener(persistedRecord)).catch(() => undefined);
+          } catch {
+            // Audit persistence must not depend on optional observers.
+          }
+        });
+      }
     }
     return persistedRecord;
   }
@@ -167,6 +200,7 @@ export class RecordStore {
     this.knownCount = 0;
     this.countCache = null;
     this.statsCache.clear();
+    this.auditHead = AUDIT_GENESIS_HASH;
     this.resetPending = true;
     void this.writer.reset().finally(() => {
       this.resetPending = false;
@@ -175,6 +209,18 @@ export class RecordStore {
 
   compact(): Promise<void> {
     return this.writer.compact();
+  }
+
+  pruneBefore(cutoff: string): Promise<void> {
+    return this.writer.pruneBefore(cutoff).then(() => {
+      const cutoffMs = new Date(cutoff).getTime();
+      if (Number.isFinite(cutoffMs)) {
+        this.recentRecords = this.recentRecords.filter((record) => new Date(record.created_at).getTime() >= cutoffMs);
+      }
+      this.knownCount = countValidRecords(this.recordsPath);
+      this.countCache = null;
+      this.statsCache.clear();
+    });
   }
 
   async flush(): Promise<void> {
@@ -224,6 +270,55 @@ function recordForStorage(record: AgentSentryRecord, previewChars: number): Agen
     summary: clampText(record.summary, previewChars),
     payload,
   };
+}
+
+function withAuditHash(record: AgentSentryRecord, enabled: boolean, previousHash: string): AgentSentryRecord {
+  const next: AgentSentryRecord = { ...record };
+  delete next.previous_hash;
+  delete next.event_hash;
+  if (next.payload && typeof next.payload === "object") {
+    const payload = { ...next.payload };
+    delete payload.previous_hash;
+    delete payload.event_hash;
+    next.payload = payload;
+  }
+  if (!enabled) return next;
+  const previous = previousHash || AUDIT_GENESIS_HASH;
+  const eventHash = computeAuditEventHash(next, previous);
+  return { ...next, previous_hash: previous, event_hash: eventHash };
+}
+
+export function computeAuditEventHash(record: Pick<AgentSentryRecord, "id" | "run_id" | "session_key" | "type" | "layer" | "severity" | "title" | "summary" | "payload" | "created_at">, previousHash: string): string {
+  const payload = { ...(record.payload || {}) };
+  delete payload.previous_hash;
+  delete payload.event_hash;
+  const canonical = {
+    id: record.id,
+    run_id: record.run_id,
+    session_key: record.session_key,
+    type: record.type,
+    layer: record.layer,
+    severity: record.severity,
+    title: record.title,
+    summary: record.summary,
+    payload,
+    created_at: record.created_at,
+  };
+  return createHash("sha256").update(previousHash, "utf8").update("\n", "utf8").update(stableJson(canonical), "utf8").digest("hex");
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function latestAuditHash(path: string): string | null {
+  const latest = readTailRecords(path, 1)[0];
+  return latest?.event_hash || (typeof latest?.payload?.event_hash === "string" ? latest.payload.event_hash : null);
 }
 
 function readTailRecords(path: string, limit: number): AgentSentryRecord[] {
