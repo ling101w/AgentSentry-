@@ -68,9 +68,11 @@ export async function semanticJudgeAmbiguousAction(input: {
   if (!config.semantic.enabled || !config.semantic.judgeToolCalls || config.semantic.mode === "off") return [];
   if (input.preliminary.deterministic_disposition !== "ambiguous") return [];
   const cacheKey = semanticActionCacheKey(input.taskSpec, input.action);
-  const cached = semanticActionCache.get(cacheKey);
-  if (cached?.expiresAt && cached.expiresAt > Date.now()) return markSemanticCacheHit(cached.findings, cacheKey);
-  if (cached) semanticActionCache.delete(cacheKey);
+  if (config.semantic.cacheEnabled) {
+    const cached = semanticActionCache.get(cacheKey);
+    if (cached?.expiresAt && cached.expiresAt > Date.now()) return markSemanticCacheHit(cached.findings, cacheKey);
+    if (cached) semanticActionCache.delete(cacheKey);
+  }
   const inflight = semanticActionInflight.get(cacheKey);
   if (inflight) return markSemanticCacheHit(await inflight, cacheKey);
 
@@ -78,11 +80,13 @@ export async function semanticJudgeAmbiguousAction(input: {
   semanticActionInflight.set(cacheKey, request);
   try {
     const findings = await request;
-    semanticActionCache.set(cacheKey, { expiresAt: Date.now() + SEMANTIC_ACTION_CACHE_TTL_MS, findings: structuredClone(findings) });
-    while (semanticActionCache.size > SEMANTIC_ACTION_CACHE_MAX) {
-      const oldest = semanticActionCache.keys().next().value;
-      if (oldest === undefined) break;
-      semanticActionCache.delete(oldest);
+    if (config.semantic.cacheEnabled) {
+      semanticActionCache.set(cacheKey, { expiresAt: Date.now() + SEMANTIC_ACTION_CACHE_TTL_MS, findings: structuredClone(findings) });
+      while (semanticActionCache.size > SEMANTIC_ACTION_CACHE_MAX) {
+        const oldest = semanticActionCache.keys().next().value;
+        if (oldest === undefined) break;
+        semanticActionCache.delete(oldest);
+      }
     }
     return findings;
   } finally {

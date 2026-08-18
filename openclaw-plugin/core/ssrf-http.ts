@@ -51,6 +51,18 @@ export async function safeHttpGet(input: URL | string, options: SafeHttpOptions 
   throw new Error("HTTP redirect limit exceeded");
 }
 
+export async function safeHttpPost(input: URL | string, body: unknown, options: SafeHttpOptions = {}): Promise<SafeHttpResponse> {
+  const maxBytes = positiveInt(options.maxBytes, DEFAULT_MAX_BYTES);
+  const timeoutMs = positiveInt(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  const url = typeof input === "string" ? new URL(input) : new URL(input.toString());
+  const allowedHosts = options.allowedHosts || [];
+  validateHttpUrl(url, allowedHosts);
+  const resolved = await resolvePublicAddress(url.hostname, isHostAllowlisted(url, allowedHosts));
+  const requestBody = typeof body === "string" ? body : JSON.stringify(body);
+  const response = await requestPinned(url, resolved, maxBytes, timeoutMs, "POST", requestBody);
+  return { ...response, finalUrl: url.toString(), redirects: 0 };
+}
+
 export function isForbiddenIpAddress(address: string): boolean {
   const family = isIP(stripIpv6Brackets(address));
   if (family === 4) return forbiddenIpv4(stripIpv6Brackets(address));
@@ -107,6 +119,8 @@ function requestPinned(
   resolved: ResolvedAddress,
   maxBytes: number,
   timeoutMs: number,
+  method: "GET" | "POST" = "GET",
+  requestBody = "",
 ): Promise<Omit<SafeHttpResponse, "finalUrl" | "redirects">> {
   return new Promise((resolve, reject) => {
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)({
@@ -115,11 +129,15 @@ function requestPinned(
       family: resolved.family,
       port: url.port ? Number(url.port) : undefined,
       path: `${url.pathname}${url.search}`,
-      method: "GET",
+      method,
       headers: {
         Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
         Host: url.host,
         "User-Agent": "AgentSentry-BusinessTool/1.0",
+        ...(method === "POST" ? {
+          "Content-Type": "application/json; charset=utf-8",
+          "Content-Length": String(Buffer.byteLength(requestBody)),
+        } : {}),
       },
       servername: isIP(stripIpv6Brackets(url.hostname)) ? undefined : stripIpv6Brackets(url.hostname),
     }, (response) => {
@@ -156,6 +174,7 @@ function requestPinned(
     });
     request.setTimeout(timeoutMs, () => request.destroy(new Error("HTTP request timed out")));
     request.on("error", reject);
+    if (method === "POST" && requestBody) request.write(requestBody);
     request.end();
   });
 }

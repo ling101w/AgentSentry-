@@ -14,10 +14,10 @@ const dashboardTs = readFileSync(new URL("../../server/dashboard.ts", import.met
 
 describe("玄鉴 operations workspace", () => {
   it("exposes every operations view through the shared shell", () => {
-    expect(indexHtml).toContain('<div><strong>玄鉴</strong><span>AgentSentry</span></div>');
-    expect(indexHtml).toContain('class="brand-mark"');
+    expect(indexHtml).toContain('class="dashboard-brand-logo"');
+    expect(indexHtml).toContain('alt="玄鉴 AgentSentry"');
     expect(workspaceHtml).toContain('/xuanjian-brand-lockup.png?v=20260809-1');
-    for (const [path, page] of [["/overview", "overview"], ["/monitor", "attack"], ["/agents", "assets"], ["/policies", "policy"], ["/tools", "tools"], ["/alerts", "alerts"], ["/audit", "audit"], ["/settings", "settings"]]) {
+    for (const [path, page] of [["/overview", "overview"], ["/monitor", "attack"], ["/tools", "tools"], ["/alerts", "alerts"], ["/audit", "audit"], ["/settings", "settings"]]) {
       expect(indexHtml).toContain(`id="page-${page}"`);
       expect(indexHtml).toContain(`data-page="${page}"`);
       expect(dashboardJs).toContain(`["${path}", "${page}"]`);
@@ -35,6 +35,13 @@ describe("玄鉴 operations workspace", () => {
       "/api/stats",
       "/api/health",
       "/api/checkpoints",
+      "/api/mcp/servers",
+      "/api/skills/inventory",
+      "/api/memory/inventory",
+      "/api/dashboard/metrics",
+      "/api/audit/integrity",
+      "/api/settings/dashboard",
+      "/api/settings/notifications",
     ]) {
       expect(dashboardApiJs).toContain(endpoint);
     }
@@ -45,8 +52,14 @@ describe("玄鉴 operations workspace", () => {
       "/api/tools/manifests/revoke",
       "/api/tools/manifests/restore",
       "/api/checkpoints/restore",
+      "/api/security/alerts/read",
+      "/api/security/alerts/state",
+      "/api/policy/test",
     ]) {
       expect(dashboardApiJs).toContain(endpoint);
+    }
+    for (const handler of ["markAllAlertsRead", "updateAlertStatusFromUi", "runPolicyTestFromUi"]) {
+      expect(dashboardJs).toContain(`function ${handler}`);
     }
   });
 

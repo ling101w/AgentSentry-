@@ -194,6 +194,51 @@ add({
   payload: { toolName: "send_email", normalized_tool: "send_email", decision: "deny", blocked: false, ok: true, target: "attacker.example.test" },
 });
 
+add({
+  id: "preview-foundation-scan",
+  session_key: "agent:preview:foundation",
+  type: "foundation_scan",
+  layer: "Foundation Integrity",
+  severity: "success",
+  title: "初始化防线完成组件盘点",
+  summary: "5 components; 1 findings",
+  created_at: at(2),
+  payload: {
+    roots: ["~/.openclaw/skills"],
+    scanned_at: at(2),
+    blocked: false,
+    component_count: 5,
+    components: [
+      { id: "cmp_report_writer", kind: "skill", path: "skills/report-writer/SKILL.md", root: "~/.openclaw", sha256: "9f2c1a8b7d4e5f6a", size: 2048, risk: 12, trust: "trusted", admission: "allow_limited", admissionReason: "签名 Skill 的能力边界为低风险", manifest: { present: true, path: "skills/report-writer/SKILL.md", signed: true, declaredCapabilities: ["declared_skill"] } },
+      { id: "cmp_mail_composer", kind: "skill", path: "skills/mail-composer/SKILL.md", root: "~/.openclaw", sha256: "3b7e8c2d1a6f9e4b", size: 3720, risk: 48, trust: "review", admission: "review", admissionReason: "组件声明了外部写入能力", manifest: { present: true, path: "skills/mail-composer/SKILL.md", signed: false, declaredCapabilities: ["file_read", "network_write"] } },
+      { id: "cmp_browser_automation", kind: "skill", path: "skills/browser-automation/SKILL.md", root: "~/.openclaw", sha256: "e6a3c9f1d2b8a7c4", size: 1560, risk: 86, trust: "blocked", admission: "quarantine", admissionReason: "检测到进程执行能力", manifest: { present: false, path: "", signed: false, declaredCapabilities: ["process_exec"] } },
+      { id: "cmp_openclaw_config", kind: "config", path: "openclaw.json", root: "~/.openclaw", sha256: "1c4d8f2a9b6e3c5d", size: 892, risk: 0, trust: "trusted", admission: "allow_limited", admissionReason: "配置文件已纳入盘点", manifest: { present: true, path: "openclaw.json", signed: false, declaredCapabilities: [] } },
+      { id: "cmp_workspace_memory", kind: "memory", path: "memory/MEMORY.md", root: "~/.openclaw", sha256: "5d2a7f3c8e1b9d6a", size: 640, risk: 8, trust: "trusted", admission: "allow_limited", admissionReason: "低风险记忆文件", manifest: { present: true, path: "memory/MEMORY.md", signed: true, declaredCapabilities: [] } },
+    ],
+    admissions: { allow_limited: 3, review: 1, quarantine: 1 },
+    omitted_components: 0,
+    findings: [],
+  },
+});
+
+add({
+  id: "preview-mcp-registry",
+  session_key: "agent:preview:mcp",
+  type: "mcp_registry",
+  layer: "Foundation Integrity",
+  severity: "info",
+  title: "MCP Server 注册清单",
+  summary: "3 MCP servers observed",
+  created_at: at(4),
+  payload: {
+    servers: [
+      { name: "github", transport: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-github"] },
+      { name: "filesystem", transport: "stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem"] },
+      { name: "browser", transport: "http", url: "http://127.0.0.1:9123/mcp" },
+    ],
+  },
+});
+
 const dashboard = await startDashboard(config, store, {
   info(message) {
     process.stdout.write(`${message}\n`);
