@@ -27,6 +27,7 @@ const WRITABLE_PREFIXES = [
   "policy.",
   "runtimeIsolation.",
   "enforcement.",
+  "intervention.",
   "notifications.",
   "responseCover.",
   "initializationDefense.",
@@ -37,6 +38,7 @@ const WRITABLE_ENUM_VALUES: Readonly<Record<string, readonly string[]>> = {
   "semantic.mode": ["off", "risk-tiered", "full"],
   "runtimeIsolation.unavailableAction": ["require_approval", "block"],
   "enforcement.mode": ["observe", "approval", "block"],
+  "intervention.mode": ["risk-based", "evidence-gated"],
   "notifications.minSeverity": ["warning", "danger"],
 };
 
@@ -135,6 +137,7 @@ export function formatStatus(config: PluginConfig, runtime: CommandRuntime): str
     `Sessions: ${runtime.sessionCount}`,
     `Approval cache: ${runtime.approvalCacheCount} exact operation(s)`,
     `Enforcement: ${config.enforcement.mode}`,
+    `Intervention: ${config.intervention.mode} (safety boundaries ${config.intervention.preserveSafetyBoundaries ? "preserved" : "not preserved"})`,
     `Profile: ${config.profile}`,
     `Deterministic policy: ${config.policy.deterministic ? "enabled" : "disabled"}`,
     `Taint feedback: ${config.policy.taintFeedback ? "enabled" : "disabled"}`,

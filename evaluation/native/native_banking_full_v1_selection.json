@@ -1,0 +1,661 @@
+{
+  "$schema": "https://agentsentry.dev/schemas/agentdojo-native-expanded-selection-v1.json",
+  "selection_version": "1.2.0",
+  "benchmark": {
+    "name": "AgentDojo",
+    "package_version": "0.1.35",
+    "benchmark_version": "v1.2.2",
+    "source_commit": "089ed468cf3ed0322acc66b0211f26d9d90dbf60",
+    "suite": "banking"
+  },
+  "attack": "tool_knowledge",
+  "seed_scope": "one provider generation per unique case; harness seed 7; provider generation seed is not exposed by AgentDojo 0.1.35",
+  "seeds": [
+    7
+  ],
+  "benign_task_ids": [
+    "user_task_0",
+    "user_task_1",
+    "user_task_10",
+    "user_task_11",
+    "user_task_12",
+    "user_task_13",
+    "user_task_14",
+    "user_task_15",
+    "user_task_2",
+    "user_task_3",
+    "user_task_4",
+    "user_task_5",
+    "user_task_6",
+    "user_task_7",
+    "user_task_8",
+    "user_task_9"
+  ],
+  "attack_pairs": [
+    {
+      "user_task_id": "user_task_0",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_0",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_0",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_0",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_0",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_0",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_0",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_0",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_0",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_1",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_10",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_10",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_10",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_10",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_10",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_10",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_10",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_10",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_10",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_11",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_12",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_12",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_12",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_12",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_12",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_12",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_12",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_12",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_12",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_13",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_14",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_14",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_14",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_14",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_14",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_14",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_14",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_14",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_14",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_15",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_15",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_15",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_15",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_15",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_15",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_15",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_15",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_15",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_2",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_2",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_2",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_2",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_2",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_2",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_2",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_2",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_2",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_3",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_3",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_3",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_3",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_3",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_3",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_3",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_3",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_3",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_4",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_4",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_4",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_4",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_4",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_4",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_4",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_4",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_4",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_5",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_5",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_5",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_5",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_5",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_5",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_5",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_5",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_5",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_6",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_6",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_6",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_6",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_6",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_6",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_6",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_6",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_6",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_7",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_7",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_7",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_7",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_7",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_7",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_7",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_7",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_7",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_8",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_8",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_8",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_8",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_8",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_8",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_8",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_8",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_8",
+      "injection_task_id": "injection_task_8"
+    },
+    {
+      "user_task_id": "user_task_9",
+      "injection_task_id": "injection_task_0"
+    },
+    {
+      "user_task_id": "user_task_9",
+      "injection_task_id": "injection_task_1"
+    },
+    {
+      "user_task_id": "user_task_9",
+      "injection_task_id": "injection_task_2"
+    },
+    {
+      "user_task_id": "user_task_9",
+      "injection_task_id": "injection_task_3"
+    },
+    {
+      "user_task_id": "user_task_9",
+      "injection_task_id": "injection_task_4"
+    },
+    {
+      "user_task_id": "user_task_9",
+      "injection_task_id": "injection_task_5"
+    },
+    {
+      "user_task_id": "user_task_9",
+      "injection_task_id": "injection_task_6"
+    },
+    {
+      "user_task_id": "user_task_9",
+      "injection_task_id": "injection_task_7"
+    },
+    {
+      "user_task_id": "user_task_9",
+      "injection_task_id": "injection_task_8"
+    }
+  ],
+  "sampling": {
+    "mode": "one_generation_per_unique_case",
+    "repeats": 1,
+    "harness_seed": 7,
+    "provider_generation_seed": "not_exposed_by_agentdojo_0.1.35"
+  },
+  "coverage": {
+    "selection_algorithm": "complete lexicographic Cartesian product of all banking v1.2.2 user tasks and injection tasks",
+    "unique_benign_cases": 16,
+    "unique_attack_cases": 144,
+    "user_tasks": 16,
+    "injection_tasks": 9,
+    "attack_pair_coverage": "16 x 9 complete Cartesian product",
+    "injection_task_counts": {
+      "injection_task_0": 16,
+      "injection_task_1": 16,
+      "injection_task_2": 16,
+      "injection_task_3": 16,
+      "injection_task_4": 16,
+      "injection_task_5": 16,
+      "injection_task_6": 16,
+      "injection_task_7": 16,
+      "injection_task_8": 16
+    },
+    "attack_user_task_counts": {
+      "user_task_0": 9,
+      "user_task_1": 9,
+      "user_task_10": 9,
+      "user_task_11": 9,
+      "user_task_12": 9,
+      "user_task_13": 9,
+      "user_task_14": 9,
+      "user_task_15": 9,
+      "user_task_2": 9,
+      "user_task_3": 9,
+      "user_task_4": 9,
+      "user_task_5": 9,
+      "user_task_6": 9,
+      "user_task_7": 9,
+      "user_task_8": 9,
+      "user_task_9": 9
+    }
+  },
+  "expected": {
+    "benign_cases": 16,
+    "attack_cases": 144,
+    "unique_cases": 160,
+    "trials": 160
+  }
+}

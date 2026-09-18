@@ -7,8 +7,8 @@
   <meta name="description" content="玄鉴智能体行为安全裁决系统" />
   <title>玄鉴 · 安全总览</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="/dashboard.css?v=20260813-6" />
-  <link rel="stylesheet" href="/themes.css?v=20260810-3" />
+  <link rel="stylesheet" href="/dashboard.css?v=20260820-20" />
+  <link rel="stylesheet" href="/themes.css?v=20260820-20" />
   <script src="/theme.js?v=20260810-3"></script>
 </head>
 <body>
@@ -110,23 +110,73 @@
               <div class="live-pill" id="graphLiveStatus"><i></i>正在读取</div>
             </header>
             <div class="control-rails" id="securityGraph">
-              <div class="control-rails-head" aria-hidden="true"><span>控制主线</span><span>关键控制点</span><span>实时结果</span></div>
+              <div class="control-rails-head" aria-hidden="true">
+                <span>控制主线</span>
+                <span>关键控制点</span>
+                <span>实时结果</span>
+              </div>
               <button type="button" class="control-rail rail-taint overview-clickable" data-control-line="taint" data-risk-surface="taint" data-overview-page="attack" aria-label="查看控流风险会话">
-                <span class="rail-identity"><i><svg><use href="#i-globe"/></svg></i><span><small>01 · CONTROL FLOW</small><strong>控流</strong><em>数据从哪里来、流向哪里</em></span></span>
-                <span class="rail-path"><span>来源标记</span><i>→</i><span>传播追踪</span><i>→</i><span>Sink 校验</span></span>
-                <span class="rail-result"><b class="control-line-stat">正在读取</b><small>查看风险会话 <svg><use href="#i-arrow"/></svg></small></span>
+                <span class="rail-identity">
+                  <i><svg><use href="#i-globe"/></svg></i>
+                  <span>
+                    <small>01 · CONTROL FLOW</small>
+                    <strong>控流</strong>
+                    <em>数据从哪里来、流向哪里</em>
+                  </span>
+                </span>
+                <span class="rail-path" aria-hidden="true">
+                  <span>来源标记</span><i></i>
+                  <span>传播追踪</span><i></i>
+                  <span>Sink 校验</span>
+                </span>
+                <span class="rail-result">
+                  <b class="control-line-stat">正在读取</b>
+                  <small>查看风险会话 <svg><use href="#i-arrow"/></svg></small>
+                </span>
               </button>
               <button type="button" class="control-rail rail-auth overview-clickable" data-control-line="auth" data-risk-surface="auth" data-overview-page="attack" aria-label="查看控权风险会话">
-                <span class="rail-identity"><i><svg><use href="#i-lock"/></svg></i><span><small>02 · AUTHORIZATION</small><strong>控权</strong><em>用户究竟授权了什么</em></span></span>
-                <span class="rail-path"><span>动作范围</span><i>→</i><span>资源边界</span><i>→</i><span>目标约束</span></span>
-                <span class="rail-result"><b class="control-line-stat">正在读取</b><small>查看风险会话 <svg><use href="#i-arrow"/></svg></small></span>
+                <span class="rail-identity">
+                  <i><svg><use href="#i-lock"/></svg></i>
+                  <span>
+                    <small>02 · AUTHORIZATION</small>
+                    <strong>控权</strong>
+                    <em>用户究竟授权了什么</em>
+                  </span>
+                </span>
+                <span class="rail-path" aria-hidden="true">
+                  <span>动作范围</span><i></i>
+                  <span>资源边界</span><i></i>
+                  <span>目标约束</span>
+                </span>
+                <span class="rail-result">
+                  <b class="control-line-stat">正在读取</b>
+                  <small>查看风险会话 <svg><use href="#i-arrow"/></svg></small>
+                </span>
               </button>
               <button type="button" class="control-rail rail-state overview-clickable" data-control-line="state" data-risk-surface="state" data-overview-page="attack" aria-label="查看控态风险会话">
-                <span class="rail-identity"><i><svg><use href="#i-route"/></svg></i><span><small>03 · LIFECYCLE STATE</small><strong>控态</strong><em>行为是否仍在合法生命周期</em></span></span>
-                <span class="rail-path"><span>申请</span><i>→</i><span>审批</span><i>→</i><span>执行</span><i>→</i><span>完成</span></span>
-                <span class="rail-result"><b class="control-line-stat">正在读取</b><small>查看风险会话 <svg><use href="#i-arrow"/></svg></small></span>
+                <span class="rail-identity">
+                  <i><svg><use href="#i-activity"/></svg></i>
+                  <span>
+                    <small>03 · LIFECYCLE STATE</small>
+                    <strong>控态</strong>
+                    <em>行为是否仍在合法生命周期</em>
+                  </span>
+                </span>
+                <span class="rail-path" aria-hidden="true">
+                  <span>申请</span><i></i>
+                  <span>审批</span><i></i>
+                  <span>执行</span><i></i>
+                  <span>完成</span>
+                </span>
+                <span class="rail-result">
+                  <b class="control-line-stat">正在读取</b>
+                  <small>查看风险会话 <svg><use href="#i-arrow"/></svg></small>
+                </span>
               </button>
-              <footer class="control-rails-foot"><span><i></i>三条主线并行判定</span><p>数据被污染不等于已经越权；同一会话可同时命中多个控制维度。</p></footer>
+              <div class="control-rails-foot">
+                <span><i></i>三条主线并行判定</span>
+                <p>数据被污染不等于已经越权；同一会话可同时命中多个控制维度。</p>
+              </div>
             </div>
           </article>
 
@@ -144,7 +194,7 @@
 
         <section class="secondary-grid">
           <article class="card risk-card">
-            <header class="card-header compact-header"><div><h2>风险类型</h2><p>近一周期命中的核心安全边界</p></div><button class="ghost-button overview-clickable" data-overview-page="alerts">查看全部</button></header>
+            <header class="card-header compact-header"><div><h2>风险类型</h2><p>提示注入走控流，工具劫持走控权，记忆污染走控态</p></div><button class="ghost-button overview-clickable" data-overview-page="alerts">查看全部</button></header>
             <div class="risk-bars" id="riskBars"></div>
           </article>
 
@@ -167,11 +217,11 @@
               <div>
                 <div class="eyebrow"><span></span>实时会话监督</div>
                 <h1>攻击监控</h1>
-                <p>按会话聚合智能体行为。先定位异常会话，再进入语义动作图还原因果链与裁决依据。</p>
               </div>
               <div class="heading-actions">
                 <div class="monitor-status"><i></i><span>实时同步</span><b id="attackStreamClock">--:--:--</b></div>
                 <button class="secondary-button" id="pauseStreamButton"><span class="pause-icon">Ⅱ</span>暂停同步</button>
+                <button class="secondary-button" id="attackResetButton" type="button">清空</button>
                 <button class="primary-button" id="attackExportButton"><svg><use href="#i-audit"/></svg>导出会话</button>
               </div>
             </section>
@@ -222,13 +272,13 @@
 
             <section class="incident-workbench">
               <aside class="card request-context-card">
-                <header class="workbench-title"><div><span class="card-kicker">REQUEST CONTEXT</span><h2>请求上下文</h2></div><span class="context-pin">PINNED</span></header>
+                <header class="workbench-title"><div><span class="card-kicker">REQUEST CONTEXT</span><h2>请求上下文</h2></div><span class="context-pin">可点击</span></header>
                 <div id="detailRequestContext" class="detail-request-context"></div>
               </aside>
 
               <article class="card semantic-graph-card">
                 <header class="workbench-title graph-workbench-title">
-                  <div><span class="card-kicker">SEMANTIC ACTION GRAPH</span><h2>语义动作图</h2><p>节点可点击、拖动；画布支持缩放，右侧证据随选择更新。</p></div>
+                  <div><span class="card-kicker">SEMANTIC ACTION GRAPH</span><h2>语义动作图</h2><p>节点、左侧气泡和底部时间线可点击，右侧证据随选择更新。</p></div>
                   <div class="graph-toolbar">
                     <button id="graphPathButton" class="graph-tool active" type="button"><svg><use href="#i-route"/></svg>事件主路径</button>
                     <button id="graphResetButton" class="graph-tool" type="button"><svg><use href="#i-refresh"/></svg>重置布局</button>
@@ -270,25 +320,24 @@
             <div>
               <div class="eyebrow"><span></span>TOOL SECURITY MANIFEST</div>
               <h1>工具管理</h1>
-              <p>把智能体真正能调用的工具做成可审计资产：来源、digest、能力范围、副作用与确定性防线统一收口。</p>
             </div>
             <div class="heading-actions tool-heading-actions">
               <label class="search-box tool-search"><svg><use href="#i-search"/></svg><input id="toolSearch" placeholder="搜索工具 / Provider / capability" /></label>
-              <button class="secondary-button" id="toolRegisterButton"><svg><use href="#i-tool"/></svg>登记工具</button>
-              <button class="primary-button" id="toolScanButton"><svg><use href="#i-shield"/></svg>重新同步工具清单</button>
+              <button class="secondary-button" id="toolScanButton" type="button" title="从后端重新读取已登记工具、MCP、Skill 与记忆资产"><svg><use href="#i-refresh"/></svg>刷新清单</button>
+              <button class="primary-button" id="toolRegisterButton" type="button"><svg><use href="#i-tool"/></svg>登记工具</button>
             </div>
           </section>
           <section class="tool-metrics" id="toolMetrics"></section>
           <section class="capability-inventory" aria-label="智能体能力资产">
             <article class="card capability-inventory-card">
-              <header class="ops-panel-header compact"><div><span class="card-kicker">AGENT CAPABILITY INVENTORY</span><h2>智能体能力资产</h2><p>统一盘点登记工具、MCP、Skill 与会话记忆；仅统计后端真实可枚举数据。</p></div><span class="subtle-link" id="capabilityInventoryTotal">0 项已接入</span></header>
+              <header class="ops-panel-header compact"><div><span class="card-kicker">AGENT CAPABILITY INVENTORY</span><h2>智能体能力资产</h2></div><span class="subtle-link" id="capabilityInventoryTotal">0 项已接入</span></header>
               <div class="capability-inventory-grid" id="capabilityInventoryGrid"></div>
             </article>
           </section>
           <section class="tool-main-grid">
             <article class="card tool-list-card">
               <header class="ops-panel-header">
-                <div><span class="card-kicker">REGISTERED TOOLS</span><h2>工具清单</h2><p>未知工具、digest 漂移和高副作用能力会在真正执行前进入治理链。</p></div>
+                <div><span class="card-kicker">REGISTERED TOOLS</span><h2>工具清单</h2></div>
                 <div class="ops-panel-actions">
                   <button class="filter-chip active" data-tool-risk="all">全部</button>
                   <button class="filter-chip" data-tool-risk="high">高风险</button>
@@ -303,11 +352,11 @@
           </section>
           <section class="tool-bottom-grid">
             <article class="card integrity-board">
-              <header class="ops-panel-header compact"><div><span class="card-kicker">SUPPLY CHAIN</span><h2>工具完整性</h2><p>Manifest、digest pinning 与未知工具审批。</p></div><span class="profile-live" id="toolIntegrityStatus"><i></i>正在读取</span></header>
+              <header class="ops-panel-header compact"><div><span class="card-kicker">SUPPLY CHAIN</span><h2>工具完整性</h2></div><span class="profile-live" id="toolIntegrityStatus"><i></i>正在读取</span></header>
               <div class="integrity-grid" id="toolIntegrityGrid"></div>
             </article>
             <article class="card tool-usage-card">
-              <header class="ops-panel-header compact"><div><span class="card-kicker">CALL SURFACE</span><h2>工具调用面</h2><p>近 24 小时调用量与高副作用能力暴露。</p></div><span class="subtle-link">按调用次数</span></header>
+              <header class="ops-panel-header compact"><div><span class="card-kicker">CALL SURFACE</span><h2>工具调用面</h2></div><span class="subtle-link">按调用次数</span></header>
               <div class="tool-usage-list" id="toolUsageList"></div>
             </article>
           </section>
@@ -422,6 +471,6 @@
     <div class="drawer-body" id="drawerBody"></div>
   </aside>
   <div class="toast" id="toast"></div>
-  <script type="module" src="/dashboard.js?v=20260817-4"></script>
+  <script type="module" src="/dashboard.js?v=20260820-20"></script>
 </body>
 </html>

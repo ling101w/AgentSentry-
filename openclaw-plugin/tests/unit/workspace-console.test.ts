@@ -45,6 +45,10 @@ describe("玄鉴 operations workspace", () => {
     ]) {
       expect(dashboardApiJs).toContain(endpoint);
     }
+    expect(dashboardApiJs).toContain("loadLiveMonitorData");
+    expect(dashboardApiJs).toContain("/api/records?compact=1");
+    expect(dashboardJs).toContain("function startAttackLiveSync");
+    expect(dashboardJs).toContain("function refreshLiveMonitor");
     for (const endpoint of [
       "/api/policy/config",
       "/api/settings/enforcement",
@@ -55,9 +59,11 @@ describe("玄鉴 operations workspace", () => {
       "/api/security/alerts/read",
       "/api/security/alerts/state",
       "/api/policy/test",
+      "/api/reset",
     ]) {
       expect(dashboardApiJs).toContain(endpoint);
     }
+    expect(dashboardJs).toContain("function resetAttackSessions");
     for (const handler of ["markAllAlertsRead", "updateAlertStatusFromUi", "runPolicyTestFromUi"]) {
       expect(dashboardJs).toContain(`function ${handler}`);
     }
@@ -113,5 +119,12 @@ describe("玄鉴 operations workspace", () => {
     expect(themesCss).toContain('html[data-theme="graphite"]');
     expect(themesCss).toContain('html[data-theme="safeline"]');
     expect(themesCss).toContain('--action: #0fc6c2');
+  });
+
+  it("keeps observe/approval/block as a separate settings control from evidence gating", () => {
+    expect(dashboardJs).toContain('settingSelect("运行模式"');
+    expect(dashboardJs).toContain('"enforcementProfile", s.enforcementProfile, ["observe", "approval", "block"]');
+    expect(dashboardJs).toContain('settingSelect("裁决策略"');
+    expect(dashboardJs).toContain('"interventionMode", s.interventionMode, ["risk-based", "evidence-gated"]');
   });
 });

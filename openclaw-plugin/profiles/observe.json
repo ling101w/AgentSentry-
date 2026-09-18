@@ -1,5 +1,6 @@
 {
   "profile": "observe",
+  "intervention": { "mode": "risk-based", "preserveSafetyBoundaries": true },
   "enforcement": { "mode": "observe" },
   "semantic": {
     "enabled": false,

@@ -1,5 +1,5 @@
-import { buildDashboardModel, buildIncidentConclusion } from "/graph-adapter.js?v=20260809-4";
-import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
+import { buildDashboardModel, buildIncidentConclusion, buildSelectionEvidence } from "/graph-adapter.js?v=20260820-18";
+import { dashboardApi } from "/dashboard-api.js?v=20260820-12";
 
 (() => {
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -33,7 +33,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         ["活跃会话", "16", "+2", "近 30 分钟", "activity", "info"],
       ],
       decisions: { allow: 2591, ask: 118, deny: 137 },
-      risks: [["越权工具调用", 41, "danger"], ["敏感数据外发", 31, "danger"], ["间接提示注入", 24, "warn"], ["危险命令", 17, "warn"], ["记忆投毒", 9, "safe"]],
+      risks: [["提示注入", 24, "warn"], ["工具劫持", 17, "danger"], ["记忆污染", 9, "danger"]],
       alerts: 10,
     },
     "7d": {
@@ -45,7 +45,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         ["活跃会话", "68", "+9", "近 7 天", "activity", "info"],
       ],
       decisions: { allow: 16991, ask: 1121, deny: 812 },
-      risks: [["越权工具调用", 38, "danger"], ["敏感数据外发", 29, "danger"], ["间接提示注入", 27, "warn"], ["危险命令", 18, "warn"], ["记忆投毒", 11, "safe"]],
+      risks: [["提示注入", 27, "warn"], ["工具劫持", 18, "danger"], ["记忆污染", 11, "danger"]],
       alerts: 24,
     },
     "30d": {
@@ -57,7 +57,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         ["活跃会话", "204", "+17", "近 30 天", "activity", "info"],
       ],
       decisions: { allow: 68830, ask: 4102, deny: 3486 },
-      risks: [["越权工具调用", 35, "danger"], ["敏感数据外发", 30, "danger"], ["间接提示注入", 25, "warn"], ["危险命令", 20, "warn"], ["记忆投毒", 13, "safe"]],
+      risks: [["提示注入", 25, "warn"], ["工具劫持", 20, "danger"], ["记忆污染", 13, "danger"]],
       alerts: 43,
     },
   };
@@ -273,18 +273,24 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     trends: {},
     page: PAGE_BY_PATH.get(window.location.pathname.replace(/\/+$/, "") || "/") || "overview",
     attackPaused: false,
+    attackSyncing: false,
+    attackLiveTimer: null,
+    attackFingerprint: "",
     attackFilter: "all",
     attackSearch: "",
     attackVisible: 6,
     selectedSessionId: new URLSearchParams(window.location.search).get("session") || "",
     attackSubview: new URLSearchParams(window.location.search).has("session") ? "detail" : "sessions",
     selectedNodeId: "",
+    selectedContextKey: "",
+    selectedContextTool: "",
+    selectedTimelineIndex: -1,
     graphPathOnly: true,
     graphTransform: { x: 0, y: 0, scale: 1 },
     graphPositions: new Map(),
     graphSessionKey: "",
     graphLayoutKey: "",
-    graphCanvas: { width: 960, height: 520, nodeWidth: 188 },
+    graphCanvas: { width: 960, height: 520, nodeWidth: 148, nodeHeight: 68 },
     graphPan: null,
     graphNodeDrag: null,
     suppressClickUntil: 0,
@@ -321,7 +327,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     settingsUnavailable: new Set(),
     settingsReadonly: new Set(["approvalsEnabled", "unknownToolApproval", "originStrict", "bootstrapAuth", "redactSecrets"]),
     settings: {
-      enforcementProfile:"competition", approvalsEnabled:true, approvalTimeout:120, unknownToolApproval:true,
+      enforcementProfile:"observe", interventionMode:"risk-based", approvalsEnabled:true, approvalTimeout:120, unknownToolApproval:true,
       semanticEnabled:true, semanticModel:"gpt-4o-mini", semanticBaseUrl:"https://api.openai.com/v1", semanticTimeout:2000, semanticCache:true,
       remoteAccess:false, dashboardHost:"127.0.0.1", dashboardPort:8765, originStrict:true, bootstrapAuth:true,
       auditRetention:30, auditBatchSize:25, auditHashChain:true, redactSecrets:true,
@@ -331,7 +337,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
 
   const iconMap = { tool: "i-tool", shield: "i-shield", bell: "i-bell", network: "i-network", activity: "i-activity", radar: "i-radar", bot: "i-bot", alert: "i-alert" };
   const toolIcon = { shell: "i-terminal", web: "i-globe", mail: "i-mail", file: "i-file", memory: "i-memory" };
-  const graphKindIcon = { intent:"i-user", capability:"i-shield", action:"i-tool", data:"i-database", sink:"i-network", guard:"i-shield", decision:"i-check" };
+  const graphKindIcon = { intent:"i-user", capability:"i-shield", agent:"i-bot", action:"i-tool", data:"i-database", taint:"i-alert", secret:"i-shield", sink:"i-network", guard:"i-shield", decision:"i-check" };
 
   initialize();
 
@@ -342,6 +348,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     setDataMode("loading");
     startAttackClock();
     await tryLoadLiveData();
+    startAttackLiveSync();
     window.addEventListener("popstate", () => {
       state.page = pageFromLocation();
       state.attackSubview = new URLSearchParams(window.location.search).has("session") ? "detail" : "sessions";
@@ -383,7 +390,12 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
       showToast(ok ? "已同步最新安全数据" : "接口不可用，已显示空状态");
     });
 
-    $$(".nav-item").forEach(btn => btn.addEventListener("click", () => { switchPage(btn.dataset.page); setMobileNavigation(false); }));
+    $$(".nav-item").forEach(btn => btn.addEventListener("click", (event) => {
+      if (btn.tagName === "A" && btn.getAttribute("href")) return;
+      event.preventDefault();
+      switchPage(btn.dataset.page);
+      setMobileNavigation(false);
+    }));
     $("#mobileMenuButton")?.addEventListener("click", () => setMobileNavigation(!$(".app-shell")?.classList.contains("nav-open")));
     $("#sidebarScrim")?.addEventListener("click", () => setMobileNavigation(false));
     $(".notification-button")?.addEventListener("click", () => switchPage("alerts"));
@@ -420,6 +432,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
 
     $("#attackMonitorButton").addEventListener("click", () => switchPage("attack"));
     $("#pauseStreamButton").addEventListener("click", toggleAttackStream);
+    $("#attackResetButton")?.addEventListener("click", resetAttackSessions);
     $("#attackExportButton").addEventListener("click", exportAttackSessions);
     $("#assetSearch")?.addEventListener("input", event => { state.assetSearch = event.target.value.trim().toLowerCase(); renderAssetsPage(); });
     $$('[data-asset-risk]').forEach(btn => btn.addEventListener("click", () => {
@@ -438,10 +451,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     $("#policyAuditButton")?.addEventListener("click", () => switchPage("audit"));
     $("#toolSearch")?.addEventListener("input", event => { state.toolSearch = event.target.value.trim().toLowerCase(); renderToolsPage(); });
     $$('[data-tool-risk]').forEach(btn => btn.addEventListener("click", () => { state.toolRiskFilter = btn.dataset.toolRisk; $$('[data-tool-risk]').forEach(b => b.classList.toggle("active", b === btn)); renderToolsPage(); }));
-    $("#toolScanButton")?.addEventListener("click", async () => {
-      const ok = await tryLoadLiveData(true);
-      showToast(ok ? "工具清单已重新同步" : "工具清单接口不可用");
-    });
+    $("#toolScanButton")?.addEventListener("click", syncToolInventory);
     $("#toolRegisterButton")?.addEventListener("click", openToolRegistration);
     $("#alertSearch")?.addEventListener("input", event => { state.alertSearch = event.target.value.trim().toLowerCase(); renderAlertsPage(); });
     $$('[data-alert-status]').forEach(btn => btn.addEventListener("click", () => { state.alertStatus = btn.dataset.alertStatus; $$('[data-alert-status]').forEach(b => b.classList.toggle("active", b === btn)); renderAlertsPage(); }));
@@ -761,7 +771,13 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   }
 
   function modeLabel(mode) {
-    return ({ observe: "观察模式", approval: "审批模式", block: "阻断模式" })[mode] || String(mode || "后端未提供");
+    return ({
+      observe: "观察模式",
+      approval: "审批模式",
+      block: "阻断模式",
+      "evidence-gated": "证据门控",
+      "risk-based": "风险驱动",
+    })[mode] || String(mode || "后端未提供");
   }
 
   function trustLabel(level) {
@@ -797,14 +813,30 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   }
 
   function controlLineText(session) {
+    const scenario = (session?.rawRecords || []).map((record) => record?.payload?.scenario).filter(Boolean).join(" ");
     return [
       session?.attackType, session?.policy, session?.summary, session?.task, session?.modelTask,
-      session?.payload, ...(session?.tools || []),
+      session?.payload, session?.adversarialInput, scenario, ...(session?.tools || []),
       ...(session?.nodes || []).flatMap((item) => [item?.kind, item?.title, item?.subtitle, item?.detail, item?.state]),
     ].filter(Boolean).join(" ");
   }
 
+  function classifyAttackSurface(session) {
+    const text = controlLineText(session);
+    if (/memory.?poison|memory_write|memory_guard|MEMORY\.md|记忆污染|记忆投毒|长期记忆|deeptrap_r2|env-auditor|假 SOP/i.test(text)) return "memory";
+    if (/tool.?hijack|toolpoison|backdoor|unregistered tool|process_sales|销售脚本|工具劫持|deeptrap_r3|恶意第三方|恶意.?skill/i.test(text)) return "hijack";
+    if (/prompt.?injection|workspace_injection|follow-up|提示注入|hidden|calendar|cloud files|外发/i.test(text)) return "injection";
+    if (/taint|external.?sink|send_email|read_webpage|间接/i.test(text)) return "injection";
+    if (/manifest|shell_exec|python|后门/i.test(text)) return "hijack";
+    if (/poison|持久化/i.test(text)) return "memory";
+    return session?.verdict === "allow" ? "allow" : "injection";
+  }
+
   function classifyControlLines(session) {
+    const surface = classifyAttackSurface(session);
+    if (surface === "injection") return ["taint"];
+    if (surface === "hijack") return ["auth"];
+    if (surface === "memory") return ["state"];
     const text = controlLineText(session);
     const lines = [];
     if (/taint|prompt.?injection|indirect.?prompt|external.?content|untrusted|sensitive|external.?sink|网页内容|外部内容|提示注入|低可信|污染|敏感|外发|数据流|sink/i.test(text)) lines.push("taint");
@@ -821,17 +853,29 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     return summary;
   }
 
+  function buildAttackSurfaceSummary() {
+    const summary = { injection: [], hijack: [], memory: [] };
+    (state.sessions || []).filter((session) => session.verdict !== "allow").forEach((session) => {
+      const surface = classifyAttackSurface(session);
+      if (summary[surface]) summary[surface].push(session);
+    });
+    return summary;
+  }
+
   function updateOverviewGraph() {
-    const controlLines = buildControlLineSummary();
-    $$("[data-risk-surface]").forEach((element) => {
-      const line = element.dataset.riskSurface;
-      const sessions = controlLines[line] || [];
-      const denied = sessions.filter((session) => session.verdict === "deny").length;
-      const value = element.querySelector(".control-line-stat") || element.querySelector("small") || element.querySelector("strong");
-      if (value) value.textContent = state.dataMode === "unavailable" ? "后端暂未提供" : element.classList.contains("control-rail")
-        ? (sessions.length ? `${sessions.length} 个风险会话 · ${denied} 个已阻断` : "暂无风险命中")
-        : formatNumber(sessions.length);
-      const latest = sessions[0];
+    const lines = buildControlLineSummary();
+    $$("[data-control-line]").forEach((element) => {
+      const sessions = lines[element.dataset.controlLine] || [];
+      const denied = sessions.filter((session) => session.verdict === "deny");
+      const value = element.querySelector(".control-line-stat");
+      if (value) {
+        value.textContent = state.dataMode === "unavailable"
+          ? "后端暂未提供"
+          : (sessions.length
+            ? `${formatNumber(sessions.length)} 个风险会话 · ${formatNumber(denied.length)} 个已阻断`
+            : "暂无风险会话");
+      }
+      const latest = denied[0] || sessions[0];
       if (latest) element.dataset.sessionId = latest.id;
       else element.removeAttribute("data-session-id");
       element.classList.toggle("clear", state.dataMode !== "unavailable" && sessions.length === 0);
@@ -883,6 +927,23 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     renderAttackMetrics();
     renderAttackSessions();
     if (detailActive) renderAttackDetail();
+  }
+
+  function sessionLiveKey(session) {
+    if (!session) return "";
+    return [session.id, session.last, session.verdict, session.actionCount, session.nodes?.length || 0, session.summary || ""].join("|");
+  }
+
+  function liveDataFingerprint(records, overview) {
+    const newest = Array.isArray(records) && records[0] ? records[0] : {};
+    return [
+      records?.length || 0,
+      newest.id || "",
+      newest.created_at || newest.createdAt || "",
+      newest.event_hash || "",
+      overview?.totalRecords || overview?.total_records || "",
+      overview?.alertCount || "",
+    ].join(":");
   }
 
   function renderAttackMetrics() {
@@ -1191,7 +1252,6 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
 
     const skillsPayload = state.resources.skills;
     const skillList = Array.isArray(skillsPayload?.skills) ? skillsPayload.skills : [];
-    const skillSource = skillsPayload?.source;
     const memoryPayload = state.resources.memory;
     const memoryEntries = Array.isArray(memoryPayload?.entries) ? memoryPayload.entries : [];
     const observedMemorySessions = Array.isArray(memoryPayload?.sessions) ? memoryPayload.sessions : [];
@@ -1210,7 +1270,6 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         count: registeredToolIds.length,
         icon: "i-tool",
         available: state.availability.tools?.available === true,
-        detail: state.availability.tools?.available === true ? `${registeredToolIds.length} 个非 MCP Tool Manifest` : "等待 /api/tools/manifests",
         items: registeredToolIds.slice(0, 4),
       },
       {
@@ -1219,7 +1278,6 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         count: mcpNames.length,
         icon: "i-network",
         available: mcpPayload?.ok === true,
-        detail: mcpPayload?.ok === true ? (mcpNames.length ? `${mcpNames.length} 个 MCP Server` : "openclaw.json 未配置 mcpServers") : "MCP Server 清单接口待补",
         items: mcpNames.slice(0, 4),
       },
       {
@@ -1228,7 +1286,6 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         count: skillList.length,
         icon: "i-file",
         available: skillsPayload?.ok === true,
-        detail: skillsPayload?.ok === true ? (skillList.length ? (skillSource === "live_scan" ? "实时初始化扫描盘点" : "最近一次初始化扫描盘点") : "未发现 Skill 组件") : "等待后端 Skill inventory 接口",
         items: skillList.slice(0, 4).map((skill) => String(skill?.path || skill?.id || "")),
       },
       {
@@ -1237,7 +1294,6 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         count: Number(memoryPayload?.total ?? Math.max(memoryEntries.length, memorySessions.size)),
         icon: "i-memory",
         available: memoryPayload?.ok === true,
-        detail: memoryPayload?.ok === true ? `${memoryEntries.length} 个初始化记忆组件 · ${memorySessions.size} 个观测会话` : "等待会话 Memory inventory 接口",
         items: memoryEntries.slice(0, 4).map((entry) => firstValue(entry?.path, entry?.id)).filter(Boolean).concat([...memorySessions].slice(0, 4)).slice(0, 4),
       },
     ];
@@ -1251,9 +1307,8 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     const total = inventory.reduce((sum, item) => sum + item.count, 0);
     totalRoot.textContent = `${formatNumber(total)} 项已接入`;
     root.innerHTML = inventory.map((item) => `<article class="capability-kind ${item.available ? "connected" : "reserved"}">
-      <header><i><svg><use href="#${item.icon}"/></svg></i><span><strong>${escapeHtml(item.label)}</strong><small>${item.available ? "后端已接入" : "接口预留"}</small></span><b>${formatNumber(item.count)}</b></header>
-      <p>${escapeHtml(item.detail)}</p>
-      <div>${item.items.length ? item.items.map((value) => `<code>${escapeHtml(value)}</code>`).join("") : `<span>${item.available ? "当前暂无数据" : "后端暂未提供"}</span>`}</div>
+      <header><i><svg><use href="#${item.icon}"/></svg></i><span><strong>${escapeHtml(item.label)}</strong></span><b>${formatNumber(item.count)}</b></header>
+      <div>${item.items.length ? item.items.map((value) => `<code>${escapeHtml(value)}</code>`).join("") : ""}</div>
     </article>`).join("");
   }
 
@@ -1264,8 +1319,8 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     const inventory=buildCapabilityInventory();
     const byKey=Object.fromEntries(inventory.map(item=>[item.key,item]));
     const capabilityTotal=inventory.reduce((sum,item)=>sum+item.count,0);
-    const metrics=[["能力资产",capabilityTotal,"四类已接入资产","i-tool","normal"],["登记工具",byKey.tools.count,"Tool Manifest","i-tool","info"],["MCP 工具",byKey.mcp.count,byKey.mcp.available?(byKey.mcp.count?"MCP Server 清单":"未配置 mcpServers"):"接口待补","i-network",byKey.mcp.available?"normal":"warning"],["Skill",byKey.skills.count,byKey.skills.available?(byKey.skills.count?"初始化扫描盘点":"未发现"):"接口待补","i-file",byKey.skills.available?"normal":"warning"],["会话记忆",byKey.memory.count,"Memory 行为会话","i-memory",byKey.memory.available?"normal":"warning"]];
-    $("#toolMetrics").innerHTML=metrics.map(([l,v,f,i,t])=>`<article class="card ops-metric"><div><span>${l}</span><strong>${v}</strong><small>${f}</small></div><i class="${t}"><svg><use href="#${i}"/></svg></i></article>`).join("");
+    const metrics=[["能力资产",capabilityTotal,"","i-tool","normal"],["登记工具",byKey.tools.count,"","i-tool","info"],["MCP 工具",byKey.mcp.count,"","i-network",byKey.mcp.available?"normal":"warning"],["Skill",byKey.skills.count,"","i-file",byKey.skills.available?"normal":"warning"],["会话记忆",byKey.memory.count,"","i-memory",byKey.memory.available?"normal":"warning"]];
+    $("#toolMetrics").innerHTML=metrics.map(([l,v,f,i,t])=>`<article class="card ops-metric"><div><span>${l}</span><strong>${v}</strong>${f?`<small>${f}</small>`:""}</div><i class="${t}"><svg><use href="#${i}"/></svg></i></article>`).join("");
     let filtered=tools.filter(t=>state.toolRiskFilter==="all"||t.risk===state.toolRiskFilter);
     if(state.toolSearch) filtered=filtered.filter(t=>[t.name,t.provider,t.category,...t.capabilities,...t.sideEffects].join(" ").toLowerCase().includes(state.toolSearch));
     $("#toolRows").innerHTML=filtered.length?filtered.map(t=>`<button class="tool-row ${t.id===state.selectedToolId?"selected":""}" data-tool-id="${escapeHtml(t.id)}"><span class="tool-identity"><i class="tool-icon-box ${t.risk}"><svg><use href="#${toolAssetIcon(t.name)}"/></svg></i><span><strong>${escapeHtml(t.name)}</strong><small>${escapeHtml(t.category)}</small></span></span><span class="tool-risk ${t.risk}"><i></i>${riskLabel(t.risk)}风险</span><span class="side-effect-tags">${t.sideEffects.slice(0,3).map(x=>`<span>${escapeHtml(x)}</span>`).join("")}</span><span class="tool-agents"><strong>${t.agents.length}</strong><small>智能体</small></span><span class="tool-calls"><strong>${t.calls}</strong><small>${t.deny} 阻断</small></span><span class="integrity-pill ${t.integrity}"><i></i>${t.integrity==="ok"?"通过":t.integrity==="review"?"复核":"异常"}</span><svg class="asset-chevron"><use href="#i-arrow"/></svg></button>`).join(""):`<div class="alert-empty"><strong>没有匹配的工具</strong><p>调整搜索词或风险筛选。</p></div>`;
@@ -1274,7 +1329,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     renderToolIntegrity(); renderToolUsage();
   }
   function renderToolDetail(t){
-    $("#toolDetail").innerHTML=`<div class="tool-detail-hero"><div class="tool-detail-name"><i class="tool-icon-box ${t.risk}"><svg><use href="#${toolAssetIcon(t.name)}"/></svg></i><div><h2>${escapeHtml(t.name)}</h2><p>${escapeHtml(t.provider)} · v${escapeHtml(t.version)}</p></div></div><div class="manifest-score">${t.integrity==="ok"?"100":t.revoked?"0":"76"}<small>/100</small></div></div><div class="tool-detail-tags"><span class="tool-risk ${t.risk}"><i></i>${riskLabel(t.risk)}风险</span><code>${escapeHtml(t.category)}</code><span>${escapeHtml(t.manifest)}</span></div><section class="tool-detail-section"><header><span>Tool Security Manifest</span><small>${t.integrity==="ok"?"完整性通过":t.revoked?"已吊销":"需要复核"}</small></header><div class="manifest-kv"><div><span>Provider</span><strong>${escapeHtml(t.provider)}</strong></div><div><span>Version</span><strong>${escapeHtml(t.version)}</strong></div><div><span>Digest</span><code>${escapeHtml(t.digest)}</code></div><div><span>Manifest</span><strong>${escapeHtml(t.manifest)}</strong></div></div></section><section class="tool-detail-section"><header><span>能力与作用域</span><small>${t.capabilities.length} 项</small></header><div class="tool-scope-list">${t.capabilities.map(x=>`<div><svg><use href="#i-shield"/></svg><span>${escapeHtml(x)}</span></div>`).join("")}</div></section><section class="tool-detail-section"><header><span>执行前安全控制</span><small>${t.controls.length} 条</small></header><div class="tool-control-list">${t.controls.map(x=>`<div><svg><use href="#i-check"/></svg><span>${escapeHtml(x)}</span></div>`).join("")}</div></section><section class="tool-detail-section"><header><span>授权智能体</span><small>${t.agents.length} 个（后端观测）</small></header><div class="tool-agent-chips">${t.agents.length ? t.agents.map(x=>`<span>${escapeHtml(x)}</span>`).join("") : `<span>后端暂未提供工具-智能体绑定</span>`}</div></section><section class="tool-detail-section"><header><span>说明</span></header><p style="margin:0;font-size:12px;line-height:1.65;color:#61706b">${escapeHtml(t.description)}</p></section><div class="tool-detail-actions"><button id="toolSessionsButton" class="secondary-button">查看相关会话</button><button id="toolManifestButton" class="secondary-button">查看 Manifest</button><button id="toolRevokeButton" class="${t.revoked ? "primary-button" : "danger-button"}">${t.revoked ? "恢复信任" : "吊销工具"}</button></div>`;
+    $("#toolDetail").innerHTML=`<div class="tool-detail-hero"><div class="tool-detail-name"><i class="tool-icon-box ${t.risk}"><svg><use href="#${toolAssetIcon(t.name)}"/></svg></i><div><h2>${escapeHtml(t.name)}</h2><p>${escapeHtml(t.provider)}${t.version ? ` · v${escapeHtml(t.version)}` : ""}</p></div></div><div class="manifest-score">${t.integrity==="ok"?"100":t.revoked?"0":"76"}<small>/100</small></div></div><div class="tool-detail-tags"><span class="tool-risk ${t.risk}"><i></i>${riskLabel(t.risk)}风险</span><code>${escapeHtml(t.category)}</code><span>${escapeHtml(t.manifest)}</span></div><section class="tool-detail-section"><header><span>Tool Security Manifest</span><small>${t.integrity==="ok"?"完整性通过":t.revoked?"已吊销":"需要复核"}</small></header><div class="manifest-kv"><div><span>Provider</span><strong>${escapeHtml(t.provider)}</strong></div><div><span>Version</span><strong>${escapeHtml(t.version || "—")}</strong></div><div><span>Digest</span><code>${escapeHtml(t.digest)}</code></div><div><span>Manifest</span><strong>${escapeHtml(t.manifest)}</strong></div></div></section><section class="tool-detail-section"><header><span>能力与作用域</span><small>${t.capabilities.length} 项</small></header><div class="tool-scope-list">${t.capabilities.map(x=>`<div><svg><use href="#i-shield"/></svg><span>${escapeHtml(x)}</span></div>`).join("")}</div></section><section class="tool-detail-section"><header><span>执行前安全控制</span><small>${t.controls.length} 条</small></header><div class="tool-control-list">${t.controls.map(x=>`<div><svg><use href="#i-check"/></svg><span>${escapeHtml(x)}</span></div>`).join("")}</div></section>${t.description ? `<section class="tool-detail-section"><header><span>说明</span></header><p style="margin:0;font-size:12px;line-height:1.65;color:#61706b">${escapeHtml(t.description)}</p></section>` : ""}<div class="tool-detail-actions"><button id="toolSessionsButton" class="secondary-button">查看相关会话</button><button id="toolManifestButton" class="secondary-button">查看 Manifest</button><button id="toolRevokeButton" class="${t.revoked ? "primary-button" : "danger-button"}">${t.revoked ? "恢复信任" : "吊销工具"}</button></div>`;
     $("#toolSessionsButton")?.addEventListener("click",()=>{switchPage("attack");state.attackSearch=t.name.toLowerCase(); const input=$("#attackSearch"); if(input) input.value=t.name; renderAttackSessions()});
     $("#toolManifestButton")?.addEventListener("click",()=>openDrawer({title:`${t.name} · Tool Manifest`,verdict:t.revoked?"deny":t.integrity==="ok"?"allow":"ask",risk:t.risk,rule:"TOOL_SECURITY_MANIFEST",detail:JSON.stringify({name:t.name,provider:t.provider,version:t.version,digest:t.digest,manifest:t.rawManifest,revocation:t.revoked || null},null,2),chain:["manifest","digest","capability","preflight"]}));
     $("#toolRevokeButton")?.addEventListener("click", () => t.revoked ? restoreToolFromUi(t.id) : revokeToolFromUi(t.id));
@@ -1304,7 +1359,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   }
   function alertStatusLabel(s){return ({open:"待处置",investigating:"调查中",resolved:"已解决",suppressed:"已抑制"})[s]||s}
   function renderAlertDetail(a){
-    $("#alertDetail").innerHTML=`<div class="alert-detail-hero"><i class="${a.severity}"><svg><use href="#i-alert"/></svg></i><div><h2>${escapeHtml(a.title)}</h2><p>${a.id} · ${a.time} · ${escapeHtml(a.agent)}</p></div></div><p class="alert-detail-summary">${escapeHtml(a.summary)}</p><div style="display:flex;gap:6px;margin-bottom:13px"><span class="alert-status ${a.status}">${alertStatusLabel(a.status)}</span><span class="tool-risk ${a.severity}"><i></i>${riskLabel(a.severity)}风险</span></div><section class="alert-detail-section"><header><span>现场信息</span><small>${escapeHtml(a.rule)}</small></header><div class="alert-kv"><div><span>智能体</span><strong>${escapeHtml(a.agent)}</strong></div><div><span>会话</span><strong>${a.session?escapeHtml(a.session):"后端未关联会话"}</strong></div><div><span>规则</span><code>${escapeHtml(a.rule)}</code></div><div><span>处置状态</span><strong>${alertStatusLabel(a.status)}（${a.backendStatusProvided?"人工处置":"按裁决推导"}）</strong></div></div></section><section class="alert-detail-section"><header><span>关键证据</span><small>后端安全快照</small></header><div class="alert-evidence">${escapeHtml(a.evidence)}</div></section><section class="alert-detail-section"><header><span>风险链路</span></header><div class="alert-chain">${a.chain.map((x,i)=>`${i?"<i>→</i>":""}<span>${escapeHtml(x)}</span>`).join("")}</div></section><div class="alert-detail-actions"><button id="alertSessionButton" class="secondary-button" ${a.session?"":"disabled"}>查看会话</button><select id="alertStatusSelect" aria-label="更新处置状态"><option value="open" ${a.status==="open"?"selected":""}>待处置</option><option value="investigating" ${a.status==="investigating"?"selected":""}>调查中</option><option value="resolved" ${a.status==="resolved"?"selected":""}>已解决</option><option value="suppressed" ${a.status==="suppressed"?"selected":""}>已抑制</option></select><button id="alertStatusSaveButton" class="primary-button">保存状态</button></div>`;
+    $("#alertDetail").innerHTML=`<div class="alert-detail-hero"><i class="${a.severity}"><svg><use href="#i-alert"/></svg></i><div><h2>${escapeHtml(a.title)}</h2><p>${a.id} · ${a.time} · ${escapeHtml(a.agent)}</p></div></div><p class="alert-detail-summary">${escapeHtml(a.summary)}</p><div style="display:flex;gap:6px;margin-bottom:13px"><span class="alert-status ${a.status}">${alertStatusLabel(a.status)}</span><span class="tool-risk ${a.severity}"><i></i>${riskLabel(a.severity)}风险</span></div><section class="alert-detail-section"><header><span>现场信息</span><small>${escapeHtml(a.rule)}</small></header><div class="alert-kv"><div><span>智能体</span><strong>${escapeHtml(a.agent)}</strong></div><div><span>会话</span><strong>${a.session?escapeHtml(a.session):"后端未关联会话"}</strong></div><div><span>规则</span><code>${escapeHtml(a.rule)}</code></div><div><span>状态来源</span><strong>${a.backendStatusProvided?"人工确认":"按裁决推导"}</strong></div></div></section><section class="alert-detail-section"><header><span>关键证据</span><small>后端安全快照</small></header><div class="alert-evidence">${escapeHtml(a.evidence)}</div></section><section class="alert-detail-section"><header><span>风险链路</span></header><div class="alert-chain">${a.chain.map((x,i)=>`${i?"<i>→</i>":""}<span>${escapeHtml(x)}</span>`).join("")}</div></section><div class="alert-detail-actions"><button id="alertSessionButton" class="secondary-button" ${a.session?"":"disabled"}>查看会话</button><label class="alert-status-select-wrap"><select id="alertStatusSelect" aria-label="更新处置状态"><option value="open" ${a.status==="open"?"selected":""}>待处置</option><option value="investigating" ${a.status==="investigating"?"selected":""}>调查中</option><option value="resolved" ${a.status==="resolved"?"selected":""}>已解决</option><option value="suppressed" ${a.status==="suppressed"?"selected":""}>已抑制</option></select></label><button id="alertStatusSaveButton" class="primary-button">保存状态</button></div>`;
     $("#alertSessionButton")?.addEventListener("click",()=>{if(!a.session)return; switchPage("attack"); openAttackSession(a.session)});
     $("#alertStatusSaveButton")?.addEventListener("click",()=>updateAlertStatusFromUi(a.id,$("#alertStatusSelect")?.value));
   }
@@ -1358,18 +1413,34 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   function renderAuditPage(){
     const logs=MOCK_AUDIT_LOGS,deny=logs.filter(x=>x.verdict==="deny").length,asks=logs.filter(x=>x.verdict==="ask").length,config=logs.filter(x=>x.type==="config").length;
     const integrity=state.resources.auditIntegrity || state.resources.records?.integrity || {};
-    const hashAvailable=logs.length>0&&logs.some(x=>x.hash&&x.hash!=="后端未提供"&&x.prev&&x.prev!=="后端未提供");
+    const hashAvailable=logs.length>0&&logs.some(x=>x.hash&&x.hash!=="后端未提供"&&x.hash!=="未覆盖"&&x.prev&&x.prev!=="后端未提供"&&x.prev!=="未覆盖");
     const integrityVerified=integrity.enabled===true&&integrity.verified===true;
     const integrityLabel=integrity.enabled===false?"已关闭":integrityVerified?(integrity.complete===false?"部分覆盖":"通过"):integrity.enabled===true?"异常":"未提供";
     const metrics=[["当前窗口",logs.length,"后端审计记录","i-audit","normal"],["DENY 记录",deny,"执行前阻断","i-shield","danger"],["ASK 记录",asks,"人工审批相关","i-lock","warning"],["配置变更",config,"运营操作","i-settings","info"],["链完整性",integrityLabel,integrityVerified?`${formatNumber(integrity.count || 0)} 条已校验`:hashAvailable?"校验未通过":"后端未返回 Hash Chain","i-check",integrityVerified?"normal":"warning"]];
     $("#auditMetrics").innerHTML=metrics.map(([l,v,f,i,t])=>`<article class="card ops-metric"><div><span>${l}</span><strong>${v}</strong><small>${f}</small></div><i class="${t}"><svg><use href="#${i}"/></svg></i></article>`).join(""); $("#auditVerifiedCount").textContent=logs.length;
     let filtered=logs.filter(x=>(state.auditType==="all"||x.type===state.auditType)&&(state.auditVerdict==="all"||x.verdict===state.auditVerdict)); if(state.auditSearch)filtered=filtered.filter(x=>[x.id,x.subject,x.detail,x.actor,x.trace,x.rule,x.hash].join(" ").toLowerCase().includes(state.auditSearch)); $("#auditVisibleCount").textContent=`${filtered.length} / ${logs.length} 条`;
-    $("#auditRows").innerHTML=filtered.length?filtered.map(x=>`<button class="audit-row ${x.id===state.selectedAuditId?"selected":""}" data-audit-id="${x.id}"><span class="audit-time"><strong>${x.time}</strong><small>${x.date}</small></span><span class="audit-type ${x.type}">${auditTypeLabel(x.type)}</span><span class="audit-subject"><strong>${escapeHtml(x.subject)}</strong><small>${escapeHtml(x.detail)}</small></span><span class="audit-actor"><strong>${escapeHtml(x.actor)}</strong><small>${escapeHtml(x.actorType)}</small></span><span class="verdict-tag ${x.verdict}">${x.verdict.toUpperCase()}</span><span class="audit-hash">${escapeHtml(x.trace)}</span><span class="audit-hash">${escapeHtml(x.hash)}</span><svg class="asset-chevron"><use href="#i-arrow"/></svg></button>`).join(""):`<div class="alert-empty"><strong>没有匹配的审计记录</strong><p>调整过滤条件或搜索关键词。</p></div>`;
+    $("#auditRows").innerHTML=filtered.length?filtered.map(x=>`<button class="audit-row ${x.id===state.selectedAuditId?"selected":""}" data-audit-id="${x.id}"><span class="audit-time"><strong>${x.time}</strong><small>${x.date}</small></span><span class="audit-type ${x.type}">${auditTypeLabel(x.type)}</span><span class="audit-subject"><strong>${escapeHtml(x.subject)}</strong><small>${escapeHtml(x.detail)}</small></span><span class="audit-actor"><strong>${escapeHtml(x.actor)}</strong><small>${escapeHtml(x.actorType)}</small></span><span class="verdict-tag ${x.verdict}">${x.verdict.toUpperCase()}</span><span class="audit-trace" title="${escapeHtml(x.trace)}">${escapeHtml(shortDigest(x.trace))}</span><span class="audit-event-hash" title="${escapeHtml(x.hash)}">${escapeHtml(auditHashLabel(x.hash))}</span><svg class="asset-chevron"><use href="#i-arrow"/></svg></button>`).join(""):`<div class="alert-empty"><strong>没有匹配的审计记录</strong><p>调整过滤条件或搜索关键词。</p></div>`;
     $$("[data-audit-id]",$("#auditRows")).forEach(r=>r.addEventListener("click",()=>{state.selectedAuditId=r.dataset.auditId;renderAuditPage()})); const selected=logs.find(x=>x.id===state.selectedAuditId)||filtered[0]||logs[0];if(selected){state.selectedAuditId=selected.id;renderAuditDetail(selected)}else{$("#auditDetail").innerHTML=resourceEmptyMarkup("审计记录不可用",state.availability.records?.available===false?"审计接口读取失败。":"当前窗口没有审计记录。","i-audit")}
     const banner=$(".audit-integrity-banner"); if(banner){banner.classList.toggle("unavailable",!integrityVerified);const title=banner.querySelector("strong");const copy=banner.querySelector("small");if(title)title.textContent=integrityVerified?"审计链完整性校验通过":integrity.enabled===false?"审计 Hash Chain 已关闭":"审计链完整性校验失败";if(copy)copy.textContent=integrityVerified?(integrity.complete===false?`已验证 ${formatNumber(integrity.count || 0)} 条链记录，另有 ${formatNumber(integrity.unhashedCount || 0)} 条旧记录未覆盖。`:"服务端已重新计算 event_hash 并验证 previous_hash 连续性。"):(integrity.reason||"服务端未能验证当前审计窗口。 ");const meta=banner.querySelectorAll(".audit-integrity-meta strong");if(meta[0])meta[0].textContent=integrityVerified?String(integrity.count||0):"0";if(meta[1])meta[1].textContent=integrity.checkedAt?formatTime(integrity.checkedAt):"未校验";if(meta[2])meta[2].textContent=`batch ${formatNumber(state.settings.auditBatchSize || 0)}`;}
   }
   function auditTypeLabel(t){return ({action:"动作裁决",policy:"策略事件",config:"配置变更",auth:"认证访问"})[t]||t}
-  function renderAuditDetail(x){$("#auditDetail").innerHTML=`<span class="audit-detail-kicker">${auditTypeLabel(x.type).toUpperCase()}</span><h2>${escapeHtml(x.subject)}</h2><p>${x.id} · ${x.date} ${x.time}</p><section class="audit-detail-section"><span>事件摘要</span><div class="audit-detail-kv"><div><small>操作者</small><strong>${escapeHtml(x.actor)}</strong></div><div><small>结果</small><strong>${x.verdict.toUpperCase()}</strong></div><div><small>Trace</small><code>${escapeHtml(x.trace)}</code></div><div><small>规则</small><code>${escapeHtml(x.rule)}</code></div></div></section><section class="audit-detail-section"><header><span>事件载荷</span><small>normalized payload</small></header><pre class="audit-json">${escapeHtml(JSON.stringify(x.payload,null,2))}</pre></section><section class="audit-detail-section"><header><span>Hash Chain</span><small>append-only</small></header><div class="audit-detail-kv"><div><small>previous_hash</small><code>${escapeHtml(x.prev)}</code></div><div><small>event_hash</small><code>${escapeHtml(x.hash)}</code></div></div></section><section class="audit-detail-section"><span>说明</span><p style="font-size:12px;line-height:1.65;color:#65736e;margin:8px 0 0">${escapeHtml(x.detail)}</p></section><div class="audit-detail-actions"><button id="auditCopyButton" class="secondary-button">复制 Event ID</button><button id="auditTraceButton" class="primary-button">查看完整 Trace</button></div>`;$("#auditCopyButton")?.addEventListener("click",()=>{navigator.clipboard?.writeText(x.id);showToast(`已复制 ${x.id}`)});$("#auditTraceButton")?.addEventListener("click",()=>openDrawer({title:`审计事件 · ${x.id}`,verdict:x.verdict,risk:x.verdict==="deny"?"high":x.verdict==="ask"?"medium":"low",rule:x.rule,detail:JSON.stringify(x,null,2),chain:[x.type,x.actor,x.rule,x.verdict.toUpperCase()]}))}
+  function auditFieldProvided(value) {
+    const text = String(value || "").trim();
+    return Boolean(text) && text !== "后端未提供" && text !== "后端暂未提供" && text !== "后端未提供事件说明" && text !== "未覆盖";
+  }
+  function renderAuditDetail(x) {
+    const summaryItems = [
+      `<div><small>操作者</small><strong>${escapeHtml(x.actor)}</strong></div>`,
+      `<div><small>结果</small><strong>${x.verdict.toUpperCase()}</strong></div>`,
+    ];
+    if (auditFieldProvided(x.trace)) summaryItems.push(`<div><small>Trace</small><code>${escapeHtml(x.trace)}</code></div>`);
+    const payloadHtml = `<section class="audit-detail-section"><header><span>事件载荷</span><small>normalized payload</small></header><pre class="audit-json">${escapeHtml(JSON.stringify(x.payload,null,2))}</pre></section>`;
+    const hashHtml = `<section class="audit-detail-section"><header><span>Hash Chain</span><small>append-only</small></header><div class="audit-detail-kv"><div><small>previous_hash</small><code>${escapeHtml(x.prev || "未覆盖")}</code></div><div><small>event_hash</small><code>${escapeHtml(x.hash || "未覆盖")}</code></div></div></section>`;
+    const detailHtml = auditFieldProvided(x.detail) ? `<section class="audit-detail-section"><span>说明</span><p style="font-size:12px;line-height:1.65;color:#65736e;margin:8px 0 0">${escapeHtml(x.detail)}</p></section>` : "";
+    $("#auditDetail").innerHTML = `<span class="audit-detail-kicker">${auditTypeLabel(x.type).toUpperCase()}</span><h2>${escapeHtml(x.subject)}</h2><p>${x.id} · ${x.date} ${x.time}</p><section class="audit-detail-section"><span>事件摘要</span><div class="audit-detail-kv">${summaryItems.join("")}</div></section>${payloadHtml}${hashHtml}${detailHtml}<div class="audit-detail-actions"><button id="auditCopyButton" class="secondary-button">复制 Event ID</button><button id="auditTraceButton" class="primary-button">查看完整 Trace</button></div>`;
+    $("#auditCopyButton")?.addEventListener("click", () => { navigator.clipboard?.writeText(x.id); showToast(`已复制 ${x.id}`); });
+    $("#auditTraceButton")?.addEventListener("click", () => openDrawer({ title: `审计事件 · ${x.id}`, verdict: x.verdict, risk: x.verdict === "deny" ? "high" : x.verdict === "ask" ? "medium" : "low", rule: auditFieldProvided(x.rule) ? x.rule : "", detail: JSON.stringify(x, null, 2), chain: [x.type, x.actor, x.verdict.toUpperCase()].filter(Boolean) }));
+  }
   function exportAuditLogs(){const a=document.createElement("a");a.href=dashboardApi.exportUrl("json");a.download="agentsentry-audit.json";a.click();showToast("正在从后端导出审计日志")}
 
 
@@ -1385,7 +1456,8 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     const templates = {
       enforcement: ["ENFORCEMENT & APPROVAL", "执行与审批", "决定高风险动作如何处置。确定性 DENY 边界不会因为关闭审批而自动放宽。", `
         <div class="settings-group">
-          ${settingSelect("执行模式", "后端支持 observe / approval / block 三种执行模式。", "enforcementProfile", s.enforcementProfile, ["observe", "approval", "block"])}
+          ${settingSelect("运行模式", "观察只记录、不拦截；审批会暂停 ASK 等人工确认；阻断会在执行前硬拦 DENY。这是原来的观察 / 审批 / 阻断切换。", "enforcementProfile", s.enforcementProfile, ["observe", "approval", "block"])}
+          ${settingSelect("裁决策略", "风险驱动按阈值裁决；证据门控仅在具备攻击证据时干预，无证据的风险发现默认放行。", "interventionMode", s.interventionMode, ["risk-based", "evidence-gated"])}
           ${settingToggle("启用人工审批", "审批模式下 ASK 动作保持暂停，等待操作员确认。", "approvalsEnabled", s.approvalsEnabled)}
           ${settingNumber("审批超时", "当前运行时读取到的审批等待预算。", "approvalTimeout", s.approvalTimeout, "秒")}
           ${settingToggle("未知工具首次调用审批", "未登记 Tool Security Manifest 的工具不会直接获得执行能力。", "unknownToolApproval", s.unknownToolApproval)}
@@ -1507,6 +1579,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     state.settings = {
       ...current,
       enforcementProfile: ["observe", "approval", "block"].includes(dashboard.enforcementProfile) ? dashboard.enforcementProfile : (["observe", "approval", "block"].includes(enforcement.mode) ? enforcement.mode : current.enforcementProfile),
+      interventionMode: ["evidence-gated", "risk-based"].includes(dashboard.interventionMode) ? dashboard.interventionMode : (["evidence-gated", "risk-based"].includes(enforcement.interventionMode) ? enforcement.interventionMode : (["evidence-gated", "risk-based"].includes(enforcement.intervention?.mode) ? enforcement.intervention.mode : current.interventionMode)),
       approvalTimeout: Number.isFinite(Number(dashboard.approvalTimeout)) ? Number(dashboard.approvalTimeout) : (Number.isFinite(Number(enforcement.approvalTimeoutMs)) ? Math.round(Number(enforcement.approvalTimeoutMs) / 1000) : current.approvalTimeout),
       approvalsEnabled: Boolean(dashboardValue("approvalsEnabled", enforcement.mode === "approval")),
       unknownToolApproval: Boolean(dashboardValue("unknownToolApproval", bool("deterministic", current.unknownToolApproval))),
@@ -1570,8 +1643,8 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   }
 
   async function saveSettings() {
-    const mode = state.settings.enforcementProfile;
-    const currentMode = state.resources.enforcement?.mode;
+    const currentEnforcement = state.resources.enforcement?.mode;
+    const currentIntervention = state.resources.enforcement?.interventionMode || state.resources.enforcement?.intervention?.mode;
     const dashboardAvailable = state.availability.dashboardSettings?.available !== false;
     const notificationsAvailable = state.availability.notifications?.available !== false;
     const modeAvailable = state.availability.enforcement?.available !== false;
@@ -1584,8 +1657,15 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         const notificationKeys = new Set(["notifyHigh", "notifyAsk", "notifyIntegrity", "notifyResolved", "webhookUrl"]);
         const dashboardSettings = Object.fromEntries(Object.entries(state.settings).filter(([key]) => !notificationKeys.has(key)));
         state.resources.dashboardSettings = await dashboardApi.saveDashboardSettings(dashboardSettings);
-      } else if (modeAvailable && ["observe", "approval", "block"].includes(mode) && mode !== currentMode) {
-        state.resources.enforcement = await dashboardApi.updateEnforcement(mode);
+      } else if (modeAvailable) {
+        const enforcementMode = state.settings.enforcementProfile;
+        const interventionMode = state.settings.interventionMode;
+        if (["observe", "approval", "block"].includes(enforcementMode) && enforcementMode !== currentEnforcement) {
+          state.resources.enforcement = await dashboardApi.updateEnforcement(enforcementMode);
+        }
+        if (["evidence-gated", "risk-based"].includes(interventionMode) && interventionMode !== currentIntervention) {
+          state.resources.enforcement = await dashboardApi.updateEnforcement(interventionMode);
+        }
       }
       if (notificationsAvailable) {
         const { notifyHigh, notifyAsk, notifyIntegrity, notifyResolved, webhookUrl } = state.settings;
@@ -1619,6 +1699,34 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     return String(value || "").split(/[\n,]/).map((item) => item.trim()).filter(Boolean).slice(0, 200);
   }
 
+  function checkedValues(form, name) {
+    return Array.from(form.querySelectorAll(`input[name="${name}"]:checked`)).map((item) => String(item.value || "").trim()).filter(Boolean);
+  }
+
+  function dialogOptionChips(name, options, selected = []) {
+    return `<div class="dialog-chip-grid" data-chip-group="${escapeHtml(name)}">${options.map(([value, label]) => `<label class="dialog-chip"><input type="checkbox" name="${escapeHtml(name)}" value="${escapeHtml(value)}" ${selected.includes(value) ? "checked" : ""} /><span>${escapeHtml(label)}</span></label>`).join("")}</div>`;
+  }
+
+  async function syncToolInventory() {
+    const button = $("#toolScanButton");
+    if (button?.disabled) return;
+    const original = button ? button.innerHTML : "";
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = `<svg><use href="#i-refresh"/></svg>同步中…`;
+    }
+    try {
+      const ok = await tryLoadLiveData(true);
+      const count = MOCK_TOOLS.length;
+      showToast(ok ? `清单已刷新 · ${count} 个已登记工具` : "工具清单接口不可用");
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.innerHTML = original || `<svg><use href="#i-refresh"/></svg>刷新清单`;
+      }
+    }
+  }
+
   function openPolicyBoundaryEditor() {
     if (state.availability.policy?.available === false) {
       showToast("后端暂未提供策略边界接口", "error");
@@ -1650,33 +1758,54 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
 
   function openToolRegistration() {
     if (state.availability.tools?.available === false) {
-      showToast("后端暂未提供工具登记接口", "error");
+      showToast("后端暂未提供工具登记接口");
       return;
     }
+    const originOptions = [
+      ["workspace", "工作区"],
+      ["user", "用户输入"],
+      ["external_web", "外部网页"],
+      ["email", "邮件"],
+      ["third_party_api", "第三方 API"],
+      ["memory", "记忆"],
+      ["unknown", "未知"],
+    ];
+    const effectOptions = [
+      ["none", "无副作用"],
+      ["file_read", "读文件"],
+      ["file_write", "写文件"],
+      ["network_read", "读网络"],
+      ["network_write", "写网络"],
+      ["process_exec", "执行进程"],
+      ["persistent_state", "持久化"],
+    ];
     const body = `<div class="dialog-form-grid">
-      <label class="dialog-field"><span>Tool ID *</span><input name="toolId" required placeholder="例如 send_email" /></label>
-      <label class="dialog-field"><span>版本</span><input name="version" placeholder="可选" /></label>
-      <label class="dialog-field"><span>Aliases</span><input name="aliases" placeholder="逗号或换行分隔" /></label>
-      <label class="dialog-field"><span>Endpoint</span><input name="endpoint" placeholder="可选" /></label>
-      <label class="dialog-field dialog-field-wide"><span>数据来源 *</span><textarea name="dataOrigins" rows="3" required placeholder="trusted\nexternal\nuser"></textarea></label>
-      <label class="dialog-field dialog-field-wide"><span>副作用 *</span><textarea name="sideEffects" rows="3" required placeholder="network_read\nexternal_write"></textarea></label>
-      <label class="dialog-field"><span>默认信任等级 *</span><select name="defaultTrust"><option value="trusted">trusted</option><option value="workspace">workspace</option><option value="external">external</option><option value="unknown">unknown</option></select></label>
-      <label class="dialog-field"><span>Expected Digest</span><input name="expectedDigest" placeholder="可选" /></label>
-      <label class="dialog-check"><input type="checkbox" name="acceptsSensitiveData" /> 接收敏感数据</label>
-      <label class="dialog-check"><input type="checkbox" name="canExfiltrate" /> 具备外发能力</label>
-      <label class="dialog-check"><input type="checkbox" name="requiresExplicitAuthorization" checked /> 要求显式授权</label>
-    </div><p class="dialog-note">必填安全字段会由后端再次校验，并由本地管理员签名后登记。</p>`;
+      <label class="dialog-field"><span>工具 ID *</span><small>与智能体实际调用名一致</small><input name="toolId" required placeholder="例如 send_email" /></label>
+      <label class="dialog-field"><span>版本</span><small>可选</small><input name="version" placeholder="1.0.0" /></label>
+      <label class="dialog-field dialog-field-wide"><span>别名</span><small>逗号或换行分隔，可选</small><input name="aliases" placeholder="mail.send, email_send" /></label>
+      <label class="dialog-field dialog-field-wide"><span>数据来源 *</span><small>工具会读取哪些来源的数据</small>${dialogOptionChips("dataOrigins", originOptions, ["workspace"])}</label>
+      <label class="dialog-field dialog-field-wide"><span>副作用 *</span><small>无副作用不可与其他项同时勾选</small>${dialogOptionChips("sideEffects", effectOptions, ["none"])}</label>
+      <label class="dialog-field"><span>默认信任等级 *</span><select name="defaultTrust"><option value="workspace">工作区</option><option value="trusted">可信</option><option value="external">外部</option><option value="unknown">未知</option></select></label>
+      <label class="dialog-field"><span>服务端点</span><small>可选</small><input name="endpoint" placeholder="local://tool" /></label>
+      <div class="dialog-check-row">
+        <label class="dialog-check"><input type="checkbox" name="acceptsSensitiveData" /> 接收敏感数据</label>
+        <label class="dialog-check"><input type="checkbox" name="canExfiltrate" /> 可向外发送</label>
+        <label class="dialog-check"><input type="checkbox" name="requiresExplicitAuthorization" checked /> 要求显式授权</label>
+      </div>
+    </div><p class="dialog-note">登记后由本地管理员签名，工具会进入资产清单，并参与执行前完整性与能力边界校验。</p>`;
     openActionDialog({
-      title: "登记工具 Manifest",
-      description: "登记后工具会出现在资产清单，并参与执行前完整性与能力边界校验。",
+      kicker: "工具登记",
+      title: "登记工具",
+      description: "用选项声明来源和副作用，避免手填枚举对不上后端。",
       body,
-      submitLabel: "登记工具",
+      submitLabel: "签名并登记",
       onSubmit: async (form) => {
         const toolId = String(form.elements.namedItem("toolId")?.value || "").trim();
-        const dataOrigins = parseList(form.elements.namedItem("dataOrigins")?.value);
-        const sideEffects = parseList(form.elements.namedItem("sideEffects")?.value);
+        const dataOrigins = checkedValues(form, "dataOrigins");
+        let sideEffects = checkedValues(form, "sideEffects");
+        if (sideEffects.includes("none")) sideEffects = ["none"];
         if (!toolId || !dataOrigins.length || !sideEffects.length) {
-          showToast("Tool ID、数据来源和副作用不能为空", "error");
+          showToast("请填写工具 ID，并至少选择一项数据来源和副作用");
           return false;
         }
         const checked = (name) => Boolean(form.elements.namedItem(name)?.checked);
@@ -1686,7 +1815,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
             aliases: parseList(form.elements.namedItem("aliases")?.value),
             dataOrigins,
             sideEffects,
-            defaultTrust: form.elements.namedItem("defaultTrust")?.value || "unknown",
+            defaultTrust: form.elements.namedItem("defaultTrust")?.value || "workspace",
             acceptsSensitiveData: checked("acceptsSensitiveData"),
             canExfiltrate: checked("canExfiltrate"),
             requiresExplicitAuthorization: checked("requiresExplicitAuthorization"),
@@ -1694,14 +1823,27 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
           metadata: {
             version: String(form.elements.namedItem("version")?.value || "").trim() || undefined,
             endpoint: String(form.elements.namedItem("endpoint")?.value || "").trim() || undefined,
-            expectedDigest: String(form.elements.namedItem("expectedDigest")?.value || "").trim() || undefined,
           },
         });
         closeActionDialog();
+        state.selectedToolId = toolId;
         await tryLoadLiveData(true);
         showToast(`工具 ${toolId} 已登记`);
       },
     });
+    bindExclusiveNoneChips($("#actionDialog"), "sideEffects");
+  }
+
+  function bindExclusiveNoneChips(root, name) {
+    if (!root) return;
+    const none = root.querySelector(`input[name="${name}"][value="none"]`);
+    const others = Array.from(root.querySelectorAll(`input[name="${name}"]`)).filter((item) => item.value !== "none");
+    none?.addEventListener("change", () => {
+      if (none.checked) others.forEach((item) => { item.checked = false; });
+    });
+    others.forEach((item) => item.addEventListener("change", () => {
+      if (item.checked && none) none.checked = false;
+    }));
   }
 
   function revokeToolFromUi(toolId) {
@@ -1759,10 +1901,10 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     return dialog;
   }
 
-  function openActionDialog({ title, description = "", body = "", submitLabel = "保存", danger = false, onSubmit }) {
+  function openActionDialog({ title, description = "", body = "", submitLabel = "保存", danger = false, kicker = "操作确认", onSubmit }) {
     const dialog = ensureActionDialog();
     if (dialog.open) dialog.close();
-    dialog.innerHTML = `<form method="dialog" class="action-dialog-form"><header><div><span class="drawer-kicker">BACKEND ACTION</span><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="dialog-close" data-dialog-cancel aria-label="关闭">×</button></header><div class="action-dialog-body">${body}</div><footer><button type="button" class="secondary-button" data-dialog-cancel>取消</button><button type="submit" class="${danger ? "danger-button" : "primary-button"}">${escapeHtml(submitLabel)}</button></footer></form>`;
+    dialog.innerHTML = `<form method="dialog" class="action-dialog-form"><header><div><span class="drawer-kicker">${escapeHtml(kicker)}</span><h2>${escapeHtml(title)}</h2><p>${escapeHtml(description)}</p></div><button type="button" class="dialog-close" data-dialog-cancel aria-label="关闭">×</button></header><div class="action-dialog-body">${body}</div><footer><button type="button" class="secondary-button" data-dialog-cancel>取消</button><button type="submit" class="${danger ? "danger-button" : "primary-button"}">${escapeHtml(submitLabel)}</button></footer></form>`;
     const form = $(".action-dialog-form", dialog);
     let busy = false;
     $$('[data-dialog-cancel]', dialog).forEach((button) => button.addEventListener("click", () => dialog.close()));
@@ -1847,6 +1989,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   function renderAttackSessions() {
     const root = $("#attackSessionList");
     if (!root) return;
+    const scrollTop = root.scrollTop;
     const search = state.attackSearch;
     let sessions = getAttackSessions().filter(session => state.attackFilter === "all" || session.verdict === state.attackFilter);
     if (search) sessions = sessions.filter(session => [session.id,session.shortId,session.agent,session.task,session.attackType,session.policy,...session.tools].join(" ").toLowerCase().includes(search));
@@ -1866,6 +2009,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     $$(".session-row", root).forEach(row => row.addEventListener("click", () => openAttackSession(row.dataset.sessionId)));
     $("#attackSessionFooter").textContent = `已连接 · ${sessions.length} 个会话 · ${sessions.reduce((sum,s) => sum + s.actionCount,0)} 个行为`;
     $("#loadMoreAttack").style.visibility = sessions.length > visible.length ? "visible" : "hidden";
+    root.scrollTop = scrollTop;
   }
 
   function openAttackSession(id) {
@@ -1878,6 +2022,9 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     state.selectedSessionId = session.id;
     state.attackSubview = "detail";
     state.selectedNodeId = session.nodes.find(n => n.kind === "decision")?.id || session.nodes.find(n => n.tone === "danger")?.id || session.nodes[0]?.id || "";
+    state.selectedContextKey = "";
+    state.selectedContextTool = "";
+    state.selectedTimelineIndex = -1;
     state.graphSessionKey = "";
     state.graphLayoutKey = "";
     const params = new URLSearchParams(window.location.search);
@@ -1885,7 +2032,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     window.history.pushState({}, "", `${PATH_BY_PAGE.attack}?${params.toString()}`);
     $("#attackSessionsView").classList.remove("active");
     $("#attackDetailView").classList.add("active");
-    renderAttackDetail();
+    renderAttackDetail({ preservePositions: false });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -1908,7 +2055,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     return sessions.find(s => s.id === state.selectedSessionId) || sessions[0] || null;
   }
 
-  function renderAttackDetail() {
+  function renderAttackDetail({ preservePositions = false } = {}) {
     const session = currentAttackSession();
     if (!session) return;
     if (!session.nodes.some((node) => node.id === state.selectedNodeId)) {
@@ -1932,23 +2079,31 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     $("#detailConclusionVerdict").className = `conclusion-verdict ${session.verdict}`;
     $("#detailConclusionVerdict").innerHTML = `<svg><use href="#i-shield"/></svg><div><small>玄鉴裁决</small><strong>${verdictMeta[0]}</strong><span>${verdictMeta[1]}</span></div>`;
     renderRequestContext(session);
-    renderSemanticGraph(session);
+    renderSemanticGraph(session, { preservePositions });
     renderTimeline(session);
   }
 
   function renderRequestContext(session) {
     const verdictLabel = session.verdict === "allow" ? "CLEAN" : "CONFIRMED";
     const verdictText = session.verdict === "allow" ? "未发现攻击" : "已确认风险";
-    $("#detailRequestContext").innerHTML = `
+    const root = $("#detailRequestContext");
+    root.innerHTML = `
       <section class="context-conversation" aria-label="会话消息">
-        <article class="context-message context-message-user">
+        <article class="context-message context-message-user" data-context-key="user" role="button" tabindex="0">
           <div class="context-message-avatar"><svg><use href="#i-user"/></svg></div>
           <div class="context-message-body">
             <header><div><small>USER INPUT</small><strong>用户请求</strong></div><time>${escapeHtml(session.started)}</time></header>
             <p>${escapeHtml(session.task)}</p>
           </div>
         </article>
-        <article class="context-message context-message-model">
+        <article class="context-message context-message-adversarial ${session.adversarialInput ? "has-payload" : ""}" data-context-key="adversarial" role="button" tabindex="0">
+          <div class="context-message-avatar"><svg><use href="#i-alert"/></svg></div>
+          <div class="context-message-body">
+            <header><div><small>ADVERSARIAL INPUT</small><strong>模型对抗性输入</strong></div><span>${session.adversarialInput ? "进入模型上下文" : "未发现"}</span></header>
+            <p>${escapeHtml(session.adversarialInput || "未发现进入模型上下文的独立对抗输入。")}</p>
+          </div>
+        </article>
+        <article class="context-message context-message-model" data-context-key="model" role="button" tabindex="0">
           <div class="context-message-avatar"><svg><use href="#i-bot"/></svg></div>
           <div class="context-message-body">
             <header><div><small>MODEL CONTEXT</small><strong>模型实际接收</strong></div><span>上下文重构后</span></header>
@@ -1957,12 +2112,12 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         </article>
       </section>
 
-      <section class="context-capabilities">
+      <section class="context-capabilities" data-context-key="tools" role="button" tabindex="0">
         <header><div><svg><use href="#i-tool"/></svg><span>可用工具</span></div><b>${session.tools.length}</b></header>
-        <div class="context-tools">${session.tools.map(t => `<code>${escapeHtml(t)}</code>`).join("")}</div>
+        <div class="context-tools">${session.tools.map(t => `<code data-context-tool="${escapeHtml(t)}">${escapeHtml(t)}</code>`).join("")}</div>
       </section>
 
-      <section class="attack-detection ${session.risk}">
+      <section class="attack-detection ${session.risk}" data-context-key="detection" role="button" tabindex="0">
         <header>
           <div class="attack-detection-title"><i><svg><use href="#${session.verdict === "allow" ? "i-check" : "i-alert"}"/></svg></i><span><small>SECURITY VERDICT</small><strong>检测结果</strong></span></div>
           <b>${verdictLabel}</b>
@@ -1978,6 +2133,26 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         <span><small>最近活动</small><b>${escapeHtml(session.last)}</b></span>
         <span><small>节点置信度</small><b>${session.confidence}%</b></span>
       </section>`;
+    $$("[data-context-key]", root).forEach((element) => {
+      const activate = () => selectContext(element.dataset.contextKey);
+      element.addEventListener("click", (event) => {
+        if (event.target.closest("[data-context-tool]")) return;
+        activate();
+      });
+      element.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        activate();
+      });
+    });
+    $$("[data-context-tool]", root).forEach((element) => {
+      element.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        selectContext("tools", { tool: element.dataset.contextTool });
+      });
+    });
+    syncContextHighlights();
   }
 
   function renderSemanticGraph(session, { preservePositions = false } = {}) {
@@ -1985,9 +2160,15 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     const viewport = $("#semanticViewport");
     const baseNodes = session.nodes.filter(n => !state.graphPathOnly || n.onPath);
     const viewportWidth = viewport?.clientWidth || 720;
-    const layoutKey = `${session.id}:${state.graphPathOnly ? "path" : "full"}:${Math.round(viewportWidth)}`;
+    const viewportHeight = viewport?.clientHeight || 520;
+    const layoutKey = `${session.id}:${state.graphPathOnly ? "path" : "full"}:${Math.round(viewportWidth)}x${Math.round(viewportHeight)}`;
     if (!preservePositions || state.graphSessionKey !== session.id || state.graphLayoutKey !== layoutKey) {
-      const layout = buildSemanticLayout(baseNodes, viewportWidth);
+      const layoutEdges = session.edges.filter((edge) => (
+        (!state.graphPathOnly || edge.onPath)
+        && baseNodes.some((node) => node.id === edge.from)
+        && baseNodes.some((node) => node.id === edge.to)
+      ));
+      const layout = buildSemanticLayout(baseNodes, viewportWidth, viewportHeight, layoutEdges);
       state.graphPositions = layout.positions;
       state.graphCanvas = layout;
       state.graphTransform = { x:0, y:0, scale:1 };
@@ -2000,21 +2181,26 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     const visibleNodes = replay.visibleNodes;
     const visibleIds = new Set(visibleNodes.map(n => n.id));
     const visibleEdges = session.edges.filter(e => visibleIds.has(e.from) && visibleIds.has(e.to) && (!state.graphPathOnly || e.onPath));
-    const replayLabel = replay.active ? ` · 回放 ${state.timelineReplayStep + 1}/${session.timeline.length}` : "";
+    const replayLabel = replay.active ? ` · 回放 ${state.timelineReplayStep + 1}/${sessionTimelineSteps(session).length}` : "";
     $("#graphConfidence").textContent = `${state.graphPathOnly ? "事件主路径" : "完整因果图"} · 置信度 ${session.confidence}% · ${visibleNodes.length}/${baseNodes.length} 节点${replayLabel}`;
     $("#semanticViewport").classList.toggle("replay-active", replay.active);
 
     const nodeRoot = $("#semanticNodes");
+    const nodeWidth = Number(state.graphCanvas.nodeWidth || 148);
+    const nodeHeight = Number(state.graphCanvas.nodeHeight || 68);
     nodeRoot.innerHTML = visibleNodes.map(n => {
       const p = state.graphPositions.get(n.id) || {x:n.x,y:n.y};
       const replayClass = replay.active ? (n.id === replay.currentId ? "replay-current" : "replay-past") : "";
-      return `<button class="semantic-node tone-${n.tone} kind-${n.kind} ${n.id === state.selectedNodeId ? "selected" : ""} ${replayClass}" data-node-id="${escapeHtml(n.id)}" style="--semantic-node-width:${state.graphCanvas.nodeWidth}px;left:${p.x}px;top:${p.y}px" type="button">
-        <i><svg><use href="#${graphKindIcon[n.kind] || "i-activity"}"/></svg></i>
-        <span><small>${escapeHtml(graphKindLabel(n.kind))}</small><strong>${escapeHtml(n.title)}</strong><em>${escapeHtml(n.subtitle)}</em></span>
-        <b>${nodeStateBadge(n)}</b>
-      </button>`;
+      const selectedClass = n.id === state.selectedNodeId ? "selected" : "";
+      return `<div class="semantic-node-hit ${selectedClass} ${replayClass}" data-node-id="${escapeHtml(n.id)}" role="button" tabindex="0" style="--semantic-node-width:${nodeWidth}px;--semantic-node-height:${nodeHeight}px;left:${p.x}px;top:${p.y}px">
+        <div class="semantic-node tone-${n.tone} kind-${n.kind} ${selectedClass}">
+          <i><svg><use href="#${graphKindIcon[n.kind] || "i-activity"}"/></svg></i>
+          <span><small>${escapeHtml(graphKindLabel(n.kind))}</small><strong>${escapeHtml(n.title)}</strong><em>${escapeHtml(n.subtitle)}</em></span>
+          <b>${nodeStateBadge(n)}</b>
+        </div>
+      </div>`;
     }).join("");
-    $$(".semantic-node", nodeRoot).forEach(element => {
+    $$(".semantic-node-hit", nodeRoot).forEach(element => {
       const id = element.dataset.nodeId;
       element.addEventListener("click", () => {
         if (Date.now() < state.suppressClickUntil) return;
@@ -2025,6 +2211,11 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         event.stopPropagation();
         if (state.selectedNodeId === id || state.timelineReplayActive) clearSemanticFocus(session);
       });
+      element.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        selectSemanticNode(id);
+      });
       bindNodeDrag(element, id);
     });
     drawSemanticEdges(session, visibleEdges, replay.currentId);
@@ -2032,39 +2223,117 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     renderSemanticInspector(session, state.selectedNodeId);
   }
 
-  function buildSemanticLayout(nodes, viewportWidth) {
-    const width = Math.max(300, Math.round(Number(viewportWidth) || 720));
-    const mobile = width < 520;
-    const columns = Math.min(3, Math.max(1, nodes.length));
-    const padding = mobile ? 8 : 16;
-    const gap = mobile ? 10 : 18;
-    const maxNodeWidth = mobile ? 110 : 188;
-    const minNodeWidth = mobile ? 86 : 148;
-    let nodeWidth = Math.floor((width - padding * 2 - gap * (columns - 1)) / columns);
-    nodeWidth = Math.max(minNodeWidth, Math.min(maxNodeWidth, nodeWidth));
-    const columnGap = columns > 1
-      ? Math.max(mobile ? 6 : 10, (width - padding * 2 - nodeWidth * columns) / (columns - 1))
-      : 0;
-    const height = 520;
-    const sorted = nodes.slice().sort((a, b) => {
-      const sequenceA = Number.isFinite(Number(a.sequence)) ? Number(a.sequence) : Number.MAX_SAFE_INTEGER;
-      const sequenceB = Number.isFinite(Number(b.sequence)) ? Number(b.sequence) : Number.MAX_SAFE_INTEGER;
-      return sequenceA - sequenceB || String(a.id).localeCompare(String(b.id));
+  function buildSemanticLayout(nodes, viewportWidth, viewportHeight, edges = []) {
+    const nodeWidth = 148;
+    const nodeHeight = 68;
+    const gapX = 36;
+    const gapY = 32;
+    const padX = 40;
+    const padY = 36;
+    const cols = nodes.length > 12 ? 5 : 4;
+    const rows = 4;
+    const contentW = padX * 2 + cols * nodeWidth + (cols - 1) * gapX;
+    const contentH = padY * 2 + rows * nodeHeight + (rows - 1) * gapY;
+    let width = Math.max(Math.round(Number(viewportWidth) || 720), contentW);
+    let height = Math.max(Math.round(Number(viewportHeight) || 520), contentH);
+    const originX = (width - (cols * nodeWidth + (cols - 1) * gapX)) / 2 + nodeWidth / 2;
+    const originY = (height - (rows * nodeHeight + (rows - 1) * gapY)) / 2 + nodeHeight / 2;
+    const cellW = nodeWidth + gapX;
+    const cellH = nodeHeight + gapY;
+    const lastCol = cols - 1;
+    const cell = (col, row) => ({
+      x: originX + clamp(col, 0, lastCol) * cellW,
+      y: originY + clamp(row, 0, rows - 1) * cellH,
     });
-    const rows = Math.max(1, Math.ceil(sorted.length / columns));
-    const firstY = mobile ? 72 : 86;
-    const lastY = mobile ? 430 : 446;
-    const rowStep = rows > 1 ? (lastY - firstY) / (rows - 1) : 0;
+    const blockedState = (node) => {
+      const text = `${node.state || ""} ${node.subtitle || ""} ${node.title || ""}`;
+      return node.tone === "danger"
+        || (node.tone === "control" && node.kind === "decision")
+        || /BLOCK|DENY|UNSCOPED|REJECT|阻断|拦截/i.test(text);
+    };
+    const preferences = (node) => {
+      if (node.kind === "intent") return [[0, 0]];
+      if (node.kind === "capability" && node.authorized !== false && !blockedState(node)) return [[1, 0], [2, 0]];
+      if (node.kind === "capability") return [[1, 2], [0, 2]];
+      if (node.kind === "taint") return [[lastCol, 0], [lastCol, 1]];
+      if (node.kind === "action" && !blockedState(node) && node.authorized !== false) return [[1, 1], [0, 1]];
+      if (node.kind === "action") return [[2, 1], [lastCol, 1]];
+      if (node.kind === "secret") return [[lastCol, 2], [2, 2]];
+      if (node.kind === "data") return [[0, 2], [1, 2]];
+      if (node.kind === "sink") return [[lastCol, 3]];
+      if (node.kind === "guard") return [[1, 3], [0, 3]];
+      if (node.kind === "decision") return [[2, 3], [lastCol, 3]];
+      if (node.kind === "agent") return [[0, 1]];
+      return [[2, 2], [1, 2], [lastCol, 2]];
+    };
+    const freeCells = [];
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) freeCells.push([col, row]);
+    }
+    const occupied = new Set();
     const positions = new Map();
-    sorted.forEach((item, index) => {
-      const row = Math.floor(index / columns);
-      const column = index % columns;
-      positions.set(item.id, {
-        x: padding + nodeWidth / 2 + column * (nodeWidth + columnGap),
-        y: firstY + row * rowStep,
-      });
-    });
-    return { width, height, nodeWidth, positions };
+    const ordered = nodes.slice().sort((left, right) => (Number(left.sequence) || 0) - (Number(right.sequence) || 0) || String(left.id).localeCompare(right.id));
+    for (const node of ordered) {
+      const candidates = [...preferences(node), ...freeCells];
+      const slot = candidates.find(([col, row]) => !occupied.has(`${col}:${row}`)) || freeCells[freeCells.length - 1];
+      occupied.add(`${slot[0]}:${slot[1]}`);
+      positions.set(node.id, cell(slot[0], slot[1]));
+    }
+    const separated = separateSemanticNodes([...positions.entries()], nodeWidth, nodeHeight, width, height);
+    return { width: separated.width, height: separated.height, nodeWidth, nodeHeight, positions: separated.positions };
+  }
+
+  function separateSemanticNodes(entries, nodeWidth, nodeHeight, width, height) {
+    const sepX = nodeWidth + 20;
+    const sepY = nodeHeight + 16;
+    const items = entries.map(([id, point]) => ({ id, x: point.x, y: point.y }));
+    for (let pass = 0; pass < 16; pass += 1) {
+      let moved = false;
+      for (let i = 0; i < items.length; i += 1) {
+        for (let j = i + 1; j < items.length; j += 1) {
+          const a = items[i];
+          const b = items[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const overlapX = sepX - Math.abs(dx);
+          const overlapY = sepY - Math.abs(dy);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+          if (dx === 0 && dy === 0) {
+            b.x += sepX;
+            moved = true;
+            continue;
+          }
+          if (overlapX <= overlapY) {
+            const push = overlapX / 2 + 1;
+            const dir = dx === 0 ? 1 : Math.sign(dx);
+            a.x -= dir * push;
+            b.x += dir * push;
+          } else {
+            const push = overlapY / 2 + 1;
+            const dir = dy === 0 ? 1 : Math.sign(dy);
+            a.y -= dir * push;
+            b.y += dir * push;
+          }
+          moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+    const minX = nodeWidth / 2 + 12;
+    const minY = nodeHeight / 2 + 12;
+    let maxX = width - nodeWidth / 2 - 12;
+    let maxY = height - nodeHeight / 2 - 12;
+    for (const item of items) {
+      maxX = Math.max(maxX, item.x);
+      maxY = Math.max(maxY, item.y);
+    }
+    const nextWidth = Math.max(width, Math.ceil(maxX + nodeWidth / 2 + 12));
+    const nextHeight = Math.max(height, Math.ceil(maxY + nodeHeight / 2 + 12));
+    const positions = new Map(items.map((item) => [item.id, {
+      x: clamp(item.x, minX, nextWidth - nodeWidth / 2 - 12),
+      y: clamp(item.y, minY, nextHeight - nodeHeight / 2 - 12),
+    }]));
+    return { positions, width: nextWidth, height: nextHeight };
   }
 
   function applySemanticCanvasStyles() {
@@ -2083,19 +2352,28 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   }
 
   function getSemanticReplayState(session, baseNodes = session.nodes.filter(n => !state.graphPathOnly || n.onPath)) {
-    if (!state.timelineReplayActive || state.timelineReplayStep < 0 || !session.timeline.length) {
+    const steps = sessionTimelineSteps(session);
+    if (!state.timelineReplayActive || state.timelineReplayStep < 0 || !steps.length) {
       return { active:false, visibleNodes:baseNodes, currentId:"" };
     }
-    const lastTimelineIndex = Math.max(1, session.timeline.length - 1);
-    const clampedStep = clamp(state.timelineReplayStep, 0, session.timeline.length - 1);
-    const visibleCount = Math.min(baseNodes.length, 1 + Math.round((clampedStep / lastTimelineIndex) * Math.max(0, baseNodes.length - 1)));
-    const visibleNodes = baseNodes.slice(0, Math.max(1, visibleCount));
-    return { active:true, visibleNodes, currentId:visibleNodes.at(-1)?.id || "" };
+    const clampedStep = clamp(state.timelineReplayStep, 0, steps.length - 1);
+    const currentId = steps[clampedStep]?.nodeId || "";
+    const currentNode = baseNodes.find((node) => node.id === currentId);
+    const currentSeq = Number(currentNode?.sequence);
+    let visibleNodes;
+    if (Number.isFinite(currentSeq) && currentSeq > 0) {
+      visibleNodes = baseNodes.filter((node) => (Number(node.sequence) || 0) <= currentSeq);
+    } else {
+      const index = baseNodes.findIndex((node) => node.id === currentId);
+      visibleNodes = index >= 0 ? baseNodes.slice(0, index + 1) : baseNodes.slice(0, clampedStep + 1);
+    }
+    if (!visibleNodes.length) visibleNodes = baseNodes.slice(0, 1);
+    return { active:true, visibleNodes, currentId: currentId || visibleNodes.at(-1)?.id || "" };
   }
 
   function drawSemanticEdges(session, edges = session.edges, replayCurrentId = "") {
     const svg = $("#semanticEdges");
-    const halfNodeWidth = Math.max(38, Number(state.graphCanvas.nodeWidth || 188) / 2);
+    const halfNodeWidth = Number(state.graphCanvas.nodeWidth || 148) / 2;
     const marker = `<defs><marker id="arrow-normal" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7z" fill="#a9bbb6"/></marker><marker id="arrow-warning" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7z" fill="#dfa04a"/></marker><marker id="arrow-danger" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7z" fill="#df6a5b"/></marker><marker id="arrow-control" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7z" fill="#2eaa8f"/></marker></defs>`;
     const paths = edges.map(e => {
       const a = state.graphPositions.get(e.from); const b = state.graphPositions.get(e.to);
@@ -2126,7 +2404,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     }, { passive:false });
     viewport.addEventListener("pointerdown", event => {
       if (state.attackSubview !== "detail" || event.button !== 0) return;
-      if (event.target.closest(".semantic-node") || event.target.closest("button")) return;
+      if (event.target.closest(".semantic-node-hit")) return;
       state.graphPan = { id:event.pointerId, x:event.clientX, y:event.clientY, startX:state.graphTransform.x, startY:state.graphTransform.y };
       viewport.setPointerCapture(event.pointerId);
       viewport.classList.add("dragging");
@@ -2147,45 +2425,57 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   }
 
   function bindNodeDrag(element, id) {
-    element.addEventListener("pointerdown", event => {
+    element.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || state.graphNodeDrag) return;
+      event.preventDefault();
       event.stopPropagation();
       const point = state.graphPositions.get(id);
       if (!point) return;
-      state.graphNodeDrag = { id, pointerId:event.pointerId, startClientX:event.clientX, startClientY:event.clientY, startX:point.x, startY:point.y, moved:false, element };
-      element.setPointerCapture(event.pointerId);
-      element.classList.add("dragging");
-    });
-    element.addEventListener("pointermove", event => {
-      const drag = state.graphNodeDrag;
-      if (!drag || drag.id !== id || drag.pointerId !== event.pointerId) return;
-      const dx = (event.clientX - drag.startClientX) / Math.max(.4, state.graphTransform.scale);
-      const dy = (event.clientY - drag.startClientY) / Math.max(.4, state.graphTransform.scale);
-      if (!drag.moved && Math.hypot(dx,dy) < 3) return;
-      drag.moved = true;
-      event.preventDefault();
-      const canvas = state.graphCanvas || { width:960, height:520, nodeWidth:188 };
-      const halfNodeWidth = Math.max(38, Number(canvas.nodeWidth || 188) / 2);
-      const point = {
-        x: clamp(drag.startX + dx, halfNodeWidth + 4, Math.max(halfNodeWidth + 4, canvas.width - halfNodeWidth - 4)),
-        y: clamp(drag.startY + dy, 42, Math.max(42, canvas.height - 42)),
+      const drag = {
+        id,
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startX: point.x,
+        startY: point.y,
+        moved: false,
+        element,
       };
-      state.graphPositions.set(id, point);
-      element.style.left = `${point.x}px`;
-      element.style.top = `${point.y}px`;
-      drawSemanticEdges(currentAttackSession(), currentVisibleEdges());
+      state.graphNodeDrag = drag;
+      element.classList.add("dragging");
+      const onMove = (moveEvent) => {
+        if (moveEvent.pointerId !== drag.pointerId || state.graphNodeDrag !== drag) return;
+        const dx = (moveEvent.clientX - drag.startClientX) / Math.max(0.4, state.graphTransform.scale);
+        const dy = (moveEvent.clientY - drag.startClientY) / Math.max(0.4, state.graphTransform.scale);
+        if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+        drag.moved = true;
+        moveEvent.preventDefault();
+        const canvas = state.graphCanvas || { width: 960, height: 520, nodeWidth: 148, nodeHeight: 68 };
+        const halfW = Number(canvas.nodeWidth || 148) / 2;
+        const halfH = Number(canvas.nodeHeight || 68) / 2;
+        const next = {
+          x: clamp(drag.startX + dx, halfW + 4, Math.max(halfW + 4, canvas.width - halfW - 4)),
+          y: clamp(drag.startY + dy, halfH + 4, Math.max(halfH + 4, canvas.height - halfH - 4)),
+        };
+        state.graphPositions.set(id, next);
+        element.style.left = `${next.x}px`;
+        element.style.top = `${next.y}px`;
+        drawSemanticEdges(currentAttackSession(), currentVisibleEdges());
+      };
+      const onUp = (upEvent) => {
+        if (upEvent.pointerId !== drag.pointerId) return;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        if (drag.moved) state.suppressClickUntil = Date.now() + 250;
+        element.classList.remove("dragging");
+        if (state.graphNodeDrag === drag) state.graphNodeDrag = null;
+        drawSemanticEdges(currentAttackSession(), currentVisibleEdges());
+      };
+      window.addEventListener("pointermove", onMove, { passive: false });
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
     });
-    const finish = event => {
-      const drag = state.graphNodeDrag;
-      if (!drag || drag.id !== id || drag.pointerId !== event.pointerId) return;
-      if (drag.moved) state.suppressClickUntil = Date.now() + 250;
-      element.classList.remove("dragging");
-      if (element.hasPointerCapture(event.pointerId)) element.releasePointerCapture(event.pointerId);
-      state.graphNodeDrag = null;
-      drawSemanticEdges(currentAttackSession(), currentVisibleEdges());
-    };
-    element.addEventListener("pointerup", finish);
-    element.addEventListener("pointercancel", finish);
   }
 
   function currentVisibleEdges() {
@@ -2197,37 +2487,420 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     return session.edges.filter(e => visibleIds.has(e.from) && visibleIds.has(e.to) && (!state.graphPathOnly || e.onPath));
   }
 
-  function selectSemanticNode(id) {
-    state.selectedNodeId = id;
+  function selectSemanticNode(id, { fromContext = false } = {}) {
     const session = currentAttackSession();
-    $$(".semantic-node").forEach(el => el.classList.toggle("selected", el.dataset.nodeId === id));
+    if (!fromContext) {
+      state.selectedContextKey = "";
+      state.selectedContextTool = "";
+    }
+    state.selectedNodeId = id;
+    if (session && !state.timelineReplayActive) {
+      state.selectedTimelineIndex = sessionTimelineSteps(session).findIndex((step) => step.nodeId === id);
+    }
+    $$(".semantic-node-hit").forEach(el => {
+      const on = el.dataset.nodeId === id;
+      el.classList.toggle("selected", on);
+      el.querySelector(".semantic-node")?.classList.toggle("selected", on);
+    });
+    syncContextHighlights();
+    if (session) syncTimelineHighlights(session);
     renderSemanticInspector(session, id);
   }
 
   function renderSemanticInspector(session, nodeId) {
     if (!session) return;
     const target = $("#semanticInspector");
-    if (!nodeId) {
-      target.innerHTML = `<div class="inspector-empty-light"><strong>未选择节点</strong><span>单击节点查看证据；双击当前选中节点可取消聚焦。</span></div>`;
+    if (!nodeId && !state.selectedContextKey) {
+      target.innerHTML = `<div class="inspector-empty-light"><strong>未选择节点</strong><span>单击语义节点、左侧气泡或底部时间线，查看对应证据。</span></div>`;
       return;
     }
     const n = session.nodes.find(item => item.id === nodeId);
+    const extraFacts = contextFactRows(session, state.selectedContextKey, state.selectedContextTool);
     if (!n) {
-      target.innerHTML = `<div class="inspector-empty-light"><strong>选择一个语义节点</strong><span>查看当前发生的行为与关键证据。</span></div>`;
+      if (extraFacts.length) {
+        renderContextOnlyInspector(session, extraFacts);
+        return;
+      }
+      target.innerHTML = `<div class="inspector-empty-light"><strong>选择一个语义节点</strong><span>查看当前发生的行为、参数、策略命中与关联审计记录。</span></div>`;
       return;
     }
+    const graphNode = (session.graph?.nodes || []).find(item => item.id === nodeId) || n;
+    const evidence = (session.graph && (session.rawRecords || []).length)
+      ? buildSelectionEvidence(inspectorEvidenceSession(session), { type: "node", value: graphNode })
+      : null;
     const inbound = session.edges.filter(e => e.to === n.id).map(e => ({...e, other:session.nodes.find(x => x.id === e.from)}));
     const outbound = session.edges.filter(e => e.from === n.id).map(e => ({...e, other:session.nodes.find(x => x.id === e.to)}));
-    const facts = Object.entries(n.facts || {}).map(([key,value]) => `<div><dt>${escapeHtml(factLabel(key))}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
-    const relations = [...inbound.map(e => ["输入",e]), ...outbound.map(e => ["输出",e])].map(([direction,e]) => `<button class="relation-button" data-related-node="${escapeHtml(e.other?.id || "")}"><span><small>${direction} · ${escapeHtml(e.label)}</small><strong>${escapeHtml(e.other?.title || "未知节点")}</strong></span><svg><use href="#i-arrow"/></svg></button>`).join("");
+    const facts = compactInspectorFacts([...extraFacts, ...inspectorFactRows(n, evidence)], n);
+    const grouped = groupInspectorObservations(Array.isArray(evidence?.observations) ? evidence.observations : []);
+    const policies = compactInspectorPolicies([
+      ...(Array.isArray(evidence?.policies) ? evidence.policies : []),
+      n.facts?.rule,
+      session.policy,
+    ]);
+    const records = compactInspectorRecords(Array.isArray(evidence?.records) ? evidence.records : []);
+    const relationSource = Array.isArray(evidence?.relations) && evidence.relations.length
+      ? evidence.relations.map((item) => ({
+        direction: item.direction === "in" ? "输入" : "输出",
+        label: item.label,
+        id: item.nodeId,
+        title: item.nodeTitle,
+      }))
+      : [
+        ...inbound.map(e => ({ direction: "输入", label: e.label, id: e.other?.id, title: e.other?.title })),
+        ...outbound.map(e => ({ direction: "输出", label: e.label, id: e.other?.id, title: e.other?.title })),
+      ];
+    const relations = relationSource.filter((item) => item.id).map((item) => `<button class="relation-button" data-related-node="${escapeHtml(item.id)}"><span><small>${escapeHtml(item.direction)} · ${escapeHtml(truncateInspectorText(item.label || "关联", 18))}</small><strong>${escapeHtml(truncateInspectorText(item.title || "未知节点", 28))}</strong></span><svg><use href="#i-arrow"/></svg></button>`).join("");
+    const contextLabel = contextSelectionLabel(state.selectedContextKey);
+    const description = firstValue(evidence?.description, n.description, n.subtitle, "后端未提供节点说明");
+    const occurred = evidence?.occurredAt ? formatTime(evidence.occurredAt) : "";
     target.innerHTML = `
-      <div class="inspector-selection-light"><span>当前节点</span><strong>${escapeHtml(n.id)}</strong></div>
-      <section class="inspector-summary tone-${n.tone}"><i><svg><use href="#${graphKindIcon[n.kind] || "i-activity"}"/></svg></i><div><small>${escapeHtml(graphKindLabel(n.kind))}</small><h3>${escapeHtml(n.title)}</h3><p>${escapeHtml(n.description)}</p></div></section>
-      <section class="inspector-section-light"><h4>现场信息</h4><dl>${facts || `<div><dt>状态</dt><dd>${escapeHtml(n.subtitle)}</dd></div>`}</dl></section>
-      ${n.facts?.rule || session.policy ? `<section class="inspector-section-light"><h4>相关策略</h4><code>${escapeHtml(n.facts?.rule || session.policy)}</code></section>` : ""}
+      <div class="inspector-selection-light"><span>${escapeHtml(contextLabel || `当前节点 · ${graphKindLabel(n.kind)}`)}</span><strong title="${escapeHtml(n.id)}">${escapeHtml(truncateInspectorText(n.id, 18))}</strong></div>
+      <section class="inspector-summary tone-${n.tone}"><i><svg><use href="#${graphKindIcon[n.kind] || "i-activity"}"/></svg></i><div><small>${escapeHtml(graphKindLabel(n.kind))}${occurred ? ` · ${escapeHtml(occurred)}` : ""}</small><h3>${escapeHtml(evidence?.title || n.title)}</h3><p>${escapeHtml(description)}</p></div></section>
+      <section class="inspector-section-light"><h4>现场信息</h4><dl>${inspectorDl(facts)}</dl></section>
+      ${(grouped.summary.length || grouped.findingsHtml || grouped.payloadHtml) ? `<section class="inspector-section-light"><h4>观测证据</h4>${grouped.summary.length ? `<dl>${inspectorDl(grouped.summary)}</dl>` : ""}${grouped.findingsHtml}${grouped.payloadHtml}</section>` : ""}
+      ${policies.html}
       ${relations ? `<section class="inspector-section-light"><h4>输入 / 输出关系</h4><div class="relation-buttons">${relations}</div></section>` : ""}
-      <section class="inspector-section-light"><h4>会话信息</h4><dl><div><dt>智能体</dt><dd>${escapeHtml(session.agent)}</dd></div><div><dt>会话 ID</dt><dd>${escapeHtml(session.shortId)}</dd></div><div><dt>置信度</dt><dd>${session.confidence}%</dd></div></dl></section>`;
+      ${records.html}
+      ${evidence?.downstreamDecision ? `<section class="inspector-section-light"><h4>下游裁决</h4><dl>${inspectorDl([{ label: "节点", value: evidence.downstreamDecision.title }, { label: "状态", value: evidence.downstreamDecision.state }])}</dl></section>` : ""}
+      <section class="inspector-section-light">
+        <details class="inspector-fold inspector-session-fold">
+          <summary><span>会话信息</span><b>智能体 / 裁决 / 时间</b></summary>
+          <dl>${inspectorDl([
+            { label: "智能体", value: session.agent },
+            { label: "会话 ID", value: session.shortId },
+            { label: "攻击类型", value: session.attackType },
+            { label: "玄鉴裁决", value: String(session.verdict || "").toUpperCase() },
+            { label: "命中策略", value: session.policy },
+            { label: "置信度", value: `${session.confidence}%` },
+            { label: "开始时间", value: session.started },
+            { label: "最近活动", value: session.last },
+          ], { foldLong: false })}</dl>
+        </details>
+      </section>`;
     $$("[data-related-node]", target).forEach(btn => btn.addEventListener("click", () => selectSemanticNode(btn.dataset.relatedNode)));
+  }
+
+  function contextSelectionLabel(key) {
+    return ({
+      user: "请求上下文 · 用户请求",
+      adversarial: "请求上下文 · 对抗性输入",
+      model: "请求上下文 · 模型接收",
+      tools: "请求上下文 · 可用工具",
+      detection: "请求上下文 · 检测结果",
+    })[key] || "";
+  }
+
+  function contextFactRows(session, key, tool = "") {
+    if (key === "user") {
+      return [
+        { label: "选择来源", value: "用户请求气泡" },
+        { label: "用户原文", value: session.task },
+        { label: "发生时间", value: session.started },
+      ];
+    }
+    if (key === "adversarial") {
+      return [
+        { label: "选择来源", value: "对抗性输入气泡" },
+        { label: "对抗性输入", value: session.adversarialInput || "未发现独立对抗输入" },
+        { label: "进入模型上下文", value: session.adversarialInput ? "是" : "否" },
+      ];
+    }
+    if (key === "model") {
+      return [
+        { label: "选择来源", value: "模型接收气泡" },
+        { label: "模型输入", value: session.modelTask },
+        { label: "与用户原文", value: session.modelTask === session.task ? "一致" : "已被上下文改写" },
+      ];
+    }
+    if (key === "tools") {
+      return [
+        { label: "选择来源", value: tool ? `工具 ${tool}` : "可用工具" },
+        { label: "当前工具", value: tool || "全部" },
+        { label: "工具清单", value: session.tools.join("、") || "未记录" },
+        { label: "数量", value: String(session.tools.length) },
+      ];
+    }
+    if (key === "detection") {
+      return [
+        { label: "选择来源", value: "检测结果卡片" },
+        { label: "攻击类型", value: session.attackType },
+        { label: "玄鉴裁决", value: String(session.verdict || "").toUpperCase() },
+        { label: "命中策略", value: session.policy },
+        { label: "检测载荷", value: session.payload },
+      ];
+    }
+    return [];
+  }
+
+  function renderContextOnlyInspector(session, extraFacts) {
+    const target = $("#semanticInspector");
+    const key = state.selectedContextKey;
+    const title = contextSelectionLabel(key) || "请求上下文";
+    target.innerHTML = `
+      <div class="inspector-selection-light"><span>${escapeHtml(title)}</span><strong>上下文</strong></div>
+      <section class="inspector-summary"><i><svg><use href="#i-activity"/></svg></i><div><small>请求上下文</small><h3>${escapeHtml(title.replace("请求上下文 · ", ""))}</h3><p>该选择尚未映射到语义图节点，先展示请求上下文中的原始证据。</p></div></section>
+      <section class="inspector-section-light"><h4>现场信息</h4><dl>${inspectorDl(extraFacts)}</dl></section>`;
+  }
+
+  function selectContext(key, { tool = "" } = {}) {
+    const session = currentAttackSession();
+    if (!session) return;
+    state.selectedContextKey = key;
+    state.selectedContextTool = tool;
+    state.timelineReplayActive = false;
+    state.timelineReplayStep = -1;
+    const nodeId = tool ? findActionNodeForTool(session, tool) : findNodeForContext(session, key);
+    if (nodeId) {
+      selectSemanticNode(nodeId, { fromContext: true });
+      renderSemanticGraph(session, { preservePositions: true });
+      return;
+    }
+    state.selectedNodeId = "";
+    syncContextHighlights();
+    syncTimelineHighlights(session);
+    renderSemanticInspector(session, "");
+  }
+
+  function findNodeForContext(session, key) {
+    const kinds = {
+      user: ["intent"],
+      model: ["taint", "data", "intent"],
+      tools: ["capability", "action"],
+      detection: ["decision", "guard"],
+    }[key] || [];
+    const nodes = (session.nodes || []).filter((node) => node.onPath !== false);
+    for (const kind of kinds) {
+      const found = nodes.find((node) => node.kind === kind);
+      if (found) return found.id;
+    }
+    return "";
+  }
+
+  function findActionNodeForTool(session, tool) {
+    const key = String(tool || "").toLowerCase();
+    if (!key) return findNodeForContext(session, "tools");
+    const found = (session.nodes || []).find((node) => node.kind === "action" && [node.tool, node.title, node.subtitle]
+      .some((value) => String(value || "").toLowerCase().includes(key) || key.includes(String(value || "").toLowerCase())));
+    return found?.id || findNodeForContext(session, "tools");
+  }
+
+  function syncContextHighlights() {
+    $$("[data-context-key]").forEach((element) => {
+      element.classList.toggle("is-selected", element.dataset.contextKey === state.selectedContextKey);
+    });
+    $$("[data-context-tool]").forEach((element) => {
+      element.classList.toggle("is-selected", Boolean(state.selectedContextTool) && element.dataset.contextTool === state.selectedContextTool);
+    });
+  }
+
+  function inspectorEvidenceSession(session) {
+    return {
+      graph: session.graph,
+      records: session.rawRecords || [],
+      alert: session.alert || null,
+      decision: session.verdict,
+      decisionLabel: ({ deny: "阻断", ask: "审批", allow: "放行" })[session.verdict] || session.verdict,
+      metadata: {
+        incidentId: session.shortId,
+        sessionId: session.id,
+        source: session.agent,
+        scenario: session.attackType,
+      },
+      policies: session.policy ? [{ code: session.policy }] : [],
+    };
+  }
+
+  function inspectorFactRows(node, evidence) {
+    if (Array.isArray(evidence?.facts) && evidence.facts.length) return evidence.facts;
+    return Object.entries(node.facts || {})
+      .map(([key, value]) => ({ label: factLabel(key), value: displayInspectorValue(value) }))
+      .filter((item) => item.value);
+  }
+
+  function inspectorDl(rows, options = {}) {
+    return rows
+      .map((row) => Array.isArray(row) ? { label: row[0], value: row[1] } : row)
+      .filter((item) => item?.label && displayInspectorValue(item.value))
+      .map((item) => `<div><dt>${escapeHtml(item.label)}</dt><dd>${inspectorValueHtml(item.value, options)}</dd></div>`)
+      .join("");
+  }
+
+  function inspectorIsCodeValue(text) {
+    return text.startsWith("{") || text.startsWith("[");
+  }
+
+  function inspectorValueHtml(value, { foldLong = true } = {}) {
+    const text = displayInspectorValue(value);
+    if (!text) return "";
+    if (foldLong && (inspectorIsCodeValue(text) || text.includes("\n") || text.length > 72)) {
+      return inspectorFoldHtml("查看完整内容", text, { preview: truncateInspectorText(text, 36) });
+    }
+    if (inspectorIsCodeValue(text) || text.includes("\n")) return `<pre>${escapeHtml(text)}</pre>`;
+    return escapeHtml(text);
+  }
+
+  function displayInspectorValue(value) {
+    if (value === undefined || value === null || value === "") return "";
+    if (Array.isArray(value)) return value.map((item) => displayInspectorValue(item)).filter(Boolean).join("、");
+    if (typeof value === "object") {
+      try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+    }
+    return String(value).trim();
+  }
+
+  function uniqueInspectorValues(values) {
+    const seen = new Set();
+    const output = [];
+    for (const value of values) {
+      const text = String(value || "").trim();
+      if (!text || seen.has(text)) continue;
+      seen.add(text);
+      output.push(text);
+    }
+    return output;
+  }
+
+  function truncateInspectorText(value, max = 36) {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (text.length <= max) return text;
+    return `${text.slice(0, Math.max(0, max - 1))}…`;
+  }
+
+  function splitInspectorReasons(value) {
+    return String(value || "")
+      .split(/[;；]\s*/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function uniqueInspectorReasons(values) {
+    const seen = new Set();
+    const output = [];
+    for (const value of values) {
+      for (const part of splitInspectorReasons(value)) {
+        const key = part.toLowerCase().replace(/\s+/g, " ");
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        output.push(part);
+      }
+    }
+    return output;
+  }
+
+  function inspectorFoldHtml(label, body, { preview } = {}) {
+    const text = displayInspectorValue(body);
+    if (!text) return "";
+    const inner = inspectorIsCodeValue(text)
+      ? `<pre>${escapeHtml(text)}</pre>`
+      : `<p>${escapeHtml(text)}</p>`;
+    return `<details class="inspector-fold"><summary><span>${escapeHtml(label)}</span><b>${escapeHtml(preview || truncateInspectorText(text, 36))}</b></summary>${inner}</details>`;
+  }
+
+  function compactInspectorFacts(facts, node) {
+    const hidden = new Set(["证据边界", "血缘 ID"]);
+    const rows = (facts || [])
+      .map((row) => Array.isArray(row) ? { label: row[0], value: row[1] } : row)
+      .filter((item) => item?.label && !hidden.has(item.label) && displayInspectorValue(item.value));
+    return rows.length ? rows : [{ label: "状态", value: node.subtitle || node.tone }];
+  }
+
+  function groupInspectorObservations(observations) {
+    const summaryLabels = new Set(["工具名称", "运行裁决", "风险分数", "数据来源", "场景", "执行状态", "收件人", "工具"]);
+    const findingLabels = new Set(["检测发现", "裁决原因", "记录原因", "策略信号"]);
+    const payloadLabels = new Set(["工具参数", "目标 URL", "文件路径", "用户请求", "命令内容", "返回预览", "任务能力", "允许工具", "允许目标", "禁止工具"]);
+    const summary = [];
+    const findings = [];
+    const payloads = [];
+    for (const item of observations || []) {
+      const label = String(item.label || "").trim();
+      const value = displayInspectorValue(item.value);
+      if (!label || !value) continue;
+      if (findingLabels.has(label)) {
+        findings.push(value);
+        continue;
+      }
+      if (payloadLabels.has(label) || value.length > 96 || value.includes("\n") || value.startsWith("{") || value.startsWith("[")) {
+        payloads.push({ label, value });
+        continue;
+      }
+      if (summaryLabels.has(label) || value.length <= 48) summary.push({ label, value });
+      else payloads.push({ label, value });
+    }
+    const uniqueFindings = uniqueInspectorReasons(findings);
+    let findingsHtml = "";
+    if (uniqueFindings.length === 1 && uniqueFindings[0].length <= 72) {
+      findingsHtml = `<dl>${inspectorDl([{ label: "检测发现", value: uniqueFindings[0] }])}</dl>`;
+    } else if (uniqueFindings.length) {
+      findingsHtml = inspectorFoldHtml(
+        `检测发现 · ${uniqueFindings.length} 条`,
+        uniqueFindings.map((item, index) => `${index + 1}. ${item}`).join("\n"),
+        { preview: truncateInspectorText(uniqueFindings[0], 36) }
+      );
+    }
+    return {
+      summary,
+      findingsHtml,
+      payloadHtml: payloads.map((item) => inspectorFoldHtml(item.label, item.value)).join(""),
+    };
+  }
+
+  function compactInspectorPolicies(values) {
+    const policies = uniqueInspectorValues(values);
+    if (!policies.length) return { html: "" };
+    const shortCodes = policies.filter((item) => item.length <= 42 && !/\s/.test(item));
+    const longOnes = policies.filter((item) => !shortCodes.includes(item));
+    let inner = "";
+    if (shortCodes.length) {
+      inner += `<div class="inspector-policy-list">${shortCodes.map((code) => `<code>${escapeHtml(code)}</code>`).join("")}</div>`;
+    }
+    if (longOnes.length === 1) {
+      inner += inspectorFoldHtml("命中策略说明", longOnes[0], { preview: truncateInspectorText(longOnes[0], 36) });
+    } else if (longOnes.length > 1) {
+      inner += inspectorFoldHtml(
+        `策略说明 · ${longOnes.length} 条`,
+        longOnes.map((item, index) => `${index + 1}. ${item}`).join("\n"),
+        { preview: truncateInspectorText(longOnes[0], 36) }
+      );
+    }
+    return { html: `<section class="inspector-section-light"><h4>相关策略</h4>${inner}</section>` };
+  }
+
+  function compactInspectorRecords(records) {
+    if (!records.length) return { html: "" };
+    const groups = [];
+    const seen = new Map();
+    for (const record of records) {
+      const title = String(record.title || record.type || record.id || "").trim();
+      const firstReason = uniqueInspectorReasons([record.summary])[0] || "";
+      const key = `${title.toLowerCase()}::${firstReason.toLowerCase().slice(0, 72)}`;
+      if (seen.has(key)) {
+        seen.get(key).count += 1;
+        continue;
+      }
+      const group = { record, count: 1 };
+      seen.set(key, group);
+      groups.push(group);
+    }
+    const visible = groups.slice(0, 3);
+    const hidden = groups.slice(3);
+    const items = visible.map(({ record, count }) => {
+      const layer = record.layer || record.type || "记录";
+      const title = record.title || record.type || record.id;
+      const countLabel = count > 1 ? ` · 同类 ${count} 条` : "";
+      const summary = displayInspectorValue(record.summary);
+      const head = `<article class="inspector-record inspector-record-compact"><small>${escapeHtml(layer)} · ${escapeHtml(formatTime(record.time))}${escapeHtml(countLabel)}</small><strong>${escapeHtml(truncateInspectorText(title, 42))}</strong>`;
+      if (!summary) return `${head}</article>`;
+      if (summary.length <= 64) return `${head}<p>${escapeHtml(summary)}</p></article>`;
+      return `${head}${inspectorFoldHtml("完整摘要", summary, { preview: "展开查看" })}</article>`;
+    }).join("");
+    const extra = hidden.length
+      ? inspectorFoldHtml(
+          `其余 ${hidden.length} 组审计记录`,
+          hidden.map(({ record, count }) => `${formatTime(record.time)} ${record.title || ""}${count > 1 ? `（同类 ${count} 条）` : ""}\n${record.summary || ""}`).join("\n\n"),
+          { preview: "展开全部" }
+        )
+      : "";
+    return { html: `<section class="inspector-section-light"><h4>关联审计记录</h4><div class="inspector-record-list">${items}</div>${extra}</section>` };
   }
 
   function applyGraphTransform() {
@@ -2251,14 +2924,150 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   }
 
   function renderTimeline(session) {
-    $("#timelineSummary").textContent = `${session.timeline.length} 个关键步骤 · ${session.started} → ${session.last}`;
-    $("#incidentTimeline").innerHTML = session.timeline.map(([time,label,tone],index) => `<button class="timeline-step tone-${tone}" data-timeline-index="${index}"><i></i><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(time)}</small></span></button>`).join("");
-    $$(".timeline-step").forEach((step,index) => {
-      step.addEventListener("click", () => focusTimelineStep(session,index,true));
+    const steps = sessionTimelineSteps(session);
+    $("#timelineSummary").textContent = `${steps.length} 个关键步骤 · ${session.started} → ${session.last}`;
+    $("#incidentTimeline").innerHTML = steps.map((step, index) => `<button class="timeline-step tone-${step.tone || "normal"}" data-timeline-index="${index}" data-node-id="${escapeHtml(step.nodeId || "")}" type="button"><i></i><span><strong>${escapeHtml(step.label)}</strong>${step.detail ? `<em>${escapeHtml(step.detail)}</em>` : ""}<small>${escapeHtml(step.time)}</small></span></button>`).join("");
+    $$(".timeline-step").forEach((step, index) => {
+      step.addEventListener("click", () => focusTimelineStep(session, index, false));
       step.addEventListener("dblclick", event => {
         event.preventDefault();
         if (step.classList.contains("active")) clearSemanticFocus(session);
       });
+    });
+    syncTimelineHighlights(session);
+  }
+
+  function sessionTimelineSteps(session) {
+    if (!session) return [];
+    const items = session.timeline || [];
+    if (items.length && !Array.isArray(items[0]) && items[0]?.nodeId) return items;
+    return buildSessionTimelineSteps(session);
+  }
+
+  function buildSessionTimelineSteps(session) {
+    const events = normalizeTimelineEvents(session);
+    const pathNodes = (session.nodes || []).filter((node) => node.onPath !== false);
+    if (pathNodes.length) {
+      const byNode = new Map();
+      for (const event of events) {
+        const nodeId = event.nodeId || inferTimelineNodeId(session, event.label || event.title || event.stage);
+        if (!nodeId) continue;
+        byNode.set(nodeId, event);
+      }
+      const ordered = pathNodes.slice().sort((left, right) => (Number(left.sequence) || 0) - (Number(right.sequence) || 0) || String(left.id).localeCompare(String(right.id)));
+      return ordered.map((node, index) => {
+        const event = byNode.get(node.id);
+        return {
+          time: event?.time || formatTime(node.time) || session.started,
+          label: timelineStepLabel(node, event),
+          detail: timelineStepDetail(node, event),
+          tone: node.tone || event?.tone || "normal",
+          nodeId: node.id,
+          index,
+        };
+      });
+    }
+    const seen = new Set();
+    const compacted = [];
+    for (const event of events) {
+      const key = `${event.stage || event.label || event.title || ""}:${String(event.time || "").slice(0, 8)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      compacted.push({
+        time: event.time || session.started,
+        label: event.stage || event.label || event.title || "运行时事件",
+        detail: event.title && event.title !== event.stage ? truncateInspectorText(event.title, 22) : "",
+        tone: event.tone || "normal",
+        nodeId: event.nodeId || "",
+        index: compacted.length,
+      });
+    }
+    return compacted.length ? compacted : [{ time: session.last, label: "后端未提供时间线", detail: "", tone: "control", nodeId: "", index: 0 }];
+  }
+
+  function normalizeTimelineEvents(session) {
+    return (session.timelineEvents || session.timeline || []).map((item) => {
+      if (Array.isArray(item)) {
+        return {
+          time: item[0],
+          title: item[1],
+          label: item[1],
+          stage: item[1],
+          tone: item[2] || "normal",
+          nodeId: inferTimelineNodeId(session, item[1]),
+        };
+      }
+      return {
+        time: item.time ? (String(item.time).length > 8 ? formatTime(item.time) : item.time) : "",
+        title: item.title || item.label,
+        label: item.stage || item.title || item.label,
+        stage: item.stage,
+        detail: item.detail,
+        tone: item.tone || "normal",
+        nodeId: item.nodeId || inferTimelineNodeId(session, item.stage || item.title || item.label),
+        type: item.type,
+      };
+    });
+  }
+
+  function inferTimelineNodeId(session, text) {
+    const value = String(text || "");
+    const nodes = session.nodes || [];
+    const byKind = (kind) => nodes.find((node) => node.kind === kind && node.onPath !== false)?.id || "";
+    if (/用户输入|用户请求|任务/.test(value)) return byKind("intent");
+    if (/能力|授权|解析/.test(value)) return byKind("capability");
+    if (/注入/.test(value)) return byKind("taint") || byKind("data");
+    if (/敏感/.test(value)) return byKind("secret");
+    if (/目标|收件|sink|外部/.test(value)) return byKind("sink");
+    if (/阻断|裁决|ALLOW|DENY|ASK|审批|Guard|拦截|放行/.test(value)) return byKind("decision") || byKind("guard");
+    const lowered = value.toLowerCase();
+    const action = nodes.find((node) => node.kind === "action" && [node.tool, node.title, node.subtitle]
+      .some((item) => item && (lowered.includes(String(item).toLowerCase()) || String(item).toLowerCase().includes(lowered))));
+    return action?.id || "";
+  }
+
+  function timelineStepLabel(node, event) {
+    if (node.kind === "intent") return "用户输入";
+    if (node.kind === "capability") return /UNSCOPED|未授权|false/.test(`${node.subtitle || ""} ${node.facts?.authorized}`) ? "授权越界" : "能力解析";
+    if (node.kind === "agent") return "Agent 计划";
+    if (node.kind === "action") {
+      const tool = node.title || "工具调用";
+      const status = String(node.subtitle || "").toUpperCase();
+      if (/BLOCK|DENY/.test(status)) return `${tool} · 阻断`;
+      if (/ASK|APPROVAL/.test(status)) return `${tool} · 待审`;
+      return tool;
+    }
+    if (node.kind === "taint") return "检测提示注入";
+    if (node.kind === "secret") return "敏感数据";
+    if (node.kind === "data") return "工具返回";
+    if (node.kind === "sink") return "外部目标";
+    if (node.kind === "guard") return "玄鉴拦截";
+    if (node.kind === "decision") {
+      const status = String(node.subtitle || node.facts?.state || "").toUpperCase();
+      if (status.includes("DENY") || status.includes("BLOCK")) return "玄鉴阻断";
+      if (status.includes("ASK")) return "等待审批";
+      if (status.includes("ALLOW")) return "安全放行";
+      return "安全裁决";
+    }
+    return event?.stage || graphKindLabel(node.kind);
+  }
+
+  function timelineStepDetail(node, event) {
+    if (node.kind === "action") return "";
+    if (node.kind === "intent") return truncateInspectorText(node.subtitle || node.title, 22);
+    if (event?.title && event.title !== event.stage) return truncateInspectorText(event.title, 22);
+    return truncateInspectorText(node.title, 22);
+  }
+
+  function syncTimelineHighlights(session) {
+    const steps = sessionTimelineSteps(session);
+    const activeIndex = state.timelineReplayActive
+      ? state.timelineReplayStep
+      : steps.findIndex((step) => step.nodeId && step.nodeId === state.selectedNodeId);
+    $$(".timeline-step").forEach((step, index) => {
+      step.classList.toggle("active", index === activeIndex);
+      step.classList.toggle("elapsed", state.timelineReplayActive && index < state.timelineReplayStep);
+      step.classList.toggle("future", state.timelineReplayActive && index > state.timelineReplayStep);
     });
   }
 
@@ -2267,31 +3076,33 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     state.timelineReplayActive = false;
     state.timelineReplayStep = -1;
     state.selectedNodeId = "";
+    state.selectedContextKey = "";
+    state.selectedContextTool = "";
+    state.selectedTimelineIndex = -1;
+    syncContextHighlights();
     $$(".timeline-step").forEach(step => step.classList.remove("active","elapsed","future"));
     if (session) renderSemanticGraph(session, { preservePositions:true });
     showToast("已取消图谱聚焦");
   }
 
-  function focusTimelineStep(session, index, activateReplay = true) {
-    const clampedIndex = clamp(index, 0, Math.max(0, session.timeline.length - 1));
-    $$(".timeline-step").forEach((step,i) => {
-      step.classList.toggle("active", i === clampedIndex);
-      step.classList.toggle("elapsed", i < clampedIndex);
-      step.classList.toggle("future", i > clampedIndex);
-    });
-
+  function focusTimelineStep(session, index, activateReplay = false) {
+    const steps = sessionTimelineSteps(session);
+    const clampedIndex = clamp(index, 0, Math.max(0, steps.length - 1));
+    const step = steps[clampedIndex];
+    state.selectedTimelineIndex = clampedIndex;
+    state.selectedContextKey = "";
+    state.selectedContextTool = "";
     if (activateReplay) {
       state.timelineReplayActive = true;
       state.timelineReplayStep = clampedIndex;
-      const baseNodes = session.nodes.filter(n => !state.graphPathOnly || n.onPath);
-      const replay = getSemanticReplayState(session, baseNodes);
-      if (replay.currentId) state.selectedNodeId = replay.currentId;
-      renderSemanticGraph(session, { preservePositions:true });
     } else {
-      const candidates = session.nodes.filter(n => n.onPath);
-      const mapped = candidates[Math.min(candidates.length-1, Math.round(clampedIndex / Math.max(1,session.timeline.length-1) * (candidates.length-1)))];
-      if (mapped) selectSemanticNode(mapped.id);
+      state.timelineReplayActive = false;
+      state.timelineReplayStep = -1;
     }
+    if (step?.nodeId) state.selectedNodeId = step.nodeId;
+    renderSemanticGraph(session, { preservePositions:true });
+    syncContextHighlights();
+    syncTimelineHighlights(session);
   }
 
   function toggleTimelinePlayback() {
@@ -2308,10 +3119,11 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     button.innerHTML = `<span>Ⅱ</span>暂停回放`;
     button.classList.add("playing");
     let index = 0;
+    const steps = sessionTimelineSteps(session);
     focusTimelineStep(session,index,true);
     state.timelineTimer = setInterval(() => {
       index += 1;
-      if (index >= session.timeline.length) {
+      if (index >= steps.length) {
         stopTimelinePlayback();
         return;
       }
@@ -2338,6 +3150,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     status.classList.toggle("paused", state.attackPaused);
     status.querySelector("span").textContent = state.attackPaused ? "同步已暂停" : "实时同步";
     showToast(state.attackPaused ? "会话同步已暂停" : "会话同步已恢复");
+    if (!state.attackPaused) void refreshLiveMonitor();
   }
 
   function startAttackClock() {
@@ -2347,6 +3160,98 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     };
     tick();
     setInterval(tick, 1000);
+  }
+
+  function startAttackLiveSync() {
+    if (state.attackLiveTimer) clearTimeout(state.attackLiveTimer);
+    const tick = async () => {
+      try {
+        if (!state.attackPaused && !document.hidden && (state.page === "attack" || state.page === "overview")) {
+          await refreshLiveMonitor();
+        }
+      } finally {
+        const delay = document.hidden ? 8000 : state.page === "attack" ? 2000 : 4000;
+        state.attackLiveTimer = setTimeout(tick, delay);
+      }
+    };
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && !state.attackPaused) void refreshLiveMonitor();
+    });
+    state.attackLiveTimer = setTimeout(tick, 2000);
+  }
+
+  async function refreshLiveMonitor() {
+    if (state.attackSyncing) return false;
+    if (location.protocol === "file:") return false;
+    state.attackSyncing = true;
+    try {
+      const bundle = await dashboardApi.loadLiveMonitorData();
+      if (!bundle.availableCount) return false;
+      const records = Array.isArray(bundle.resources.records?.records) ? bundle.resources.records.records : [];
+      const fingerprint = liveDataFingerprint(records, bundle.resources.overview);
+      if (fingerprint === state.attackFingerprint) return true;
+      const previousSessionKey = sessionLiveKey(currentAttackSession());
+      if (bundle.resources.records) state.resources.records = bundle.resources.records;
+      if (bundle.resources.overview) state.resources.overview = bundle.resources.overview;
+      if (bundle.resources.alerts) state.resources.alerts = bundle.resources.alerts;
+      state.liveRecords = records;
+      hydrateFromLiveData(state.resources, { includeSettings: false, updateOverview: state.page === "overview" });
+      state.attackFingerprint = fingerprint;
+      applyLiveMonitorRender(previousSessionKey);
+      return true;
+    } catch (error) {
+      console.info("live monitor refresh failed", error);
+      return false;
+    } finally {
+      state.attackSyncing = false;
+    }
+  }
+
+  function applyLiveMonitorRender(previousSessionKey) {
+    if (state.page === "attack") {
+      renderAttackMetrics();
+      renderAttackSessions();
+      if (state.attackSubview === "detail") {
+        const session = currentAttackSession();
+        if (session && sessionLiveKey(session) !== previousSessionKey) {
+          renderAttackDetail({ preservePositions: true });
+        }
+      }
+      return;
+    }
+    if (state.page === "overview") {
+      const data = MOCK_BY_RANGE[state.range];
+      renderMetrics(data.metrics);
+      renderTrend(data.decisions);
+      renderRisks(data.risks);
+      renderEvents(state.dataMode === "live" || state.dataMode === "partial" ? normalizeLiveEvents(state.liveRecords).slice(0, 5) : []);
+      updateAlertBadges(data.alerts);
+    }
+  }
+
+  async function resetAttackSessions() {
+    const button = $("#attackResetButton");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "清空中";
+    }
+    try {
+      await dashboardApi.resetRecords();
+      state.sessions = [];
+      state.liveRecords = [];
+      state.selectedSessionId = "";
+      state.attackFingerprint = "";
+      if (state.attackSubview === "detail") showAttackSessions();
+      await tryLoadLiveData();
+      showToast("会话记录已清空");
+    } catch (error) {
+      showToast(`清空失败：${error.message || error}`);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = "清空";
+      }
+    }
   }
 
   function exportAttackSessions() {
@@ -2383,12 +3288,16 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
       return false;
     }
     hydrateFromLiveData(bundle.resources);
+    state.attackFingerprint = liveDataFingerprint(
+      Array.isArray(bundle.resources.records?.records) ? bundle.resources.records.records : [],
+      bundle.resources.overview,
+    );
     setDataMode(bundle.availableCount === bundle.totalCount ? "live" : "partial");
     renderAll();
     return true;
   }
 
-  function hydrateFromLiveData(resources) {
+  function hydrateFromLiveData(resources, { includeSettings = true, updateOverview = true } = {}) {
     const overview = resources.overview || {};
     const records = Array.isArray(resources.records?.records) ? resources.records.records : [];
     const enforcement = resources.enforcement || {};
@@ -2452,17 +3361,18 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         ["活跃会话", formatNumber(Number(range.activeSessions || 0)), "窗口聚合", "当前窗口", "activity", "info"],
       ];
       MOCK_BY_RANGE[key].decisions = { allow: Number(decisionsForRange.allow || 0), ask: Number(decisionsForRange.ask || 0), deny: Number(decisionsForRange.deny || 0) };
-      MOCK_BY_RANGE[key].risks = Array.isArray(range.risks) ? range.risks : MOCK_BY_RANGE[key].risks;
       MOCK_BY_RANGE[key].alerts = Number(range.alerts || 0);
     }
-    updateRuntimeChrome(enforcement);
-    hydrateSettings(resources);
+    if (includeSettings) {
+      updateRuntimeChrome(enforcement);
+      hydrateSettings(resources);
+    }
     $$("#rangeSwitch button").forEach((button) => {
       const supported = Boolean(windowRanges[button.dataset.range]) || button.dataset.range === "24h";
       button.disabled = !supported;
       button.title = supported ? `${button.dataset.range} 安全事件聚合` : "后端暂未提供该时间窗口聚合";
     });
-    updateOverviewGraph();
+    if (updateOverview) updateOverviewGraph();
   }
 
   function applyUnavailableData(errors = {}) {
@@ -2579,7 +3489,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     const nodes = layoutGraphNodes(graph.nodes || []).map((item) => {
       const facts = item.facts || item.details || {};
       const kind = normalizeGraphKind(item.kind);
-      return node(
+      const mapped = node(
         String(item.id),
         kind,
         firstValue(item.title, item.label, graphKindLabel(kind)),
@@ -2591,6 +3501,10 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         facts,
         item.onPath !== false,
       );
+      mapped.sequence = Number(item.sequence) || 0;
+      mapped.time = item.time || "";
+      mapped.tool = firstValue(item.tool, item.original_tool, facts.tool);
+      return mapped;
     });
     const edges = (graph.edges || []).map((item, index) => edge(
       firstValue(item.id, `edge-${index + 1}`),
@@ -2617,17 +3531,21 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         : decision === "ask" || conclusion.severity === "中危"
           ? "medium"
           : "low";
-    const timeline = (session.timeline || []).map((item, index) => {
+    const timelineEvents = (session.timeline || []).map((item, index) => {
       const record = item.record || records[index] || {};
-      return [
-        formatTime(item.createdAt || item.created_at || record.created_at || item.time),
-        firstValue(item.stage, item.title, item.label, record.title, record.type, "运行时事件"),
-        timelineTone(item, decision),
-      ];
+      return {
+        time: formatTime(item.createdAt || item.created_at || record.created_at || item.time),
+        title: firstValue(item.title, item.label, record.title, record.type),
+        stage: firstValue(item.stage),
+        detail: firstValue(item.detail, item.summary, record.summary),
+        nodeId: firstValue(item.nodeId, item.node_id),
+        type: firstValue(item.type, record.type),
+        tone: timelineTone(item, decision),
+      };
     });
     const started = formatTime(session.metadata?.createdAt || records[0]?.created_at || session.latest);
     const last = formatTime(session.metadata?.latestAt || records.at(-1)?.created_at || session.latest);
-    return {
+    const normalized = {
       id: String(session.id),
       shortId: incident,
       agent,
@@ -2651,13 +3569,18 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
       tools: Array.from(new Set((session.requestContext?.tools || []).map(String))),
       actionCount: Number(session.actionCount || graph.nodes?.filter((item) => item.kind === "action").length || records.length),
       riskCount: Number(session.reasons?.length || graph.nodes?.filter((item) => graphNodeTone(item) !== "normal").length || 0),
-      payload: firstValue(session.requestContext?.adversarial, session.requestContext?.originalInput, "后端未提供对抗载荷"),
+      adversarialInput: firstValue(session.requestContext?.adversarial, ""),
+      payload: firstValue(session.requestContext?.adversarial, session.requestContext?.detectionEvidence, "未发现独立对抗载荷"),
       nodes,
       edges,
-      timeline: timeline.length ? timeline : [[last, "后端未提供时间线", "control"]],
+      timelineEvents,
+      timeline: [],
       rawRecords: records,
       graph,
+      alert: session.alert || null,
     };
+    normalized.timeline = buildSessionTimelineSteps(normalized);
+    return normalized;
   }
 
   function layoutGraphNodes(rawNodes) {
@@ -2677,7 +3600,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
 
   function normalizeGraphKind(kind) {
     const value = String(kind || "data").toLowerCase();
-    return ["intent", "capability", "action", "data", "sink", "guard", "decision"].includes(value) ? value : "data";
+    return ["intent", "capability", "agent", "action", "data", "taint", "secret", "sink", "guard", "decision"].includes(value) ? value : "data";
   }
 
   function graphNodeTone(item) {
@@ -2804,7 +3727,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         id,
         name: id,
         provider: envelope.issuer === "builtin" ? "OpenClaw Core" : (envelope.issuer || "本地管理员"),
-        version: envelope.version || "后端暂未提供",
+        version: envelope.version || "",
         risk,
         category: toolCategory(sideEffects),
         integrity: revoked ? "revoked" : envelope.signature ? "ok" : "review",
@@ -2825,7 +3748,7 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
           manifest.canExfiltrate ? "外部 Sink 边界校验" : "无外部 Sink 能力",
           manifest.requiresExplicitAuthorization ? "TaskSpec 授权校验" : "默认能力",
         ],
-        description: revoked ? `工具已吊销：${revoked.reason || "后端未提供原因"}` : "安全属性来自后端 Tool Security Manifest。",
+        description: revoked ? `工具已吊销：${revoked.reason || "后端未提供原因"}` : "",
         rawManifest: manifest,
         revoked,
       };
@@ -2851,8 +3774,8 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         agent: session?.agent || firstValue(alert.source, "OpenClaw"),
         session: session?.id || "",
         rule: firstValue(alert.rule, "SECURITY_EVENT_REVIEW"),
-        time: formatTime(alert.created_at || alert.time),
-        age: relativeAge(alert.created_at || alert.time),
+        time: formatTime(alertCreatedAt(alert)),
+        age: relativeAge(alertCreatedAt(alert)),
         summary: firstValue(alert.reason, "后端未提供告警摘要"),
         evidence: JSON.stringify({ score: alert.score ?? null, reason: alert.reason || "", causal_graph: alert.causal_graph || null }, null, 2),
         chain: chain.length ? chain : [firstValue(alert.tool, "tool"), firstValue(alert.rule, "policy"), decision.toUpperCase()],
@@ -2876,13 +3799,13 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
         actor: firstValue(recordAgent(record), record.payload?.source, "OpenClaw"),
         actorType: recordAgent(record) ? "Agent" : "Runtime",
         verdict,
-        trace: firstValue(record.run_id, record.session_key, "后端未提供"),
-        rule: firstValue(recordRule(record), "后端未提供"),
-        hash: firstValue(record.event_hash, record.payload?.event_hash, "后端未提供"),
-        prev: firstValue(record.previous_hash, record.payload?.previous_hash, "后端未提供"),
+        trace: firstValue(record.run_id, record.session_key),
+        rule: firstValue(recordRule(record)),
+        hash: firstValue(record.event_hash, record.payload?.event_hash, record.eventHash, ""),
+        prev: firstValue(record.previous_hash, record.payload?.previous_hash, record.previousHash, ""),
         date: formatDate(created),
         time: formatTime(created),
-        detail: firstValue(record.summary, record.payload?.reason, "后端未提供事件说明"),
+        detail: firstValue(record.summary, record.payload?.reason),
         payload: record.payload || {},
         record,
       };
@@ -2901,11 +3824,9 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
 
   function buildRiskBars(records, alerts) {
     const groups = [
-      ["越权工具调用", /capability|scope|unauthor/i, "danger"],
-      ["敏感数据外发", /taint|external.?sink|exfil|外发/i, "danger"],
-      ["提示注入", /prompt.?injection|注入/i, "warn"],
-      ["危险命令", /shell|command|exec/i, "warn"],
-      ["工具完整性", /manifest|digest|integrity/i, "safe"],
+      ["提示注入", /prompt.?injection|注入|hidden|calendar|workspace_injection|外发/i, "warn"],
+      ["工具劫持", /hijack|backdoor|manifest|skill|unregistered|后门|process_sales|deeptrap_r3/i, "danger"],
+      ["记忆污染", /memory|poison|记忆|deeptrap_r2|env-auditor/i, "danger"],
     ];
     return groups.map(([label, matcher, tone]) => {
       const count = [...records, ...alerts].filter((item) => matcher.test(`${item.rule || ""} ${item.title || ""} ${item.reason || ""} ${item.summary || ""}`)).length;
@@ -2948,8 +3869,19 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   }
 
   function shortDigest(value) {
-    const text = String(value || "后端暂未提供");
+    const text = String(value || "").trim();
+    if (!text) return "未覆盖";
     return text.length > 18 ? `${text.slice(0, 8)}…${text.slice(-6)}` : text;
+  }
+
+  function auditHashLabel(value) {
+    const text = String(value || "").trim();
+    if (!text || text === "后端未提供" || text === "后端暂未提供") return "未覆盖";
+    return shortDigest(text);
+  }
+
+  function alertCreatedAt(alert) {
+    return firstValue(alert?.created_at, alert?.createdAt, alert?.timestamp, /^\d{4}-\d{2}-\d{2}T/.test(String(alert?.time || "")) ? alert.time : "");
   }
 
   function normalizeAlertSeverity(value) {
@@ -2959,9 +3891,13 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
 
   function relativeAge(value) {
     const time = new Date(value || 0).getTime();
-    if (!Number.isFinite(time) || !time) return "后端未提供";
+    if (!Number.isFinite(time) || !time) return "刚刚";
     const minutes = Math.max(0, Math.round((Date.now() - time) / 60000));
-    return minutes < 1 ? "刚刚" : `${minutes} 分钟前`;
+    if (minutes < 1) return "刚刚";
+    if (minutes < 60) return `${minutes} 分钟前`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return `${hours} 小时前`;
+    return `${Math.round(hours / 24)} 天前`;
   }
 
   function formatDate(value) {
@@ -3055,9 +3991,9 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
     toastTimer = setTimeout(() => toast.classList.remove("show"), 2200);
   }
 
-  function graphKindLabel(kind) { return ({intent:"意图",capability:"能力",action:"动作",data:"数据",sink:"外部目标",guard:"安全控制",decision:"裁决"})[kind] || kind; }
+  function graphKindLabel(kind) { return ({intent:"意图",capability:"能力",agent:"智能体",action:"动作",data:"数据",taint:"污染数据",secret:"敏感数据",sink:"外部目标",guard:"安全控制",decision:"裁决"})[kind] || kind; }
   function nodeStateBadge(n) { const s=String(n.facts?.state || n.subtitle || "").toUpperCase(); return s.length > 12 ? s.slice(0,12) : s; }
-  function factLabel(key) { return ({state:"当前状态",value:"语义值",scope:"授权范围",target:"目标",field:"数据字段",trust:"信任等级",recipient:"收件人",rule:"规则",latency:"裁决延迟",command:"命令"})[key] || key; }
+  function factLabel(key) { return ({state:"当前状态",value:"语义值",scope:"授权范围",target:"目标",field:"数据字段",trust:"信任等级",recipient:"收件人",rule:"规则",latency:"裁决延迟",command:"命令",tool:"工具",path:"字段路径",source:"数据来源",integrity:"数据完整性",authorized:"授权状态",effect:"副作用",sink:"目标",reason:"原因"})[key] || key; }
   function riskLabel(risk) { return risk === "high" ? "高" : risk === "medium" ? "中" : "低"; }
   function toolLabel(tool) { return ({ shell: "Shell", web: "Web", mail: "邮件", file: "文件", memory: "Memory" })[tool] || tool; }
   function compactRouteLabel(value) {
@@ -3069,8 +4005,8 @@ import { dashboardApi } from "/dashboard-api.js?v=20260817-5";
   }
   function formatNumber(n) { return Number(n || 0).toLocaleString("zh-CN"); }
   function formatTime(value) {
-    const date = value ? new Date(value) : new Date();
-    if (Number.isNaN(date.getTime())) return String(value || "--:--:--").slice(-8);
+    const date = value ? new Date(value) : null;
+    if (!date || Number.isNaN(date.getTime())) return String(value || "--:--:--").slice(-8);
     return date.toLocaleTimeString("zh-CN", { hour12: false });
   }
   function clamp(value,min,max){ return Math.min(max,Math.max(min,value)); }

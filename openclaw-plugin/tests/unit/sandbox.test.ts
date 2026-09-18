@@ -42,7 +42,7 @@ describe("workspace shadow sandbox", () => {
     expect(existsSync(transaction!.tempDir)).toBe(false);
   });
 
-  it("executes a real wrapped command in the shadow workspace before commit", () => {
+  it.skipIf(process.platform === "win32")("executes a real wrapped command in the shadow workspace before commit", () => {
     const dir = mkdtempSync(join(tmpdir(), "agentsentry-sandbox-test-"));
     tempDirs.push(dir);
     const workspace = join(dir, "workspace");

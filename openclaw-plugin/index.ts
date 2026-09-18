@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { ConfigSchema, PluginConfig } from "./config.ts";
 import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
@@ -42,6 +43,14 @@ import {
 } from "./core/policy.ts";
 import { clampText, redactObject, safeStringify } from "./core/redact.ts";
 import { newId, RecordStore, runIdForSession, type RecordSeverity } from "./core/records.ts";
+import {
+  ToolCallPerformanceTracker,
+  TOOL_CALL_PERFORMANCE_SCHEMA_VERSION,
+  roundDurationMs,
+  type ToolCallPerformanceSample,
+} from "./core/performance-metrics.ts";
+import { buildProductionGraphInput, createGraphTrainingEnvelope, type GraphTrainingEnvelope } from "./core/graph-learning/production-graph.ts";
+import { GraphShadowRouter, type GraphShadowScore } from "./core/graph-learning/shadow-router.ts";
 import { RollbackManager, type OperationCheckpoint, type RollbackSnapshot } from "./core/rollback.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
 import {
@@ -50,6 +59,8 @@ import {
   semanticJudgeMessage,
   semanticJudgeTaskSpec,
   semanticJudgeToolCall,
+  semanticGateForMemoryWrite,
+  semanticGateForToolCall,
 } from "./core/semantic.ts";
 import { SessionRegistry } from "./core/session-registry.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
@@ -103,6 +114,8 @@ const plugin = {
   rollback: null as RollbackManager | null,
   dashboard: null as DashboardServer | null,
   startupConfig: null as PluginConfig | null,
+  performanceMetrics: new ToolCallPerformanceTracker(),
+  graphShadow: null as GraphShadowRouter | null,
   sessions: new SessionRegistry<SessionState>({ canEvict: sessionCanEvict }),
 
   register(api: OpenClawPluginApi) {
@@ -112,6 +125,9 @@ const plugin = {
     plugin.store = new RecordStore(plugin.config);
     plugin.approvalCache = new ApprovalCache(plugin.config);
     plugin.rollback = new RollbackManager(plugin.config);
+    plugin.performanceMetrics = new ToolCallPerformanceTracker();
+    applyGraphShadowRuntimeConfig(plugin.config);
+    plugin.graphShadow = new GraphShadowRouter(plugin.config);
     configureToolManifestSigning(plugin.config);
     configureAgentTrust(plugin.config);
     plugin.sessions = new SessionRegistry<SessionState>({
@@ -126,12 +142,19 @@ const plugin = {
         if (!plugin.config!.dashboard.enabled) return;
         plugin.dashboard = await startDashboard(plugin.config!, plugin.store!, api.logger, {
           getConfig: () => plugin.config!,
+          getPerformanceMetrics: () => plugin.performanceMetrics.snapshot(),
+          recordPerformanceSample: (sample) => plugin.performanceMetrics.record(sample),
+          getGraphShadowStatus: () => plugin.graphShadow?.status() || null,
+          scoreGraphShadow: (input) => plugin.graphShadow?.score(input) || Promise.resolve(null),
           setConfig: (nextConfig) => {
             plugin.config = nextConfig;
             plugin.approvalCache = new ApprovalCache(nextConfig);
             plugin.rollback = new RollbackManager(nextConfig);
             configureToolManifestSigning(nextConfig);
             configureAgentTrust(nextConfig);
+            applyGraphShadowRuntimeConfig(nextConfig);
+            void plugin.graphShadow?.close();
+            plugin.graphShadow = new GraphShadowRouter(nextConfig);
           },
           getRollback: () => plugin.rollback,
         });
@@ -143,6 +166,8 @@ const plugin = {
           plugin.dashboard = null;
         }
         await plugin.store?.close();
+        await plugin.graphShadow?.close();
+        plugin.graphShadow = null;
         plugin.sessions.clear();
       },
     });
@@ -168,6 +193,9 @@ const plugin = {
           },
           setConfig: (nextConfig) => {
             plugin.config = nextConfig;
+            applyGraphShadowRuntimeConfig(nextConfig);
+            void plugin.graphShadow?.close();
+            plugin.graphShadow = new GraphShadowRouter(nextConfig);
           },
           persistConfig: (nextConfig) => saveRuntimeConfig(nextConfig),
           resetRuntimeConfig: () => deleteRuntimeConfig(plugin.config!),
@@ -554,6 +582,10 @@ const plugin = {
     });
 
     api.on("before_tool_call", async (event, ctx) => {
+      const toolCallStartedAt = performance.now();
+      const performanceRecordedAt = new Date().toISOString();
+      let semanticActionGraphMs = 0;
+      let semanticActionGraphEvaluations = 0;
       const state = getSession(ctx);
       state.toolCount += 1;
       const rawParams = (event?.params || {}) as Record<string, unknown>;
@@ -573,35 +605,84 @@ const plugin = {
       const detectionContext = {
         toolCallId: event.toolCallId || "",
         workspaceDir: workspaceDirFor(ctx, state),
+        onPerformance: (stage: "semantic_action_graph", durationMs: number) => {
+          if (stage !== "semantic_action_graph") return;
+          semanticActionGraphMs += durationMs;
+          semanticActionGraphEvaluations += 1;
+        },
       };
+      const preliminaryPolicyStartedAt = performance.now();
+      const preprocessingMs = preliminaryPolicyStartedAt - toolCallStartedAt;
       const preliminary = detectToolCall(event.toolName, params, plugin.config!, state.policyState, [], detectionContext);
+      const preliminaryPolicyMs = performance.now() - preliminaryPolicyStartedAt;
       const action = preliminary.policy.action;
+      const graphProjectionStartedAt = performance.now();
+      let graphLearning: GraphTrainingEnvelope | null = null;
+      try {
+        const graphInput = buildProductionGraphInput({
+          graph: preliminary.policy.effects?.semanticActionGraph || state.policyState.semanticActionGraph,
+          currentActionNodeId: preliminary.policy.action_graph_node_id,
+          taskMode: preliminary.policy.task_spec.task_mode,
+          taskFamily: preliminary.policy.task_spec.task_family,
+        });
+        graphLearning = createGraphTrainingEnvelope({
+          sampleId: newId("graph_sample"),
+          capturedAt: performanceRecordedAt,
+          graphInput,
+        });
+      } catch {
+        // Training telemetry is optional and cannot change enforcement.
+      }
+      const graphTrainingProjectionMs = performance.now() - graphProjectionStartedAt;
+      const graphShadowScore: GraphShadowScore | null = graphLearning && plugin.graphShadow
+        ? await plugin.graphShadow.score(graphLearning.input)
+        : null;
+      const toolJudgeRouted = semanticGateForToolCall(event.toolName, params, plugin.config!, {
+        policyState: state.policyState,
+        relatedFindings: preliminary.policy.findings,
+      }).shouldJudge;
+      const semanticToolStartedAt = performance.now();
       const semanticToolFindings = await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
         policyState: state.policyState,
         relatedFindings: preliminary.policy.findings,
       });
+      const semanticToolMs = performance.now() - semanticToolStartedAt;
       const memoryContent = action.tool === "memory_write"
         ? firstToolString(params, ["content", "body", "text", "value", "payload", "new_string", "replacement", "patch"]) || params
         : "";
+      const memoryJudgeRouted = action.tool === "memory_write"
+        && semanticGateForMemoryWrite(memoryContent, plugin.config!).shouldJudge;
+      const semanticMemoryStartedAt = performance.now();
       const semanticMemoryFindings = action.tool === "memory_write"
         ? await semanticJudgeMemoryWrite(memoryContent, state.policyState.currentTask, plugin.config!, {
           policyState: state.policyState,
           relatedFindings: preliminary.policy.findings,
         })
         : [];
+      const semanticMemoryMs = performance.now() - semanticMemoryStartedAt;
+      const ambiguousJudgeRouted = plugin.config!.semantic.enabled
+        && plugin.config!.semantic.judgeToolCalls
+        && plugin.config!.semantic.mode !== "off"
+        && preliminary.policy.deterministic_disposition === "ambiguous";
+      const semanticAmbiguousStartedAt = performance.now();
       const semanticAmbiguousFindings = await semanticJudgeAmbiguousAction({
         action: preliminary.policy.action,
         taskSpec: preliminary.policy.task_spec,
         policyState: state.policyState,
         preliminary: preliminary.policy,
       }, plugin.config!);
+      const semanticAmbiguousMs = performance.now() - semanticAmbiguousStartedAt;
       const semanticFindings = [...semanticToolFindings, ...semanticMemoryFindings, ...semanticAmbiguousFindings];
+      const finalPolicyStartedAt = performance.now();
       const result = semanticFindings.length
         ? detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings, detectionContext)
         : preliminary;
+      const finalPolicyMs = semanticFindings.length ? performance.now() - finalPolicyStartedAt : 0;
       const cachedApproval = plugin.approvalCache!.has(operationKey) && result.decision === "ask" && !result.policy.deterministic_block;
       const effectiveDecision = cachedApproval ? "allow" : result.decision;
       const effectivePolicy = cachedApproval ? { ...result.policy, decision: "allow" as const } : result.policy;
+      const decisionReadyMs = performance.now() - toolCallStartedAt;
+      const effectsStartedAt = performance.now();
       const cacheEntry = cachedApproval ? plugin.approvalCache!.recordHit(operationKey) : null;
       const severity = severityForDecision(effectiveDecision);
       const graphStatus = plugin.config!.enforcement.mode === "approval" && (effectiveDecision === "deny" || effectiveDecision === "ask")
@@ -620,6 +701,38 @@ const plugin = {
         )
         : null;
       const executionParams = sandbox ? paramsWithSandboxCommand(params, sandbox.wrappedCommand) : params;
+      const judgeRouteTotal = Number(toolJudgeRouted) + Number(memoryJudgeRouted) + Number(ambiguousJudgeRouted);
+      const performanceSample: ToolCallPerformanceSample = {
+        schema_version: TOOL_CALL_PERFORMANCE_SCHEMA_VERSION,
+        recorded_at: performanceRecordedAt,
+        stages_ms: {
+          preprocessing: roundDurationMs(preprocessingMs),
+          preliminary_policy: roundDurationMs(preliminaryPolicyMs),
+          semantic_action_graph: roundDurationMs(semanticActionGraphMs),
+          graph_training_projection: roundDurationMs(graphTrainingProjectionMs),
+          semantic_tool_judge: roundDurationMs(semanticToolMs),
+          semantic_memory_judge: roundDurationMs(semanticMemoryMs),
+          semantic_ambiguous_judge: roundDurationMs(semanticAmbiguousMs),
+          final_policy: roundDurationMs(finalPolicyMs),
+          decision_ready: roundDurationMs(decisionReadyMs),
+          effects_and_checkpoint: 0,
+          total_until_audit: 0,
+        },
+        semantic_action_graph_evaluations: semanticActionGraphEvaluations,
+        judge_routes: {
+          tool: toolJudgeRouted,
+          memory: memoryJudgeRouted,
+          ambiguous: ambiguousJudgeRouted,
+          total: judgeRouteTotal,
+        },
+        graph_projection: {
+          nodes: graphLearning?.input.graph.nodes.length || 0,
+          edges: graphLearning?.input.graph.edges.length || 0,
+          truncated: graphLearning?.input.graph.projection_truncated ?? true,
+        },
+        decision: effectiveDecision,
+        deterministic_disposition: result.policy.deterministic_disposition,
+      };
       const payload = {
         toolName: event.toolName,
         normalized_tool: result.policy.action.tool,
@@ -627,6 +740,9 @@ const plugin = {
         params: serializeToolParams(params, plugin.config!),
         decision: effectiveDecision,
         original_decision: result.decision,
+        raw_decision: result.policy.intervention?.raw_decision || result.decision,
+        intervention: result.policy.intervention || null,
+        intervention_mode: plugin.config!.intervention.mode,
         enforcement_mode: plugin.config!.enforcement.mode,
         operation_key: operationKey,
         approval_cache_hit: cachedApproval,
@@ -653,6 +769,9 @@ const plugin = {
           network_isolation: sandbox.useBestEffortNetworkIsolation ? "best-effort-unshare" : "host-network-fallback",
         } : null,
         findings: result.findings,
+        graph_learning: graphLearning,
+        graph_shadow: graphShadowScore,
+        performance: performanceSample,
       };
       const operationCheckpoint = effectiveDecision === "allow"
         ? plugin.rollback!.checkpointOperation({
@@ -678,6 +797,10 @@ const plugin = {
         });
         trimRuntimeCheckpoints(state);
       }
+
+      performanceSample.stages_ms.effects_and_checkpoint = roundDurationMs(performance.now() - effectsStartedAt);
+      performanceSample.stages_ms.total_until_audit = roundDurationMs(performance.now() - toolCallStartedAt);
+      plugin.performanceMetrics.record(performanceSample);
 
       plugin.store!.add({
         run_id: state.runId,
@@ -1182,5 +1305,10 @@ const plugin = {
     }
   },
 };
+
+function applyGraphShadowRuntimeConfig(config: PluginConfig): void {
+  const runtime = process.env.AGENTSENTRY_GRAPH_SHADOW_ENABLED;
+  if (runtime === "1" || runtime === "true") config.graphLearning.enabled = true;
+}
 
 export default plugin;

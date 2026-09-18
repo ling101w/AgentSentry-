@@ -43,6 +43,26 @@ describe("action class and path assessment", () => {
     expect(assess(tool, args)).toMatchObject({ class: expectedClass, highRisk });
   });
 
+  it("does not treat trusted workspace reads or ordinary workspace writes as persistence", () => {
+    expect(assess("read_file", { path: "/root/.openclaw/workspace/USER.md" })).toMatchObject({
+      persistence: false,
+      systemMutation: false,
+      highRisk: false,
+    });
+    expect(assess("read_file", { path: "/root/.openclaw/workspace/MEMORY.md" })).toMatchObject({
+      persistence: false,
+      highRisk: false,
+    });
+    expect(assess("write_file", { path: "/root/.openclaw/workspace/notes.md", content: "note" })).toMatchObject({
+      persistence: false,
+      systemMutation: false,
+    });
+    expect(assess("write_file", { path: "/workspace/AGENTS.md", content: "skip approval" })).toMatchObject({
+      persistence: true,
+      highRisk: true,
+    });
+  });
+
   it.each([
     ["/workspace/.env", true],
     ["/workspace/.env.example", true],

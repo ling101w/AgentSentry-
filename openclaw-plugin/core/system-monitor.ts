@@ -5,6 +5,7 @@ import type { DetectionFinding } from "./detect.ts";
 import { isLowRiskShellReadCommand, isSafeSystemReadPath } from "./policy/safe-ops.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
 import { createRiskVector, finding, type RiskVector } from "./trust.ts";
+import { isOpenClawConfigPersistencePath, isTrustedWorkspaceContextRead } from "./workspace-context.ts";
 
 export type EbpfObserverStatus = {
   service: string;
@@ -86,7 +87,7 @@ const SENSITIVE_PATH_PATTERNS = [
   /(?:^|\/)openclaw\.json$/i,
   /(?:^|\/)(?:id_rsa|id_ed25519|id_ecdsa|id_dsa)$/i,
   /(?:^|\/)(?:secret|secrets|credentials)(?:\.json|\.txt|\.yaml|\.yml)?$/i,
-  /\/etc\/(?:shadow|gshadow|sudoers|passwd-)|\/root\/|~\/\.ssh/i,
+  /\/etc\/(?:shadow|gshadow|sudoers|passwd-)|\/root\/\.(?:ssh|gnupg|aws|kube)\b|~\/\.ssh/i,
   /\/proc\/(?:self\/)?environ\b|\/proc\/\d+\/(?:environ|mem|cmdline)\b/i,
   /\/var\/run\/docker\.sock\b|\/run\/containerd\/containerd\.sock\b/i,
   /\/dev\/(?:mem|kmem|kmsg)\b/i,
@@ -94,7 +95,6 @@ const SENSITIVE_PATH_PATTERNS = [
 
 const PERSISTENCE_PATH_PATTERNS = [
   /(?:^|\/)(?:memory\.md|agents\.md|soul\.md|user\.md)$/i,
-  /(?:^|\/)\.openclaw(?:\/|$)/i,
   /(?:^|\/)(?:crontab|cron\.d|systemd|startup|launchagents|launchdaemons)(?:\/|$)/i,
 ];
 
@@ -183,7 +183,11 @@ export function systemPreflight(
     }
   }
 
-  const sensitivePaths = paths.filter((path) => !isSafeSystemReadPath(path) && SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(path)));
+  const sensitivePaths = paths.filter((path) =>
+    !isSafeSystemReadPath(path)
+    && !isTrustedWorkspaceContextRead(normalized, path, command)
+    && SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(path))
+  );
   if (sensitivePaths.length) {
     risk.sensitive_data = Math.max(risk.sensitive_data, 85);
     findings.push(finding("Tool Boundary", "deterministic", "block", "tool parameters target sensitive local paths", 90, {
@@ -193,9 +197,12 @@ export function systemPreflight(
     }));
   }
 
-  const persistencePaths = paths.filter((path) => PERSISTENCE_PATH_PATTERNS.some((pattern) => pattern.test(path)));
+  const persistencePaths = paths.filter((path) =>
+    PERSISTENCE_PATH_PATTERNS.some((pattern) => pattern.test(path)) || isOpenClawConfigPersistencePath(path)
+  );
   const protectedPersistencePaths = persistencePaths.filter((path) =>
-    !isUserMemoryDocumentPath(path) && !isReadOnlyInstalledSkillDocPath(path, normalized, command)
+    !isTrustedWorkspaceContextRead(normalized, path, command)
+    && !isReadOnlyInstalledSkillDocPath(path, normalized, command)
   );
   if (protectedPersistencePaths.length) {
     risk.persistence = 90;
@@ -708,12 +715,6 @@ function collectPathLike(value: unknown, out: string[] = []): string[] {
     }
   }
   return Array.from(new Set(out));
-}
-
-function isUserMemoryDocumentPath(path: string): boolean {
-  const normalized = path.replace(/\\/g, "/").toLowerCase();
-  return /(^|\/)(soul\.md|user\.md)$/i.test(normalized)
-    || /(^|\/)memory\/[^/]+\.md$/i.test(normalized);
 }
 
 function isReadOnlyInstalledSkillDocPath(path: string, normalizedTool: string, command: string): boolean {

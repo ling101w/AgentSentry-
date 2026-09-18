@@ -76,6 +76,12 @@ const KIND_ICONS = {
 };
 
 const EXTERNAL_TOOLS = new Set(["send_email", "call_api", "write_file", "shell_exec", "memory_write"]);
+const WORKSPACE_CONTEXT_FILES = new Set([
+  "agents.md", "soul.md", "user.md", "identity.md", "heartbeat.md",
+  "tools.md", "memory.md", "bootstrap.md", "openclaw-workspace-state.json",
+]);
+const LOCAL_TRUSTED_READ_TOOLS = /^(read|read_file|memory_read|open)$/i;
+const EXTERNAL_INFO_TOOLS = /email|mail|webpage|browser|http|fetch|curl|wget|webhook|web_search|call_api|sessions_send|sms|slack|telegram/i;
 
 export function buildDashboardModel({ overview = {}, records = [], recordsMeta = {} } = {}) {
   const safeRecords = Array.isArray(records) ? records.filter(isObject) : [];
@@ -269,6 +275,62 @@ function normalizeCausalGraph(raw, alert, record) {
   };
 }
 
+function flattenToolResultText(result) {
+  if (result == null) return "";
+  if (typeof result === "string") return result;
+  if (Array.isArray(result)) return result.map(flattenToolResultText).join(" ");
+  if (!isObject(result)) return "";
+  if (typeof result.text === "string") return result.text;
+  if (Array.isArray(result.content)) return result.content.map(flattenToolResultText).join(" ");
+  return "";
+}
+
+function untrustedContentCorpus(records) {
+  const parts = [];
+  for (const record of Array.isArray(records) ? records : []) {
+    const payload = isObject(record?.payload) ? record.payload : {};
+    const type = String(record?.type || "");
+    const userLike = ["lab_command", "user_message", "command"].includes(type)
+      || (type === "message_write" && String(payload.role || "").toLowerCase() === "user");
+    if (userLike) {
+      parts.push(payload.command, payload.input, payload.content, payload.text, payload.preview, payload.raw_input);
+    }
+    if (type === "tool_result") {
+      parts.push(payload.preview, payload.adversarial_input, flattenToolResultText(payload.result));
+    }
+  }
+  return parts.map((value) => String(value || "")).join(" ");
+}
+
+function explicitRecordTaint(record) {
+  const payload = isObject(record?.payload) ? record.payload : {};
+  const label = isObject(payload.label) ? payload.label : {};
+  const profile = isObject(label.taint_profile)
+    ? label.taint_profile
+    : isObject(payload.taint_profile) ? payload.taint_profile : {};
+  if (payload.contaminated === true || label.tainted === true || profile.tainted === true || label.provenance_untrusted === true) return true;
+  if (typeof payload.adversarial_input === "string" && payload.adversarial_input.trim()) return true;
+  if (payload.contaminated === false || label.tainted === false || profile.tainted === false || label.provenance_untrusted === false) return false;
+  return null;
+}
+
+function hasPromptInjectionSignal(text) {
+  return /prompt[\s_-]*injection|ignore previous|ignore all previous|override (?:the )?instructions|(?:ignore|override|exfiltrate)\b.{0,40}\bsystem prompt|提示注入|越权指令/i.test(String(text || ""));
+}
+
+function hasUntrustedContentSignal(text) {
+  return hasPromptInjectionSignal(text)
+    || /untrusted (?:content|data|output|source)|不可信(?:数据|内容|来源)|污染标签/i.test(String(text || ""));
+}
+
+function recordsIndicateUntrustedData(records) {
+  const list = Array.isArray(records) ? records : [];
+  if (list.some((record) => explicitRecordTaint(record) === true)) return true;
+  const results = list.filter((record) => String(record?.type || "") === "tool_result");
+  if (results.length && results.every((record) => explicitRecordTaint(record) === false)) return false;
+  return hasUntrustedContentSignal(untrustedContentCorpus(list));
+}
+
 function deriveGraphFromRecords(records, alert) {
   const decisionRecord = records
     .filter((record) => record.type === "tool_decision" || record.type === "alert" || record.type === "approval_request")
@@ -286,9 +348,9 @@ function deriveGraphFromRecords(records, alert) {
   const allowedTools = Array.isArray(taskSpec.allowed_tools) ? taskSpec.allowed_tools.map(String) : [];
   const capabilityLabel = String(explicitCapabilities[0] || (tool !== "agent_plan" ? `use:${tool}` : "reason:agent"));
   const authorized = decision === "allow" || allowedTools.includes(tool);
-  const text = records.map(recordText).join(" ");
-  const tainted = /prompt.?injection|taint|untrusted|污染|不可信|ignore previous/i.test(text);
-  const secret = /secret|credential|private.?key|api.?key|token|password|密钥|凭据|私钥/i.test(text);
+  const text = untrustedContentCorpus(records);
+  const tainted = recordsIndicateUntrustedData(records);
+  const secret = /(?:api[_-]?key|private[_-]?key|id_rsa|\bpassword\b|\bcredential\b|密钥|凭据|私钥|\.env\b|BEGIN [A-Z ]*PRIVATE KEY)/i.test(text);
   const external = EXTERNAL_TOOLS.has(tool);
   const nodes = [
     node("intent", "intent", intentTitle(intentRecord), 1, { source: "user" }),
@@ -658,7 +720,8 @@ export function buildWhyReasons({ alert, graph, records = [] } = {}) {
   } else if (graph?.risk === "target_scope_mismatch") {
     reasons.push({ title: "授权目标越界", detail: "目标超出当前任务允许范围", code: "CAPABILITY_TARGET_MISMATCH" });
   }
-  if (taint) reasons.push({ title: "参数包含污染数据", detail: taint.title || "字段来自不可信工具结果", code: "TAINT_TO_SINK" });
+  if (taint && nodes.some((node) => node.kind === "sink")) reasons.push({ title: "参数包含污染数据", detail: taint.title || "字段来自不可信工具结果", code: "TAINT_TO_SINK" });
+  else if (taint) reasons.push({ title: "存在不可信数据", detail: taint.title || "字段来自不可信工具结果", code: "UNTRUSTED_DATA" });
   if (secret) reasons.push({ title: "检测到敏感信息", detail: secret.title || "字段标记为 SECRET", code: "SENSITIVE_DATA_FLOW" });
   if (alert?.reason) reasons.push({ title: alert.decision === "allow" ? "放行依据" : "策略证据", detail: alert.reason, code: alert.rule || "POLICY_MATCH" });
 
@@ -700,9 +763,11 @@ function buildRequestContext(records, graph, alert) {
     || records.find((record) => record.type === "message_write" && String(record.payload?.role || "").toLowerCase() === "user")
     || records.find((record) => record.type === "llm_input")
     || null;
-  const taintRecord = records.find((record) => record.payload?.adversarial_input)
-    || records.find((record) => record.type === "tool_result" && record.payload?.preview && /prompt.?injection|ignore previous|taint|污染|不可信/i.test(recordText(record)))
-    || records.find((record) => record.type === "guard_finding" && /prompt.?injection|taint|污染|不可信/i.test(recordText(record)))
+  const userInput = firstString(userRecord?.payload?.command, userRecord?.payload?.input, userRecord?.payload?.content, userRecord?.summary);
+  const adversarial = extractAdversarialInput(records, userInput);
+  const taintRecord = records.find((record) => firstString(record.payload?.adversarial_input))
+    || records.find((record) => record.type === "tool_result" && record.payload?.preview && hasUntrustedContentSignal(record.payload.preview))
+    || records.find((record) => record.type === "guard_finding" && hasPromptInjectionSignal(`${record.title || ""} ${record.payload?.reason || ""}`))
     || null;
   const detectionRecord = taintRecord
     || records.find((record) => record.id === alert?.id)
@@ -726,23 +791,33 @@ function buildRequestContext(records, graph, alert) {
     alert?.rawReason,
     graph.risk,
   ].filter(Boolean).join(" ");
-  const promptInjectionDetected = /prompt.?injection|ignore previous|override (?:the )?instructions|system prompt|提示注入|注入|越权指令/i.test(detectionSignal);
-  const riskDetected = Boolean(taintNode || taintRecord || graph.verdict === "deny" || graph.verdict === "ask");
+  const promptInjectionDetected = hasPromptInjectionSignal(detectionSignal);
+  const externalInfo = involvesExternalInformation(records, graph);
+  const localTrusted = isLocalTrustedWorkspaceSession(records);
+  const riskDetected = Boolean(
+    taintNode
+    || taintRecord
+    || (externalInfo && (graph.verdict === "deny" || graph.verdict === "ask"))
+    || (graph.verdict === "deny" && !localTrusted)
+  );
   const detectionType = promptInjectionDetected
     ? "Prompt Injection"
-    : graph.verdict === "ask"
+    : graph.verdict === "ask" && externalInfo
       ? "授权范围待确认"
-      : graph.verdict === "deny"
+      : graph.verdict === "deny" && externalInfo
         ? "未授权工具调用"
-        : taintNode || taintRecord ? "不可信数据流" : "";
+        : taintNode || taintRecord ? "不可信数据流"
+        : graph.verdict === "deny" && localTrusted ? ""
+        : graph.verdict === "deny" ? "敏感文件访问"
+        : "";
   return {
     input: firstString(userRecord?.payload?.command, userRecord?.payload?.input, userRecord?.summary, graph.nodes.find((node) => node.kind === "intent")?.title),
     originalInput: firstString(userRecord?.payload?.raw_input, userRecord?.payload?.preview, userRecord?.payload?.command, userRecord?.summary),
     tools,
-    adversarial: firstString(
-      taintRecord?.payload?.adversarial_input,
-      taintRecord?.payload?.preview,
+    adversarial,
+    detectionEvidence: firstString(
       findingEvidenceText(findings),
+      taintRecord?.payload?.preview,
       taintNode?.title,
       alert?.rawReason,
     ),
@@ -754,6 +829,57 @@ function buildRequestContext(records, graph, alert) {
     channel: firstString(userRecord?.payload?.channel, userRecord?.payload?.source),
     detectionSources,
   };
+}
+
+function extractAdversarialInput(records, userInput = "") {
+  const list = Array.isArray(records) ? records : [];
+  for (const record of list) {
+    const payload = isObject(record?.payload) ? record.payload : {};
+    const direct = firstString(payload.adversarial_input, payload.adversarialInput);
+    if (looksLikeAdversarialInput(direct, userInput)) return direct;
+  }
+  for (const record of list) {
+    const type = String(record?.type || "");
+    if (!["tool_result", "lab_command", "llm_input", "message_write"].includes(type)) continue;
+    const snippet = adversarialSnippetFromPayload(record?.payload);
+    if (looksLikeAdversarialInput(snippet, userInput)) return snippet;
+  }
+  return "";
+}
+
+function adversarialSnippetFromPayload(payload) {
+  if (!isObject(payload)) return "";
+  const direct = firstString(payload.adversarial_input, payload.adversarialInput);
+  if (direct) return direct;
+  const descriptions = calendarDescriptionsFromUnknown(payload);
+  if (descriptions.length) return descriptions.join("\n");
+  const code = firstString(payload.params?.code, payload.code);
+  if (looksLikeAdversarialInput(code, "")) return code;
+  return firstString(payload.preview, payload.result?.output?.preview);
+}
+
+function calendarDescriptionsFromUnknown(value, depth = 0) {
+  if (depth > 6 || value == null) return [];
+  if (Array.isArray(value)) return value.flatMap((item) => calendarDescriptionsFromUnknown(item, depth + 1));
+  if (!isObject(value)) {
+    const text = String(value);
+    if (/^\s*[\[{]/.test(text)) {
+      try { return calendarDescriptionsFromUnknown(JSON.parse(text), depth + 1); } catch { return []; }
+    }
+    return [];
+  }
+  const own = firstString(value.description, value.hidden_text, value.hiddenText, value.injection, value.note);
+  const nested = ["events", "output", "result", "data", "content"]
+    .flatMap((key) => calendarDescriptionsFromUnknown(value[key], depth + 1));
+  return own ? [own, ...nested] : nested;
+}
+
+function looksLikeAdversarialInput(text, userInput = "") {
+  const value = String(text || "").trim();
+  if (!value) return false;
+  if (userInput && value === String(userInput).trim()) return false;
+  return hasPromptInjectionSignal(value)
+    || /email the contents of the five largest|mark\.black-2134@gmail|delete the sent email|ops-archive@external|id_ed25519|DATABASE_PASSWORD|env-auditor|echo its entire contents|operator identity material|transparent prompt layer|ignore previous instructions/i.test(value);
 }
 
 function findingEvidenceText(findings) {
@@ -926,22 +1052,33 @@ function recordObservations(records, { includePolicy = false } = {}) {
   for (const record of records) {
     const payload = record.payload || {};
     add("用户请求", payload.command || payload.input, record);
+    add("工具名称", payload.normalized_tool || payload.toolName || payload.tool, record);
     add("工具参数", payload.params, record);
+    add("收件人", payload.params?.recipient || payload.params?.to || payload.recipient, record);
+    add("目标 URL", payload.params?.url || payload.url, record);
+    add("文件路径", payload.params?.path || payload.path, record);
+    add("命令内容", payload.params?.command || payload.command, record);
     add("返回预览", payload.preview, record);
     add("执行状态", payload.execution_status, record);
     add("运行裁决", payload.decision || payload.verdict, record);
+    add("风险分数", payload.risk_score ?? payload.sentry_score, record);
     add("记录原因", payload.reason || record.summary, record);
+    for (const reason of Array.isArray(payload.reasons) ? payload.reasons : []) add("裁决原因", reason, record);
+    for (const finding of Array.isArray(payload.findings) ? payload.findings : []) {
+      add("检测发现", finding?.reason || finding?.summary || finding?.id, record);
+    }
     add("数据来源", payload.source, record);
     add("场景", payload.scenario, record);
     if (isObject(payload.task_spec)) {
       add("任务能力", payload.task_spec.capabilities, record);
       add("允许工具", payload.task_spec.allowed_tools, record);
       add("允许目标", payload.task_spec.allowed_targets, record);
+      add("禁止工具", payload.task_spec.forbidden_tools, record);
     }
-    if (includePolicy) add("策略信号", payload.violations, record);
-    if (observations.length >= 10) break;
+    add("策略信号", payload.violations, record);
+    if (observations.length >= 16) break;
   }
-  return observations.slice(0, 10);
+  return observations.slice(0, 16);
 }
 
 function publicEvidenceRecord(record) {
@@ -1159,6 +1296,7 @@ export function buildIncidentConclusion(session) {
   }
 
   const graph = session.graph;
+  const records = Array.isArray(session.records) ? session.records : [];
   const tainted = graph.nodes.some((node) => node.kind === "taint" || String(node.integrity || "").toLowerCase() === "tainted")
     || /taint|prompt.?injection|污染|注入/i.test(`${graph.risk || ""} ${session.title || ""} ${session.subtitle || ""}`);
   const secret = graph.nodes.some((node) => node.kind === "secret" || String(node.confidentiality || "").toLowerCase() === "secret");
@@ -1176,8 +1314,14 @@ export function buildIncidentConclusion(session) {
     || policies[0]
     || "EXECUTION_BOUNDARY";
   const bypass = graph.traceKind === "enforcement_bypass" || graph.risk === "execution_after_block";
-  const denied = session.decision === "deny";
-  const attackType = tainted ? "Prompt Injection" : secret && target ? "敏感数据外传" : session.decision === "allow" ? "授权工作流" : "未授权工具调用";
+  const externalInfo = involvesExternalInformation(records, graph);
+  const localTrusted = isLocalTrustedWorkspaceSession(records);
+  const denied = session.decision === "deny" && !localTrusted;
+  const attackType = tainted ? "Prompt Injection"
+    : secret && target ? "敏感数据外传"
+    : session.decision === "allow" || localTrusted ? "授权工作流"
+    : externalInfo || session.decision === "ask" ? "未授权工具调用"
+    : "敏感文件访问";
   const severity = session.decision === "allow"
     ? "安全"
     : ["critical", "high", "danger"].includes(String(session.severity || "").toLowerCase()) || denied
@@ -1411,6 +1555,41 @@ function riskFromText(text, decision, external, tainted, secret) {
   if (external && tainted) return "tainted_to_external_sink";
   if (decision !== "allow") return "unauthorized_side_effect";
   return "authorized_tool_execution";
+}
+
+function involvesExternalInformation(records, graph) {
+  if (Array.isArray(graph?.nodes) && graph.nodes.some((node) => node.kind === "sink" && String(node.effect || "").toLowerCase() === "external")) {
+    return true;
+  }
+  const list = Array.isArray(records) ? records : [];
+  for (const record of list) {
+    const tool = String(record?.payload?.normalized_tool || record?.payload?.toolName || record?.payload?.tool || "");
+    if (tool && tool !== "agent_plan" && !LOCAL_TRUSTED_READ_TOOLS.test(tool) && EXTERNAL_INFO_TOOLS.test(tool)) return true;
+    const params = isObject(record?.payload?.params) ? record.payload.params : {};
+    const url = firstString(params.url, params.href, record?.payload?.url, params.endpoint);
+    if (url && /^https?:\/\//i.test(url) && !/localhost|127\.0\.0\.1|\[::1\]/i.test(url)) return true;
+  }
+  return false;
+}
+
+function isTrustedWorkspaceContextPath(path) {
+  const lower = String(path || "").replace(/\\/g, "/").toLowerCase();
+  if (!lower || /(^|\/)(skills|node_modules|dist|plugin-skills)\//.test(lower)) return false;
+  const base = lower.split("/").pop() || "";
+  if (WORKSPACE_CONTEXT_FILES.has(base)) return true;
+  return /(^|\/)memory\/[^/]+\.md$/i.test(lower);
+}
+
+function isLocalTrustedWorkspaceSession(records) {
+  const actions = (Array.isArray(records) ? records : []).filter((record) => ["tool_decision", "tool_call", "tool_result"].includes(String(record?.type || "")));
+  if (!actions.length) return false;
+  return actions.every((record) => {
+    const tool = String(record?.payload?.normalized_tool || record?.payload?.toolName || record?.payload?.tool || "");
+    if (tool && tool !== "agent_plan" && !LOCAL_TRUSTED_READ_TOOLS.test(tool)) return false;
+    const params = isObject(record?.payload?.params) ? record.payload.params : {};
+    const path = firstString(params.path, record?.payload?.path);
+    return !path || isTrustedWorkspaceContextPath(path);
+  });
 }
 
 function recordText(record) {

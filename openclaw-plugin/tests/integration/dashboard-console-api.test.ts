@@ -78,6 +78,14 @@ describe("dashboard console backend contracts", () => {
     expect(config.semantic.cacheEnabled).toBe(false);
     expect(config.semantic.model).toBe("local-test-model");
 
+    const intervention = await fetch(`${server.url}/api/settings/dashboard`, {
+      method: "PUT",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ settings: { interventionMode: "evidence-gated" } }),
+    }).then((response) => response.json());
+    expect(intervention).toMatchObject({ ok: true, settings: { interventionMode: "evidence-gated" } });
+    expect(config.intervention.mode).toBe("evidence-gated");
+
     const notification = await fetch(`${server.url}/api/settings/notifications`, {
       method: "PUT",
       headers: { ...headers, "Content-Type": "application/json" },
@@ -87,6 +95,9 @@ describe("dashboard console backend contracts", () => {
 
     const alerts = await fetch(`${server.url}/api/security/alerts?page=1&pageSize=20`, { headers }).then((response) => response.json());
     expect(alerts.totalAlerts).toBeGreaterThan(0);
+    expect(alerts.alerts[0].created_at).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
+    const records = await fetch(`${server.url}/api/records?limit=20`, { headers }).then((response) => response.json());
+    expect(records.records[0].event_hash).toEqual(expect.stringMatching(/^[a-f0-9]{64}$/i));
     const alertId = alerts.alerts[0].id;
     const disposition = await fetch(`${server.url}/api/security/alerts/state`, {
       method: "PATCH",

@@ -289,6 +289,22 @@ describe("OpenClaw plugin hooks", () => {
 
     const decisions = readRecords(harness).filter((record) => record.type === "tool_decision");
     expect(decisions.find((record) => record.payload.toolCallId === "tool-allow")?.payload).toMatchObject({ decision: "allow" });
+    const allowedPayload = decisions.find((record) => record.payload.toolCallId === "tool-allow")?.payload;
+    expect(allowedPayload?.performance).toMatchObject({
+      schema_version: "tool-call-performance-v1",
+      stages_ms: {
+        preliminary_policy: expect.any(Number),
+        semantic_action_graph: expect.any(Number),
+        graph_training_projection: expect.any(Number),
+        total_until_audit: expect.any(Number),
+      },
+      graph_projection: { nodes: expect.any(Number), edges: expect.any(Number) },
+    });
+    expect(allowedPayload?.graph_learning).toMatchObject({
+      schema_version: "graph-training-envelope-v1",
+      input: { schema_version: "production-graph-v1", graph: { directed: true } },
+    });
+    expect(JSON.stringify(allowedPayload?.graph_learning?.input)).not.toMatch(/"(?:decision|status|verdict|label)"/);
     expect(decisions.find((record) => record.payload.toolCallId === "tool-ask")?.payload).toMatchObject({
       decision: "ask",
       deterministic_block: false,
@@ -303,6 +319,7 @@ describe("OpenClaw plugin hooks", () => {
       expect.objectContaining({ payload: expect.objectContaining({ decision: "deny", deterministic_block: true, approval_cache_hit: false }) }),
     ]);
     expect((harness.command.handler({ args: "approvals status" }) as { text: string }).text).toContain("1 exact operation");
+    expect(plugin.performanceMetrics.snapshot()).toMatchObject({ sample_count: 5 });
   });
 
   it("labels contaminated tool output, records runtime audit, and covers exactly one assistant response", async () => {

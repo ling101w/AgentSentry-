@@ -11,6 +11,21 @@
         "enum": ["observe", "balanced", "competition", "high-security"],
         "description": "Named security posture. Explicit nested settings may refine the selected profile."
       },
+      "intervention": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["risk-based", "evidence-gated"],
+            "description": "risk-based applies normal risk thresholds; evidence-gated intervenes only when attack-specific evidence is present."
+          },
+          "preserveSafetyBoundaries": {
+            "type": "boolean",
+            "description": "Keep non-negotiable safety invariant denials active in evidence-gated mode."
+          }
+        }
+      },
       "dashboard": {
         "type": "object",
         "additionalProperties": false,
@@ -97,6 +112,21 @@
             "type": "number",
             "description": "Risk score that marks a tool call as high risk."
           }
+        }
+      },
+      "graphLearning": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional online Shadow Router. It never changes the deterministic/Judge decision.",
+        "properties": {
+          "enabled": { "type": "boolean", "description": "Enable the local production-GAT Shadow sidecar." },
+          "pythonPath": { "type": "string", "description": "Python executable used to start the sidecar." },
+          "scriptPath": { "type": "string", "description": "Path to production-gat-sidecar.py." },
+          "checkpointPath": { "type": "string", "description": "Path to production_gat_router.pth." },
+          "projectRoot": { "type": "string", "description": "xuanjian-2.0 project root used by the sidecar." },
+          "threshold": { "type": "number", "description": "Shadow review threshold." },
+          "oodThreshold": { "type": "number", "description": "OOD fallback threshold." },
+          "timeoutMs": { "type": "number", "description": "Per-request sidecar timeout." }
         }
       },
       "semantic": {
@@ -391,6 +421,14 @@
     "enforcement.mode": {
       "label": "Enforcement Mode",
       "help": "Default observe mode records findings without blocking OpenClaw."
+    },
+    "intervention.mode": {
+      "label": "执行模式",
+      "help": "risk-based 按风险阈值裁决；evidence-gated 仅在具备攻击证据时干预。"
+    },
+    "intervention.preserveSafetyBoundaries": {
+      "label": "保留安全边界",
+      "help": "evidence-gated 模式下仍强制执行不可协商的安全边界。"
     },
     "notifications.enableProactiveNotifications": {
       "label": "Enable Notifications",

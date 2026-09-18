@@ -396,7 +396,8 @@ export function semanticGateForToolCall(
     && hasMaterialTaskScope(state)) {
     reasons.push("task-bound third-party data operation needs purpose consistency review");
   }
-  if (manifest?.dataOrigins.some((origin) => origin === "external_web" || origin === "email" || origin === "third_party_api")
+  if ((!url || externalUrl(url))
+    && manifest?.dataOrigins.some((origin) => origin === "external_web" || origin === "email" || origin === "third_party_api")
     && manifest.sideEffects.some((effect) => effect === "network_write" || effect === "process_exec" || effect === "persistent_state")) {
     reasons.push("external-origin tool combines intake with material side effects");
   }
@@ -796,18 +797,21 @@ async function callJudge(prompt: JudgeEnvelope, config: PluginConfig): Promise<J
   const apiKey = resolveSemanticApiKey(config.semantic.apiKeyEnv);
   if (!apiKey) return null;
 
+  const deadline = Date.now() + semanticBudgetMs(config);
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const result = await callJudgeOnce(prompt, config, apiKey);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const result = await callJudgeOnce(prompt, config, apiKey, remainingMs);
     if (result) return result;
   }
   return null;
 }
 
-async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey: string): Promise<JudgeResult | null> {
+async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey: string, timeoutMs: number): Promise<JudgeResult | null> {
   const baseUrl = config.semantic.baseUrl.replace(/\/+$/, "");
   const url = `${baseUrl}/chat/completions`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), semanticBudgetMs(config));
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -851,7 +855,7 @@ async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey
 }
 
 function semanticBudgetMs(config: PluginConfig): number {
-  return Math.min(10000, Math.max(500, config.semantic.timeoutMs));
+  return Math.min(2000, Math.max(500, config.semantic.timeoutMs));
 }
 
 function markSemanticCacheHit(findings: DetectionFinding[], cacheKey: string): DetectionFinding[] {

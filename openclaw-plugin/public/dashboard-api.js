@@ -1,20 +1,26 @@
 const RESOURCE_REQUESTS = {
-  overview: "/api/security/overview?limit=1000",
-  records: "/api/records?limit=2000",
+  overview: "/api/security/overview?limit=400",
+  records: "/api/records?limit=800",
   enforcement: "/api/settings/enforcement",
   policy: "/api/policy/config",
   tools: "/api/tools/manifests",
   mcp: "/api/mcp/servers",
   skills: "/api/skills/inventory",
   memory: "/api/memory/inventory",
-  windowMetrics: "/api/dashboard/metrics?limit=5000",
+  windowMetrics: "/api/dashboard/metrics?limit=800",
   alerts: "/api/security/alerts?page=1&pageSize=100",
-  stats: "/api/stats?limit=5000",
+  stats: "/api/stats?limit=800",
   health: "/api/health",
   checkpoints: "/api/checkpoints?limit=100",
   dashboardSettings: "/api/settings/dashboard",
   notifications: "/api/settings/notifications",
-  auditIntegrity: "/api/audit/integrity?limit=2000",
+  auditIntegrity: "/api/audit/integrity?limit=400",
+};
+
+const LIVE_MONITOR_REQUESTS = {
+  overview: "/api/security/overview?limit=400",
+  records: "/api/records?compact=1&limit=800",
+  alerts: "/api/security/alerts?page=1&pageSize=50",
 };
 
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -70,6 +76,32 @@ export async function loadDashboardData() {
     availability,
     errors,
     availableCount: Object.values(availability).filter((item) => item.available).length,
+    totalCount: entries.length,
+  };
+}
+
+export async function loadLiveMonitorData() {
+  const entries = Object.entries(LIVE_MONITOR_REQUESTS);
+  const settled = await Promise.allSettled(entries.map(([, path]) => fetchJson(path)));
+  const resources = {};
+  const errors = {};
+  let availableCount = 0;
+
+  settled.forEach((result, index) => {
+    const [key] = entries[index];
+    if (result.status === "fulfilled") {
+      resources[key] = result.value;
+      availableCount += 1;
+      return;
+    }
+    resources[key] = null;
+    errors[key] = String(result.reason?.message || result.reason || "接口不可用");
+  });
+
+  return {
+    resources,
+    errors,
+    availableCount,
     totalCount: entries.length,
   };
 }
@@ -163,8 +195,13 @@ export function exportUrl(format = "json") {
   return `/api/export?format=${encodeURIComponent(format)}`;
 }
 
+export function resetRecords() {
+  return fetchJson("/api/reset", { method: "POST" });
+}
+
 export const dashboardApi = {
   loadDashboardData,
+  loadLiveMonitorData,
   updateEnforcement,
   savePolicyConfig,
   registerTool,
@@ -179,4 +216,5 @@ export const dashboardApi = {
   loadWindowMetrics,
   recordDetail,
   exportUrl,
+  resetRecords,
 };

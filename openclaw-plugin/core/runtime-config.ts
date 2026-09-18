@@ -13,6 +13,7 @@ const ENUM_VALUES: Readonly<Record<string, readonly string[]>> = {
   "semantic.mode": ["off", "risk-tiered", "full"],
   "runtimeIsolation.unavailableAction": ["require_approval", "block"],
   "enforcement.mode": ["observe", "approval", "block"],
+  "intervention.mode": ["risk-based", "evidence-gated"],
   "notifications.minSeverity": ["warning", "danger"],
 };
 
