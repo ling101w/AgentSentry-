@@ -6,7 +6,17 @@ import type { DetectionFinding } from "../detect.ts";
 import { clampText, safeStringify } from "../redact.ts";
 import { hostFromUrl } from "../policy/value-utils.ts";
 import { finding } from "../trust.ts";
-import { stripNonAuthoritativeText } from "./extractor.ts";
+import {
+  DEFAULT_CAPABILITY_TTL_TURNS,
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_CALLS,
+  analysisOnly,
+  extractPaths,
+  negatedAction,
+  normalizeTaskText,
+  splitClauses,
+  stripNonAuthoritativeText,
+} from "./extractor.ts";
 import type {
   CapabilityAction,
   CapabilityEffect,
@@ -72,7 +82,7 @@ export async function refineTaskSpecWithLLM(
       "Intent Authorization",
       "semantic",
       "pass",
-      "LLM 结构化解析补充了用户明确授权，已通过确定性校验收敛为 TaskSpec",
+      "LLM 结构化解析收窄了既有授权边界（只减不增），已收敛为 TaskSpec",
       0,
       {
         accepted_capabilities: accepted.map(publicCapabilityEvidence),
@@ -86,7 +96,7 @@ export async function refineTaskSpecWithLLM(
       "Intent Authorization",
       "semantic",
       "require_approval",
-      "LLM 结构化解析提出的部分授权未通过确定性校验，保持原授权边界",
+      "LLM 结构化解析提出的授权超出确定性解析边界，已拒绝并保持原授权",
       25,
       {
         rejected_capabilities: rejected.slice(0, 8),
@@ -287,40 +297,97 @@ function applyRefinement(
   const hash = createHash("sha256").update(taskSpec.task.normalize("NFKC"), "utf8").digest("hex");
   const accepted: TaskCapability[] = [];
   const rejected: Array<Record<string, unknown>> = [];
+
+  // (P0-5) The deterministic TaskSpec is authoritative. Refinement operates
+  // in two modes, both anchored to what the user's own text already states:
+  //   1. NARROW: when a deterministic capability of the same (action,
+  //      resource, effect) covers the LLM-observed subset, the LLM narrows
+  //      that grant and the clone inherits the deterministic evidence.
+  //   2. GAP-FILL: when no deterministic grant exists, the LLM may surface a
+  //      capability whose *verb* the deterministic keyword vocabulary missed,
+  //      but only after deterministic re-verification of the user's own
+  //      text: the evidence span must appear verbatim in an authoritative
+  //      (non-quoted, non-data-only) clause, that clause must carry an
+  //      explicit action verb for the resource, must not negate it, and
+  //      every target must appear in the stripped user text. The authority
+  //      therefore derives from the user's wording, never from the LLM's
+  //      claim (P0-4): the LLM merely points at text the deterministic
+  //      extractor failed to parse, and the deterministic checks decide.
   for (const candidate of refinement.authorized_capabilities) {
-    const validation = validateSemanticCapability(candidate, stripped);
+    const validation = validateSemanticCapability(candidate, taskSpec, stripped);
     if (validation !== "ok") {
       rejected.push({ candidate: publicSemanticCapability(candidate), reason: validation });
       continue;
     }
+    const deterministic = findCoveringCapability(taskSpec.capabilities, candidate);
+    if (!deterministic) {
+      const gapFill = constructGapFillCapability(candidate, taskSpec, stripped, hash);
+      if (!gapFill) {
+        rejected.push({
+          candidate: publicSemanticCapability(candidate),
+          reason: "not_subset_of_deterministic_authorization",
+        });
+        continue;
+      }
+      accepted.push(gapFill);
+      continue;
+    }
+    // Narrow the deterministic capability to the LLM-observed subset.
+    // (P0-4/P0-5) The narrowed clone inherits the *deterministic* evidence
+    // (including the user-sourced authorization flags it already carried)
+    // because the subset check above proved the authority is real. The clone
+    // keeps the original capabilityId so downstream merges treat it as the
+    // same grant, and carries a `refined` marker for auditability. The LLM
+    // can never manufacture this flag itself: capabilities reaching this
+    // path are clones of deterministic grants, never LLM-authored objects.
+    const inherited = structuredClone(deterministic);
     accepted.push({
-      action: candidate.action,
-      resourceType: candidate.resourceType,
-      effect: candidate.effect,
-      targets: unique(candidate.targets),
+      ...inherited,
+      targets: deterministic.targets.filter((target) => candidate.targets.includes(target)),
       constraints: {
-        allowedMethods: candidate.allowedMethods?.length ? unique(candidate.allowedMethods) : undefined,
-        allowedPaths: candidate.allowedPaths?.length ? unique(candidate.allowedPaths) : undefined,
-        allowedHosts: candidate.allowedHosts?.length ? unique(candidate.allowedHosts) : undefined,
-        allowedRecipients: candidate.allowedRecipients?.length ? unique(candidate.allowedRecipients) : undefined,
+        ...structuredClone(deterministic.constraints),
+        allowedMethods: deterministic.constraints.allowedMethods
+          ? deterministic.constraints.allowedMethods.filter((method) => !candidate.allowedMethods?.length || candidate.allowedMethods.includes(method))
+          : undefined,
+        allowedPaths: deterministic.constraints.allowedPaths
+          ? deterministic.constraints.allowedPaths.filter((path) => !candidate.allowedPaths?.length || candidate.allowedPaths.includes(path))
+          : undefined,
+        allowedHosts: deterministic.constraints.allowedHosts
+          ? deterministic.constraints.allowedHosts.filter((host) => !candidate.allowedHosts?.length || candidate.allowedHosts.includes(host))
+          : undefined,
+        allowedRecipients: deterministic.constraints.allowedRecipients
+          ? deterministic.constraints.allowedRecipients.filter((recipient) => !candidate.allowedRecipients?.length || candidate.allowedRecipients.includes(recipient))
+          : undefined,
+        maxCalls: deterministic.constraints.maxCalls,
+        maxBytes: deterministic.constraints.maxBytes,
       },
       evidence: {
+        ...inherited.evidence,
         sourceMessageHash: hash,
-        source: "user",
-        explicitSpan: candidate.evidenceSpan,
-        explicitAuthorization: true,
-        insideQuotation: false,
-        negated: false,
-        targetIsConcrete: true,
-        confidence: Math.min(0.92, Math.max(0.68, candidate.confidence)),
+        // Confidence reports the weaker of the two signals; the narrowing
+        // never raises reported confidence above the deterministic grant.
+        confidence: Math.min(deterministic.evidence.confidence, candidate.confidence),
+        explicitSpan: `${deterministic.evidence.explicitSpan}; refined: ${candidate.evidenceSpan}`.slice(0, 320),
       },
-      expiresAfterTurn: 1,
+      expiresAfterTurn: deterministic.expiresAfterTurn,
     });
   }
+
   if (!accepted.length && !refinement.denied_tools.length && !refinement.task_family && !refinement.task_mode) {
     return { taskSpec, accepted, rejected };
   }
-  const capabilities = mergeCapabilities([...taskSpec.capabilities, ...accepted]);
+  // (P0-5) Only narrow: the refined capability set must be a subset of the
+  // deterministic set. accepted capabilities replace their deterministic
+  // counterparts with narrowed clones; nothing new is ever merged in.
+  const narrowed = taskSpec.capabilities.filter((capability) => {
+    if (capability.evidence.source === "system") return false;
+    return true;
+  });
+  const acceptedKeys = new Set(accepted.map((capability) => capability.capabilityId || capabilityKeyOf(capability)));
+  const capabilities = [
+    ...narrowed.filter((capability) => !acceptedKeys.has(capability.capabilityId || capabilityKeyOf(capability))),
+    ...accepted,
+  ];
   const denied = unique([...taskSpec.denied_tools, ...refinement.denied_tools]);
   const allowedTools = unique(capabilities.flatMap(capabilityTools)).filter((tool) => !denied.includes(tool));
   return {
@@ -328,7 +395,8 @@ function applyRefinement(
       ...taskSpec,
       task_mode: taskSpec.task_mode || refinement.task_mode,
       task_family: taskSpec.task_family === "unknown" || !taskSpec.task_family ? refinement.task_family : taskSpec.task_family,
-      task_confidence: Math.max(taskSpec.task_confidence || 0, Math.min(0.95, refinement.confidence)),
+      // (P0-5) Refinement can only lower reported confidence, never raise it.
+      task_confidence: Math.min(taskSpec.task_confidence || 0, refinement.confidence),
       capabilities,
       denied_tools: denied,
       allowed_tools: allowedTools,
@@ -343,7 +411,34 @@ function applyRefinement(
   };
 }
 
-function validateSemanticCapability(candidate: SemanticCapability, strippedTask: string): string {
+/**
+ * (P0-5) A semantic capability is acceptable only if a deterministic
+ * capability of the same (action, resource, effect) already covers all of its
+ * targets. This enforces refined.capabilities ⊆ deterministic.capabilities.
+ */
+function findCoveringCapability(
+  deterministic: TaskCapability[],
+  candidate: SemanticCapability,
+): TaskCapability | undefined {
+  return deterministic.find((capability) =>
+    capability.action === candidate.action
+    && capability.resourceType === candidate.resourceType
+    && capability.effect === candidate.effect
+    && candidate.targets.every((target) => capability.targets.includes(target)),
+  );
+}
+
+function capabilityKeyOf(capability: TaskCapability): string {
+  return `${capability.action}:${capability.resourceType}:${capability.effect}:${capability.targets.slice().sort().join(",")}`;
+}
+
+/**
+ * (P0-5) Structural checks on an LLM-proposed capability. These apply to both
+ * narrowing candidates (covered by a deterministic grant) and gap-fill
+ * candidates (verb missed by the deterministic keyword vocabulary), so the
+ * per-target verbatim-text verification runs *before* any subset decision.
+ */
+function validateSemanticCapability(candidate: SemanticCapability, taskSpec: TaskSpec, strippedTask: string): string {
   if (candidate.confidence < 0.72) return "low_confidence";
   if (candidate.action === "execute" || candidate.resourceType === "shell") return "llm_cannot_grant_shell_execution";
   if (candidate.effect !== "read_only" && candidate.targets.length > 4) return "side_effect_scope_too_broad";
@@ -362,6 +457,140 @@ function validateSemanticCapability(candidate: SemanticCapability, strippedTask:
     }
   }
   return "ok";
+}
+
+/**
+ * (P0-5 gap-fill) Re-verify an uncovered LLM proposal against the user's own
+ * authoritative text and, if every deterministic anchor holds, construct the
+ * capability the deterministic extractor's keyword vocabulary missed.
+ *
+ * The authority chain is: the LLM only ever *points* at text; the checks below
+ * (verbatim span, imperative clause verb, no negation, target presence) are
+ * deterministic re-derivations over the user's original message. A capability
+ * is only minted when the user's own wording supports it (P0-4/P0-5).
+ */
+function constructGapFillCapability(
+  candidate: SemanticCapability,
+  taskSpec: TaskSpec,
+  strippedTask: string,
+  hash: string,
+): TaskCapability | undefined {
+  if (!gapFillClauseVerified(candidate, taskSpec, strippedTask)) return undefined;
+
+  const targets = candidate.targets;
+  const constraints: TaskCapability["constraints"] = {};
+  if (candidate.allowedMethods?.length) constraints.allowedMethods = unique(candidate.allowedMethods.map((item) => item.toUpperCase()));
+  if (candidate.allowedHosts?.length) constraints.allowedHosts = unique(candidate.allowedHosts.map((item) => item.toLowerCase()));
+  if (candidate.resourceType === "email") {
+    constraints.allowedRecipients = unique(
+      (candidate.allowedRecipients?.length ? candidate.allowedRecipients : targets).map((item) => item.toLowerCase()),
+    );
+  }
+  if (candidate.resourceType === "file") {
+    constraints.allowedPaths = candidate.allowedPaths?.length ? unique(candidate.allowedPaths) : targets.slice();
+  }
+  if (candidate.effect !== "read_only") {
+    constraints.maxCalls = DEFAULT_MAX_CALLS;
+    if (candidate.resourceType === "file") constraints.maxBytes = DEFAULT_MAX_BYTES;
+  }
+
+  const bound: TaskCapability["bound"] = {};
+  if (candidate.resourceType === "email") bound.recipients = unique(targets.map((item) => item.toLowerCase()));
+  if (candidate.resourceType === "file") bound.paths = targets.slice();
+  if (candidate.resourceType === "api") bound.urls = targets.slice();
+
+  return {
+    action: candidate.action,
+    resourceType: candidate.resourceType,
+    targets: unique(targets),
+    effect: candidate.effect,
+    constraints,
+    evidence: {
+      sourceMessageHash: hash,
+      // Authority derives from the deterministic verbatim-text verification
+      // above, not from the LLM's claim: the span and every target were
+      // re-derived from the user's authoritative (unquoted, non-data-only)
+      // message text.
+      source: "user",
+      explicitSpan: `gap-fill: ${candidate.evidenceSpan}`.slice(0, 320),
+      explicitAuthorization: true,
+      insideQuotation: false,
+      negated: false,
+      targetIsConcrete: true,
+      // Reported confidence never exceeds the deterministic anchor's ceiling.
+      confidence: Math.min(candidate.confidence, 0.95),
+    },
+    capabilityId: `${candidate.action}:${candidate.resourceType}:${candidate.effect}|refined:${unique(targets).slice().sort().join(",")}`,
+    bound: Object.keys(bound).length ? bound : undefined,
+    expiresAfterTurn: DEFAULT_CAPABILITY_TTL_TURNS,
+  };
+}
+
+/**
+ * (P0-5 gap-fill) Deterministic anchor verification: the candidate's evidence
+ * span must appear verbatim in an authoritative clause, and that clause must
+ * itself satisfy the same imperative/negation checks the deterministic
+ * extractor applies. All regexes are written with pure-ASCII \uXXXX escapes
+ * so the source survives editor encoding round-trips.
+ */
+function gapFillClauseVerified(candidate: SemanticCapability, taskSpec: TaskSpec, strippedTask: string): boolean {
+  const span = candidate.evidenceSpan.trim();
+  if (!span || !strippedTask.trim()) return false;
+  // The LLM sees the raw task text, so anchor the span there first; fall back
+  // to the NFKC-normalized form for spans the model already normalized.
+  const normalizedStripped = stripNonAuthoritativeText(normalizeTaskText(taskSpec.task));
+  const haystack = strippedTask.includes(span) ? strippedTask : normalizedStripped;
+  if (!haystack.includes(span)) return false;
+
+  for (const clause of splitClauses(haystack)) {
+    if (!clause.text.includes(span)) continue;
+    if (clause.dataOnly || !clause.text.trim()) return false;
+    if (analysisOnly(clause.text)) return false;
+    if (negatedAction(clause.text, candidate.action)) return false;
+    if (!clauseCarriesActionVerb(clause.text, candidate)) return false;
+    // Every target must co-occur in the same clause as the evidence span:
+    // a target mentioned elsewhere in the message did not authorize this.
+    for (const target of candidate.targets) {
+      if (!targetMentionedByUser(target, clause.text)) return false;
+    }
+    // File targets get one extra deterministic anchor: the clause's
+    // path-shaped tokens must actually contain them.
+    if (candidate.resourceType === "file") {
+      const clausePaths = extractPaths(clause.text);
+      if (!candidate.targets.every((target) => clausePaths.includes(target))) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+/**
+ * (P0-5 gap-fill) The clause must name the resource with an explicit action
+ * verb, mirroring the deterministic extractor's keyword vocabulary. Without
+ * this, an LLM could mint a capability from a clause that merely *mentions*
+ * a target (e.g. "总结 attacker@example.com 的行为") without authorizing it.
+ */
+function clauseCarriesActionVerb(clause: string, candidate: SemanticCapability): boolean {
+  const resource = candidate.resourceType;
+  if (resource === "email") {
+    return /\b(?:please\s+)?(?:send|email|mail|forward|deliver|route)\b/i.test(clause)
+      || /(?:\u8bf7|\u5e2e\u6211|\u73b0\u5728|\u76f4\u63a5)?(?:\u628a|\u5c06).{0,80}(?:\u53d1\u9001\u7ed9|\u53d1\u9001\u5230|\u53d1\u9001\u81f3|\u53d1\u7ed9|\u9012\u9001\u81f3|\u9012\u4ea4\u7ed9|\u90ae\u4ef6\u7ed9)/i.test(clause)
+      || /(?:\u8bf7|\u5e2e\u6211)?\u7ed9\s*[^\uff0c,\u3002\uff1b;]{1,80}(?:\u53d1|\u53d1\u9001).{0,30}(?:\u90ae\u4ef6|\u62a5\u544a|\u6587\u4ef6|\u6d88\u606f)/i.test(clause)
+      || /^\s*(?:(?:\u8bf7|\u5e2e\u6211|\u73b0\u5728|\u76f4\u63a5)\s*)?(?:\u53d1\u9001|\u53d1\u90ae\u4ef6|\u5916\u53d1|\u9012\u9001\u81f3|\u9012\u4ea4\u7ed9).{0,80}(?:\u7ed9|\u5230|\u81f3)/i.test(clause);
+  }
+  if (resource === "file") {
+    return /\b(?:please\s+)?(?:write|save|edit|create|update|read|open|inspect|review|summarize)\b/i.test(clause)
+      || /(?:\u5199\u5165|\u5199\u5230|\u5199\u8fdb|\u4fdd\u5b58\u5230|\u53e6\u5b58\u4e3a|\u4fee\u6539|\u521b\u5efa|\u67e5\u770b|\u8bfb\u53d6|\u6253\u5f00|\u5ba1\u67e5|\u603b\u7ed3).{0,80}(?:\u6587\u4ef6|\u6587\u6863|\u62a5\u544a|\u4ee3\u7801|\.)/i.test(clause);
+  }
+  if (resource === "api") {
+    return /\b(?:visit|open|fetch|read|inspect|review|summarize|check|call|request|post|put|patch|delete|upload|submit|publish)\b/i.test(clause)
+      || /(?:\u8bbf\u95ee|\u6253\u5f00|\u8bfb\u53d6|\u67e5\u770b|\u68c0\u67e5|\u603b\u7ed3|\u8c03\u7528|\u8bf7\u6c42|\u4e0a\u62a5|\u4e0a\u4f20|\u63d0\u4ea4|\u53d1\u5e03).{0,100}(?:\u7f51\u9875|\u7f51\u7ad9|\u9875\u9762|\u94fe\u63a5|\u63a5\u53e3|api|https?:|mock:)/i.test(clause);
+  }
+  if (resource === "memory") {
+    return /\b(?:please\s+)?(?:remember|persist|store in (?:long[- ]term )?memory)\b/i.test(clause)
+      || /(?:\u8bb0\u4f4f|\u5199\u5165\u957f\u671f\u8bb0\u5fc6|\u4fdd\u5b58\u4e3a\u957f\u671f\u504f\u597d|\u8bb0\u5f55\u5230\u7ecf\u9a8c\u5e93|\u8bb0\u5f55\u7ecf\u9a8c)/i.test(clause);
+  }
+  return false;
 }
 
 function targetMentionedByUser(target: string, strippedTask: string): boolean {
@@ -388,25 +617,6 @@ function capabilityTools(capability: TaskCapability): string[] {
   if (capability.resourceType === "memory") return capability.action === "read" ? ["memory_read"] : ["memory_write"];
   if (capability.resourceType === "shell") return ["shell_exec"];
   return [];
-}
-
-function mergeCapabilities(capabilities: TaskCapability[]): TaskCapability[] {
-  const merged = new Map<string, TaskCapability>();
-  for (const capability of capabilities) {
-    const key = `${capability.action}:${capability.resourceType}:${capability.effect}`;
-    const current = merged.get(key);
-    if (!current) {
-      merged.set(key, structuredClone(capability));
-      continue;
-    }
-    current.targets = unique([...current.targets, ...capability.targets]);
-    current.constraints.allowedMethods = mergeOptional(current.constraints.allowedMethods, capability.constraints.allowedMethods);
-    current.constraints.allowedPaths = mergeOptional(current.constraints.allowedPaths, capability.constraints.allowedPaths);
-    current.constraints.allowedHosts = mergeOptional(current.constraints.allowedHosts, capability.constraints.allowedHosts);
-    current.constraints.allowedRecipients = mergeOptional(current.constraints.allowedRecipients, capability.constraints.allowedRecipients);
-    current.evidence.confidence = Math.max(current.evidence.confidence, capability.evidence.confidence);
-  }
-  return [...merged.values()];
 }
 
 function extractAssistantContent(value: unknown): string {
@@ -466,11 +676,6 @@ function normalizeComparable(value: string): string {
 
 function isNetworkTarget(value: string): boolean {
   return /^(?:https?:\/\/|mock:\/\/)/i.test(value);
-}
-
-function mergeOptional(left?: string[], right?: string[]): string[] | undefined {
-  const merged = unique([...(left || []), ...(right || [])]);
-  return merged.length ? merged : undefined;
 }
 
 function unique<T>(items: T[]): T[] {

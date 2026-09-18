@@ -1,5 +1,5 @@
 export { deriveTaskSpecV2, stripNonAuthoritativeText } from "./extractor.ts";
-export { authorizeCapability, isSideEffectToolCall } from "./validator.ts";
+export { authorizeCapability, isSideEffectToolCall, recordCapabilityUse } from "./validator.ts";
 export {
   createAuthorizationState,
   extractAuthoritativeUserRequest,
@@ -15,6 +15,7 @@ export type {
   CapabilityEffect,
   CapabilityResource,
   CapabilitySource,
+  PendingCapabilityRequest,
   TaskCapability,
   TaskSpec,
 } from "./types.ts";

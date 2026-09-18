@@ -113,6 +113,7 @@ export class PluginConfig {
   };
   semantic: {
     enabled: boolean;
+    cacheEnabled: boolean;
     mode: SemanticJudgeMode;
     judgeToolCalls: boolean;
     judgeMessages: boolean;
@@ -224,6 +225,7 @@ export class PluginConfig {
     };
     this.semantic = {
       enabled: false,
+      cacheEnabled: true,
       mode: "risk-tiered",
       judgeToolCalls: true,
       judgeMessages: false,
@@ -355,6 +357,7 @@ export class PluginConfig {
     const semantic = objectAt(obj, "semantic");
     if (semantic) {
       config.semantic.enabled = readBoolean(semantic.enabled, config.semantic.enabled);
+      config.semantic.cacheEnabled = readBoolean(semantic.cacheEnabled, config.semantic.cacheEnabled);
       const mode = readString(semantic.mode, config.semantic.mode);
       if (mode === "off" || mode === "risk-tiered" || mode === "full") {
         config.semantic.mode = mode;

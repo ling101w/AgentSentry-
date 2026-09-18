@@ -15,7 +15,7 @@ export type EventWriterOptions = {
 export class EventWriter<T extends WritableEvent> {
   private readonly recordsPath: string;
   private readonly batchIntervalMs: number;
-  private readonly batchSize: number;
+  private batchSize: number;
   private readonly maxQueue: number;
   private readonly compactEvery: number;
   private readonly maxRecords: number;
@@ -41,6 +41,12 @@ export class EventWriter<T extends WritableEvent> {
     if (this.queue.length >= this.batchSize) this.scheduleFlush(0);
     else this.scheduleFlush(this.batchIntervalMs);
     return true;
+  }
+
+  setBatchSize(batchSize: number): void {
+    if (!Number.isFinite(batchSize)) return;
+    this.batchSize = Math.max(1, Math.min(1000, Math.trunc(batchSize)));
+    if (this.queue.length >= this.batchSize) this.scheduleFlush(0);
   }
 
   flush(): Promise<void> {
@@ -75,6 +81,13 @@ export class EventWriter<T extends WritableEvent> {
   compact(): Promise<void> {
     const flushed = this.flush();
     const task = flushed.then(() => compactFile(this.recordsPath, this.maxRecords));
+    this.operation = task.catch(() => undefined);
+    return task;
+  }
+
+  pruneBefore(cutoff: string): Promise<void> {
+    const flushed = this.flush();
+    const task = flushed.then(() => compactFile(this.recordsPath, this.maxRecords, cutoff));
     this.operation = task.catch(() => undefined);
     return task;
   }
@@ -122,11 +135,22 @@ async function needsLeadingNewline(recordsPath: string): Promise<boolean> {
   }
 }
 
-async function compactFile(recordsPath: string, maxRecords: number): Promise<void> {
+async function compactFile(recordsPath: string, maxRecords: number, cutoff?: string): Promise<void> {
   const tmpPath = `${recordsPath}.tmp`;
   try {
     const content = await readFile(recordsPath, "utf8");
-    const lines = content.split(/\r?\n/).filter(Boolean).slice(-maxRecords);
+    const cutoffMs = cutoff ? new Date(cutoff).getTime() : Number.NaN;
+    const lines = content.split(/\r?\n/).filter(Boolean).filter((line) => {
+      if (!Number.isFinite(cutoffMs)) return true;
+      try {
+        const parsed = JSON.parse(line) as { created_at?: unknown };
+        const createdAt = new Date(String(parsed.created_at || "")).getTime();
+        return !Number.isFinite(createdAt) || createdAt >= cutoffMs;
+      } catch {
+        // Preserve malformed lines for forensic review; normal compaction still bounds the file.
+        return true;
+      }
+    }).slice(-maxRecords);
     await writeFile(tmpPath, `${lines.join("\n")}${lines.length ? "\n" : ""}`, { encoding: "utf8", mode: 0o600 });
     await rename(tmpPath, recordsPath);
     if (process.platform !== "win32") await chmod(recordsPath, 0o600);

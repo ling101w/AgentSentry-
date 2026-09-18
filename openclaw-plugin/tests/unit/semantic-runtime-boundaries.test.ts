@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginConfig } from "../../config.ts";
 import { mergeDecision } from "../../core/judge/decision-merge.ts";
-import { createPolicyState } from "../../core/policy.ts";
+import { createPolicyState, decideAction, normalizeAction } from "../../core/policy.ts";
 import { activateSemanticIntent, beginSemanticAction } from "../../core/semantic-action-graph.ts";
 import {
   parseJudgeResponse,
+  clearSemanticActionCache,
+  semanticJudgeAmbiguousAction,
   semanticJudgeMemoryWrite,
   semanticJudgeMessage,
   semanticJudgeProvenanceFile,
@@ -73,6 +75,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  clearSemanticActionCache();
 });
 
 describe("semantic Judge HTTP failure boundaries", () => {
@@ -172,6 +175,28 @@ describe("semantic Judge HTTP failure boundaries", () => {
 });
 
 describe("semantic mode scheduling", () => {
+  it("bypasses the ambiguous-action result cache when runtime caching is disabled", async () => {
+    process.env[API_ENV] = "unit-test-key";
+    const fetchMock = vi.fn(async () => responseWithContent(judgeContent()));
+    vi.stubGlobal("fetch", fetchMock);
+    const config = judgeConfig("full");
+    config.semantic.cacheEnabled = false;
+    const policyState = createPolicyState();
+    policyState.currentTask = "review a custom operation";
+    policyState.taskSpec.task = policyState.currentTask;
+    const action = normalizeAction("custom_operation", { target: "report" });
+    const preliminary = {
+      ...decideAction(action, policyState, config, []),
+      deterministic_disposition: "ambiguous" as const,
+    };
+    const input = { action, taskSpec: policyState.taskSpec, policyState, preliminary };
+
+    await semanticJudgeAmbiguousAction(input, config);
+    await semanticJudgeAmbiguousAction(input, config);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("mode off suppresses all four Judge entry points", async () => {
     process.env[API_ENV] = "unit-test-key";
     const fetchMock = vi.fn(async () => responseWithContent(judgeContent()));

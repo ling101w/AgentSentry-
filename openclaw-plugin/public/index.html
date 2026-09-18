@@ -1,247 +1,427 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#030b13" />
-    <meta name="description" content="玄鉴智能体行为安全裁决系统，实时呈现攻击因果链路、关键证据与执行边界裁决。" />
-    <title>玄鉴 · 攻击事件详情</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=20260809-5" />
-    <link rel="stylesheet" href="/themes.css?v=20260809-3" />
-    <script src="/theme.js?v=20260809-2"></script>
-  </head>
-  <body>
-    <div class="app-shell">
-      <header class="app-header">
-        <a class="brand-lockup" href="/">
-          <img src="/brand-mark.png?v=20260809-1" width="42" height="44" alt="" />
-          <span>
-            <strong>玄鉴</strong>
-            <small>智能体行为安全裁决系统</small>
-          </span>
-        </a>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f5f8f7" />
+  <meta name="description" content="玄鉴智能体行为安全裁决系统" />
+  <title>玄鉴 · 安全总览</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/dashboard.css?v=20260813-6" />
+  <link rel="stylesheet" href="/themes.css?v=20260810-3" />
+  <script src="/theme.js?v=20260810-3"></script>
+</head>
+<body>
+<svg class="svg-sprite" aria-hidden="true">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19.5z"/><path d="M9 21v-7h6v7"/></symbol>
+    <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="m12 12 5-5M12 4v2M4 12h2M18 12h2M6.3 6.3l1.4 1.4"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M9 4h6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 19 6v5c0 4.8-2.9 8.1-7 10-4.1-1.9-7-5.2-7-10V6z"/><path d="m9 12 2 2 4-5"/></symbol>
+    <symbol id="i-tool" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5 5L4 17l3 3 5.7-5.7a4 4 0 0 0 5-5l-2.5 2.5-3-3z"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></symbol>
+    <symbol id="i-audit" viewBox="0 0 24 24"><path d="M5 3h12a2 2 0 0 1 2 2v16H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 7h7M8 11h7M8 15h5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21h-4v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H3v-4h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.4 7 7.2 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V3h4v.2a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 6v5h-5M4 18v-5h5"/><path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 11M4 13l2.4 4.6A7 7 0 0 0 17.9 15"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2-6 4 12 2-6h6"/></symbol>
+    <symbol id="i-network" viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="m7 12 10-6M7 12l10 6"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/></symbol>
+    <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></symbol>
+    <symbol id="i-memory" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 9h6v6H9zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2.7 20h18.6z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 18h3a3 3 0 0 0 3-3v-6a3 3 0 0 1 3-3h-1"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M11 8v6M8 11h6m6 9-4-4"/></symbol>
+    <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M8 11h6m6 9-4-4"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15.5A8.5 8.5 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/></symbol>
+    <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18h1.2a1.8 1.8 0 0 0 1.2-3.1 1.8 1.8 0 0 1 1.2-3.1H18a3 3 0 0 0 3-3A8.8 8.8 0 0 0 12 3Z"/><path d="M7.5 10.5h.01M9.5 7.5h.01M14 7h.01M17 10h.01"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  </svg>
 
-        <div class="incident-heading">
-          <i class="header-notch" data-lucide="chevron-right" aria-hidden="true"></i>
-          <h1>攻击事件详情</h1>
-          <label class="event-selector" for="sessionSelect">
-            <span>事件 ID:</span>
-            <select id="sessionSelect" aria-label="切换攻击事件"></select>
-          </label>
-          <span id="severityBadge" class="severity-badge">高危</span>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <img class="dashboard-brand-logo" src="/xuanjian-logo.svg?v=20260811-11" alt="玄鉴 AgentSentry" />
+      </div>
+
+      <nav class="nav-list" aria-label="主导航">
+        <button class="nav-item active" data-page="overview"><svg><use href="#i-home"/></svg><span>总览</span></button>
+        <button class="nav-item" data-page="attack"><svg><use href="#i-radar"/></svg><span>攻击监控</span></button>
+        <button class="nav-item" data-page="tools"><svg><use href="#i-tool"/></svg><span>工具管理</span></button>
+        <button class="nav-item" data-page="alerts"><svg><use href="#i-bell"/></svg><span>告警中心</span></button>
+        <button class="nav-item" data-page="audit"><svg><use href="#i-audit"/></svg><span>审计日志</span></button>
+        <button class="nav-item" data-page="settings"><svg><use href="#i-settings"/></svg><span>系统设置</span></button>
+      </nav>
+
+      <div class="side-status">
+        <div class="status-dot"></div>
+        <div><strong>正在连接后端</strong></div>
+      </div>
+    </aside>
+    <button class="sidebar-scrim" id="sidebarScrim" type="button" aria-label="关闭菜单"></button>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div class="topbar-title">
+          <button class="mobile-menu" id="mobileMenuButton" type="button" aria-label="打开菜单" aria-expanded="false"><svg><use href="#i-menu"/></svg></button>
+          <span>安全总览</span>
+          <i></i>
+          <small id="sourceBadge">正在连接</small>
         </div>
-
-        <div class="header-controls">
-          <label class="protection-control" for="modeSelect" title="切换执行模式">
-            <i data-lucide="shield-check"></i>
-            <select id="modeSelect" aria-label="执行模式">
-              <option value="block">实时防护已开启</option>
-              <option value="approval">人工审批模式</option>
-              <option value="observe">仅观察模式</option>
-            </select>
-            <span id="connectionStatus" class="connection-state connecting" role="status">
-              <span class="live-dot" aria-hidden="true"></span>
-              <span>连接中</span>
-            </span>
-          </label>
-          <button id="refreshBtn" class="header-icon-button" type="button" title="刷新数据" aria-label="刷新数据">
-            <i data-lucide="refresh-cw"></i>
-          </button>
-          <button class="header-icon-button notification-button" type="button" title="查看告警" aria-label="查看告警">
-            <i data-lucide="bell"></i><b id="headerAlertCount" hidden>0</b>
-          </button>
-          <button class="header-icon-button theme-toggle" data-theme-toggle type="button" title="切换主题" aria-label="切换主题">
-            <i data-lucide="palette"></i>
-          </button>
-          <button class="operator-menu" type="button" aria-label="安全运营团队菜单">
-            <span class="operator-avatar"><i data-lucide="user-round"></i></span>
-            <span>安全运营团队</span>
-            <i data-lucide="chevron-down"></i>
-          </button>
+        <div class="topbar-actions">
+           <button class="icon-button" id="refreshButton" aria-label="刷新"><svg><use href="#i-refresh"/></svg></button>
+           <button class="icon-button theme-button" data-theme-toggle aria-label="切换主题" title="切换主题"><svg><use href="#i-sun"/></svg></button>
+           <button class="notification-button" aria-label="告警"><svg><use href="#i-bell"/></svg></button>
+          <div class="operator"><div class="avatar">安</div><span>安全运营团队</span><b>⌄</b></div>
         </div>
       </header>
 
-      <div class="app-body">
-        <aside class="side-navigation" aria-label="主导航">
-          <nav>
-            <a href="/overview"><i data-lucide="house"></i><span>总览</span></a>
-            <a class="active" href="/" aria-current="page"><i data-lucide="siren"></i><span>攻击监控</span><i class="nav-active-marker" data-lucide="chevron-right"></i></a>
-            <a href="/agents"><i data-lucide="bot"></i><span>智能体资产</span></a>
-            <a href="/policies"><i data-lucide="shield-check"></i><span>策略管理</span></a>
-            <a href="/tools"><i data-lucide="circle-gauge"></i><span>工具管理</span></a>
-            <a href="/alerts" class="nav-alert"><i data-lucide="bell-ring"></i><span>告警中心</span><b id="navAlertCount" hidden>0</b></a>
-            <a href="/audit"><i data-lucide="notebook-tabs"></i><span>审计日志</span></a>
-            <a href="/settings"><i data-lucide="settings"></i><span>系统设置</span></a>
-          </nav>
-          <div class="side-footer">
-            <strong><i data-lucide="shield-check"></i>玄鉴</strong>
-            <span id="runtimeProfile">连接中</span>
+      <main class="content">
+        <div class="page-view active" id="page-overview">
+        <section class="page-heading">
+          <div>
+            <div class="eyebrow"><span></span>实时安全态势</div>
+            <h1>安全总览</h1>
+            <p>从授权边界、污染传播到危险动作执行，持续监督智能体工具调用链。</p>
           </div>
-        </aside>
-
-        <main id="incidentConsole" class="incident-console">
-          <section id="incidentConclusion" class="incident-conclusion panel-frame" aria-labelledby="conclusionTitle">
-            <div class="conclusion-classification">
-              <span id="conclusionSeverity" class="severity-badge">等待</span>
-              <span>
-                <small id="conclusionTitle">核心结论</small>
-                <strong id="conclusionType">等待事件分析</strong>
-              </span>
+          <div class="heading-actions">
+            <div class="segmented" id="rangeSwitch">
+              <button data-range="24h" class="active">24 小时</button>
+              <button data-range="7d">7 天</button>
+              <button data-range="30d">30 天</button>
             </div>
-            <p id="conclusionSummary" class="conclusion-summary">真实审计事件进入后自动生成攻击结论。</p>
-            <div id="conclusionOutcome" class="conclusion-outcome tone-neutral">
-              <i data-lucide="activity"></i>
-              <span><small>结果</small><strong>等待裁决</strong></span>
-            </div>
-          </section>
+            <button class="primary-button" id="attackMonitorButton"><svg><use href="#i-radar"/></svg>进入攻击监控</button>
+          </div>
+        </section>
 
-          <section class="request-panel panel-frame" aria-labelledby="requestTitle">
-            <header class="panel-titlebar">
-              <h2 id="requestTitle">请求上下文</h2>
-              <button id="contextCollapseBtn" class="panel-icon-button active" type="button" title="取消固定请求上下文" aria-label="取消固定请求上下文" aria-pressed="true">
-                <i data-lucide="pin"></i>
+        <section class="metrics-grid" id="metricsGrid"></section>
+
+        <section class="primary-grid">
+          <article class="card graph-card">
+            <header class="card-header">
+              <div><span class="card-kicker">Agent Security Controls</span><h2>智能体安全链路</h2><p>用控流、控权、控态三条主线约束数据流、能力边界与执行状态</p></div>
+              <div class="live-pill" id="graphLiveStatus"><i></i>正在读取</div>
+            </header>
+            <div class="control-rails" id="securityGraph">
+              <div class="control-rails-head" aria-hidden="true"><span>控制主线</span><span>关键控制点</span><span>实时结果</span></div>
+              <button type="button" class="control-rail rail-taint overview-clickable" data-control-line="taint" data-risk-surface="taint" data-overview-page="attack" aria-label="查看控流风险会话">
+                <span class="rail-identity"><i><svg><use href="#i-globe"/></svg></i><span><small>01 · CONTROL FLOW</small><strong>控流</strong><em>数据从哪里来、流向哪里</em></span></span>
+                <span class="rail-path"><span>来源标记</span><i>→</i><span>传播追踪</span><i>→</i><span>Sink 校验</span></span>
+                <span class="rail-result"><b class="control-line-stat">正在读取</b><small>查看风险会话 <svg><use href="#i-arrow"/></svg></small></span>
               </button>
-            </header>
-            <div id="requestContext" class="request-context" aria-live="polite"></div>
-          </section>
+              <button type="button" class="control-rail rail-auth overview-clickable" data-control-line="auth" data-risk-surface="auth" data-overview-page="attack" aria-label="查看控权风险会话">
+                <span class="rail-identity"><i><svg><use href="#i-lock"/></svg></i><span><small>02 · AUTHORIZATION</small><strong>控权</strong><em>用户究竟授权了什么</em></span></span>
+                <span class="rail-path"><span>动作范围</span><i>→</i><span>资源边界</span><i>→</i><span>目标约束</span></span>
+                <span class="rail-result"><b class="control-line-stat">正在读取</b><small>查看风险会话 <svg><use href="#i-arrow"/></svg></small></span>
+              </button>
+              <button type="button" class="control-rail rail-state overview-clickable" data-control-line="state" data-risk-surface="state" data-overview-page="attack" aria-label="查看控态风险会话">
+                <span class="rail-identity"><i><svg><use href="#i-route"/></svg></i><span><small>03 · LIFECYCLE STATE</small><strong>控态</strong><em>行为是否仍在合法生命周期</em></span></span>
+                <span class="rail-path"><span>申请</span><i>→</i><span>审批</span><i>→</i><span>执行</span><i>→</i><span>完成</span></span>
+                <span class="rail-result"><b class="control-line-stat">正在读取</b><small>查看风险会话 <svg><use href="#i-arrow"/></svg></small></span>
+              </button>
+              <footer class="control-rails-foot"><span><i></i>三条主线并行判定</span><p>数据被污染不等于已经越权；同一会话可同时命中多个控制维度。</p></footer>
+            </div>
+          </article>
 
-          <section class="graph-workspace panel-frame" aria-labelledby="graphTitle">
-            <header class="panel-titlebar graph-titlebar">
+          <article class="card trend-card">
+            <header class="card-header compact-header"><div><h2>决策趋势</h2><p>ALLOW / ASK / DENY</p></div><span class="subtle-link">近 <b id="trendRangeText">24</b> 小时</span></header>
+            <div class="legend"><span><i class="allow"></i>ALLOW</span><span><i class="ask"></i>ASK</span><span><i class="deny"></i>DENY</span></div>
+            <div class="trend-chart" id="trendChart"></div>
+            <div class="decision-summary">
+              <div class="overview-clickable" role="button" tabindex="0" data-overview-page="audit"><span>ALLOW</span><strong id="allowCount">--</strong><small>--</small></div>
+              <div class="overview-clickable" role="button" tabindex="0" data-overview-page="alerts"><span>ASK</span><strong id="askCount">--</strong><small>--</small></div>
+              <div class="overview-clickable" role="button" tabindex="0" data-overview-page="alerts"><span>DENY</span><strong id="denyCount">--</strong><small>--</small></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="secondary-grid">
+          <article class="card risk-card">
+            <header class="card-header compact-header"><div><h2>风险类型</h2><p>近一周期命中的核心安全边界</p></div><button class="ghost-button overview-clickable" data-overview-page="alerts">查看全部</button></header>
+            <div class="risk-bars" id="riskBars"></div>
+          </article>
+
+          <article class="card events-card">
+            <header class="card-header compact-header"><div><h2>最近安全事件</h2><p>工具调用执行前的裁决与处置</p></div><button class="ghost-button" id="exportButton">导出记录</button></header>
+            <div class="event-table-wrap">
+              <table class="event-table">
+                <thead><tr><th>时间</th><th>工具</th><th>事件</th><th>风险</th><th>裁决</th><th></th></tr></thead>
+                <tbody id="eventRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
+        </div>
+
+        <div class="page-view" id="page-attack">
+          <div id="attackSessionsView" class="attack-subview active">
+            <section class="page-heading attack-heading">
               <div>
-                <h2 id="graphTitle">攻击事件路径</h2>
-                <span class="info-mark" title="展示 Agent 行为的语义因果关系">i</span>
+                <div class="eyebrow"><span></span>实时会话监督</div>
+                <h1>攻击监控</h1>
+                <p>按会话聚合智能体行为。先定位异常会话，再进入语义动作图还原因果链与裁决依据。</p>
               </div>
-              <div class="graph-tools" aria-label="图谱工具">
-                <button id="pathFocusBtn" class="compact-button" type="button" aria-expanded="false" title="展开全部依赖关系">
-                  <i data-lucide="network"></i><span>完整因果图</span>
-                </button>
-                <button id="resetGraphBtn" class="compact-button" type="button" title="恢复自动布局" aria-label="恢复自动布局">
-                  <i data-lucide="rotate-ccw"></i><span>重置布局</span>
-                </button>
-                <button id="fitGraphBtn" class="compact-button" type="button" title="适配画布">
-                  <i data-lucide="maximize"></i><span>全屏</span>
-                </button>
-                <button id="zoomOutBtn" class="visually-hidden-control" type="button" aria-label="缩小图谱"></button>
-                <button id="zoomInBtn" class="visually-hidden-control" type="button" aria-label="放大图谱"></button>
-              </div>
-            </header>
-
-            <div class="graph-legend" aria-label="图例">
-              <span><i class="legend-dot normal"></i>正常行为</span>
-              <span><i class="legend-dot intermediate"></i>可疑行为</span>
-              <span><i class="legend-dot danger"></i>确认攻击</span>
-              <span><i class="legend-dot control"></i>安全控制</span>
-              <span id="graphConfidence" class="legend-confidence">等待图证据</span>
-            </div>
-
-            <div id="graphViewport" class="graph-viewport" tabindex="0" aria-label="实时语义动作图">
-              <div class="graph-grid" aria-hidden="true"></div>
-              <div id="graphWorld" class="graph-world">
-                <svg id="graphEdges" class="graph-edges" aria-label="语义关系边"></svg>
-                <div id="graphNodes" class="graph-nodes"></div>
-              </div>
-              <div id="graphEmpty" class="graph-empty">
-                <i data-lucide="radio-tower"></i>
-                <strong>等待 Agent 行为</strong>
-                <span>新的工具调用会在这里形成攻击因果图</span>
-              </div>
-              <div id="playbackBadge" class="playback-badge"><span class="live-dot"></span> 实时</div>
-            </div>
-            <div id="graphContext" class="graph-context" aria-live="polite"></div>
-          </section>
-
-          <aside id="inspector" class="inspector panel-frame open" aria-labelledby="inspectorTitle">
-            <header class="panel-titlebar inspector-titlebar">
-              <h2 id="inspectorTitle">证据详情</h2>
-              <div>
-                <span class="inspector-mode">随选择更新</span>
-                <button id="closeInspectorBtn" class="panel-icon-button" type="button" title="关闭证据详情" aria-label="关闭证据详情">
-                  <i data-lucide="x"></i>
-                </button>
-              </div>
-            </header>
-            <div id="inspectorBody" class="inspector-body">
-              <div class="inspector-empty">
-                <i data-lucide="mouse-pointer-click"></i>
-                <strong>选择一个语义节点</strong>
-                <span>查看当前发生的行为与关键证据</span>
-              </div>
-            </div>
-          </aside>
-
-          <footer class="incident-footer">
-            <section class="incident-result panel-frame" aria-labelledby="resultTitle">
-              <header class="result-heading">
-                <div>
-                  <h2 id="resultTitle">事件处理结果</h2>
-                  <span id="resultSummary">等待真实审计事件</span>
-                </div>
-                <div class="investigation-actions">
-                  <button id="playPauseBtn" class="compact-button primary-action" type="button"><i data-lucide="play"></i><span>查看会话回放</span></button>
-                  <button id="openTraceBtn" class="compact-button" type="button"><i data-lucide="file-json-2"></i><span>查看原始 Trace</span></button>
-                  <button id="exportReportBtn" class="compact-button" type="button"><i data-lucide="download"></i><span>导出调查报告</span></button>
-                  <button id="createRuleBtn" class="compact-button" type="button"><i data-lucide="shield-plus"></i><span>创建处置规则</span></button>
-                  <div class="more-actions">
-                    <button id="moreActionsBtn" class="panel-icon-button" type="button" title="更多操作" aria-label="更多操作" aria-expanded="false"><i data-lucide="ellipsis"></i></button>
-                    <div id="moreActionsMenu" class="more-actions-menu" hidden>
-                      <button id="allowlistBtn" type="button"><i data-lucide="list-plus"></i><span><strong>加入白名单</strong><small>需要二次确认</small></span></button>
-                    </div>
-                  </div>
-                </div>
-              </header>
-              <div class="result-body">
-                <div class="timeline-story" aria-label="事件时间线">
-                  <div class="timeline-track-wrap">
-                    <div class="timeline-step-controls">
-                      <button id="stepBackBtn" class="panel-icon-button" type="button" title="上一步" aria-label="上一步"><i data-lucide="skip-back"></i></button>
-                      <button id="stepForwardBtn" class="panel-icon-button" type="button" title="下一步" aria-label="下一步"><i data-lucide="skip-forward"></i></button>
-                    </div>
-                    <div id="timelineTicks" class="timeline-ticks"></div>
-                    <input id="timelineRange" class="timeline-range" type="range" min="0" max="0" value="0" aria-label="执行时间轴" />
-                    <div class="timeline-meta">
-                      <span id="timelineCurrent">--:--:--</span>
-                      <span id="timelineEvent">等待事件</span>
-                      <button id="liveBtn" class="live-button active" type="button"><span class="live-dot"></span> 实时</button>
-                    </div>
-                  </div>
-                </div>
-                <aside class="result-outcome" aria-labelledby="outcomeTitle">
-                  <header><i data-lucide="shield-check"></i><span><small>最终状态</small><strong id="outcomeTitle">等待裁决</strong></span></header>
-                  <div id="outcomeActions" class="outcome-actions"></div>
-                </aside>
+              <div class="heading-actions">
+                <div class="monitor-status"><i></i><span>实时同步</span><b id="attackStreamClock">--:--:--</b></div>
+                <button class="secondary-button" id="pauseStreamButton"><span class="pause-icon">Ⅱ</span>暂停同步</button>
+                <button class="primary-button" id="attackExportButton"><svg><use href="#i-audit"/></svg>导出会话</button>
               </div>
             </section>
-          </footer>
 
-          <dialog id="allowlistDialog" class="confirmation-dialog" aria-labelledby="allowlistDialogTitle">
-            <form method="dialog">
-              <header>
-                <span class="dialog-icon"><i data-lucide="shield-alert"></i></span>
-                <span><small>高风险操作</small><strong id="allowlistDialogTitle">确认加入白名单？</strong></span>
-              </header>
-              <p>白名单会降低同类目标的后续拦截强度。玄鉴只会生成复核草案，不会直接修改当前策略。</p>
-              <div class="dialog-actions">
-                <button id="cancelAllowlistBtn" class="compact-button" type="button" value="cancel">取消</button>
-                <button id="confirmAllowlistBtn" class="compact-button danger-action" type="button" value="confirm">生成复核草案</button>
+            <section class="session-metrics" id="attackMetrics"></section>
+
+            <article class="card session-list-card">
+              <header class="session-list-header">
+                <div>
+                  <span class="card-kicker">SESSION QUEUE</span>
+                  <h2>会话列表</h2>
+                  <p>每一行代表一个完整 Agent 会话，包含正常调用、风险发现、审批和阻断结果。</p>
                 </div>
-            </form>
-          </dialog>
-
-          <div class="data-hooks" aria-hidden="true">
-            <span id="sessionCount">0</span>
-            <input id="sessionSearch" tabindex="-1" />
-            <div id="sessionList"></div>
-            <span id="sourceLabel">玄鉴审计记录</span>
-            <span id="sourceMeta">等待审计数据</span>
+                <div class="session-list-actions">
+                  <label class="search-box session-search"><svg><use href="#i-search"/></svg><input id="attackSearch" placeholder="搜索会话 / 智能体 / 风险 / 工具" /></label>
+                  <button class="filter-chip active" data-attack-filter="all">全部</button>
+                  <button class="filter-chip" data-attack-filter="deny">已阻断</button>
+                  <button class="filter-chip" data-attack-filter="ask">待审批</button>
+                  <button class="filter-chip" data-attack-filter="allow">正常</button>
+                </div>
+              </header>
+              <div class="session-table-head">
+                <span>事件 ID / 时间</span><span>智能体</span><span>攻击类型 / 用户任务</span><span>行为概览</span><span>攻击结果</span><span>玄鉴裁决</span><span></span>
+              </div>
+              <div class="session-list" id="attackSessionList"></div>
+              <footer class="session-list-footer"><span><i></i><b id="attackSessionFooter">已连接 · 6 个会话</b></span><button id="loadMoreAttack">加载更多</button></footer>
+            </article>
           </div>
-        </main>
-      </div>
-    </div>
 
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+          <div id="attackDetailView" class="attack-subview">
+            <section class="incident-detail-heading">
+              <div class="incident-breadcrumb">
+                <button id="backToSessions" class="back-button" type="button"><span>←</span>返回会话列表</button>
+                <span class="breadcrumb-sep">/</span>
+                <div><small>攻击监控</small><strong id="detailSessionTitle">会话详情</strong></div>
+              </div>
+              <div class="detail-heading-actions">
+                <select id="detailSessionSelect" class="detail-session-select" aria-label="切换会话"></select>
+                <span id="detailSeverity" class="severity-pill high">高风险</span>
+              </div>
+            </section>
 
-    <script src="/vendor/lucide.min.js?v=0.468.0"></script>
-    <script type="module" src="/app.js?v=20260809-6"></script>
-  </body>
+            <section class="card incident-conclusion-light">
+              <div class="conclusion-kind"><span id="detailConclusionRisk" class="risk-square high">高</span><div><small>核心结论</small><strong id="detailConclusionType">Prompt Injection</strong></div></div>
+              <p id="detailConclusionText">检测到不可信网页内容进入高风险工具参数，动作在执行边界前被阻断。</p>
+              <div id="detailConclusionVerdict" class="conclusion-verdict deny"><svg><use href="#i-shield"/></svg><div><small>玄鉴裁决</small><strong>已阻断</strong><span>DENY</span></div></div>
+            </section>
+
+            <section class="incident-workbench">
+              <aside class="card request-context-card">
+                <header class="workbench-title"><div><span class="card-kicker">REQUEST CONTEXT</span><h2>请求上下文</h2></div><span class="context-pin">PINNED</span></header>
+                <div id="detailRequestContext" class="detail-request-context"></div>
+              </aside>
+
+              <article class="card semantic-graph-card">
+                <header class="workbench-title graph-workbench-title">
+                  <div><span class="card-kicker">SEMANTIC ACTION GRAPH</span><h2>语义动作图</h2><p>节点可点击、拖动；画布支持缩放，右侧证据随选择更新。</p></div>
+                  <div class="graph-toolbar">
+                    <button id="graphPathButton" class="graph-tool active" type="button"><svg><use href="#i-route"/></svg>事件主路径</button>
+                    <button id="graphResetButton" class="graph-tool" type="button"><svg><use href="#i-refresh"/></svg>重置布局</button>
+                    <button id="graphZoomOut" class="graph-icon-tool" type="button" aria-label="缩小"><svg><use href="#i-zoom-out"/></svg></button>
+                    <button id="graphZoomIn" class="graph-icon-tool" type="button" aria-label="放大"><svg><use href="#i-zoom-in"/></svg></button>
+                  </div>
+                </header>
+                <div class="semantic-legend">
+                  <span><i class="normal"></i>正常行为</span><span><i class="warning"></i>可疑行为</span><span><i class="danger"></i>确认风险</span><span><i class="control"></i>安全控制</span><b id="graphConfidence">路径置信度 99%</b>
+                </div>
+                <div id="semanticViewport" class="semantic-viewport" tabindex="0">
+                  <div class="semantic-grid-bg"></div>
+                  <div id="semanticWorld" class="semantic-world">
+                    <svg id="semanticEdges" class="semantic-edges" aria-label="语义图关系"></svg>
+                    <div id="semanticNodes" class="semantic-nodes"></div>
+                  </div>
+                  <div class="graph-hint">拖动画布 · 滚轮缩放 · 双击已选中节点/时间点取消聚焦</div>
+                </div>
+              </article>
+
+              <aside class="card evidence-inspector-card">
+                <header class="workbench-title inspector-title"><div><span class="card-kicker">EVIDENCE INSPECTOR</span><h2>证据详情</h2></div><span>随选择更新</span></header>
+                <div id="semanticInspector" class="semantic-inspector"></div>
+              </aside>
+            </section>
+
+            <section class="card incident-timeline-card">
+              <header class="timeline-card-header">
+                <div><span class="card-kicker">SESSION REPLAY</span><h2>会话处理时间线</h2><p id="timelineSummary">从用户输入到最终裁决的关键节点。</p></div>
+                <div class="timeline-actions"><button id="timelinePlayButton" class="secondary-button"><span>▶</span>回放</button><button id="traceButton" class="secondary-button">查看原始 Trace</button></div>
+              </header>
+              <div id="incidentTimeline" class="incident-timeline"></div>
+            </section>
+          </div>
+        </div>
+
+        <div class="page-view" id="page-tools">
+          <section class="page-heading tool-heading">
+            <div>
+              <div class="eyebrow"><span></span>TOOL SECURITY MANIFEST</div>
+              <h1>工具管理</h1>
+              <p>把智能体真正能调用的工具做成可审计资产：来源、digest、能力范围、副作用与确定性防线统一收口。</p>
+            </div>
+            <div class="heading-actions tool-heading-actions">
+              <label class="search-box tool-search"><svg><use href="#i-search"/></svg><input id="toolSearch" placeholder="搜索工具 / Provider / capability" /></label>
+              <button class="secondary-button" id="toolRegisterButton"><svg><use href="#i-tool"/></svg>登记工具</button>
+              <button class="primary-button" id="toolScanButton"><svg><use href="#i-shield"/></svg>重新同步工具清单</button>
+            </div>
+          </section>
+          <section class="tool-metrics" id="toolMetrics"></section>
+          <section class="capability-inventory" aria-label="智能体能力资产">
+            <article class="card capability-inventory-card">
+              <header class="ops-panel-header compact"><div><span class="card-kicker">AGENT CAPABILITY INVENTORY</span><h2>智能体能力资产</h2><p>统一盘点登记工具、MCP、Skill 与会话记忆；仅统计后端真实可枚举数据。</p></div><span class="subtle-link" id="capabilityInventoryTotal">0 项已接入</span></header>
+              <div class="capability-inventory-grid" id="capabilityInventoryGrid"></div>
+            </article>
+          </section>
+          <section class="tool-main-grid">
+            <article class="card tool-list-card">
+              <header class="ops-panel-header">
+                <div><span class="card-kicker">REGISTERED TOOLS</span><h2>工具清单</h2><p>未知工具、digest 漂移和高副作用能力会在真正执行前进入治理链。</p></div>
+                <div class="ops-panel-actions">
+                  <button class="filter-chip active" data-tool-risk="all">全部</button>
+                  <button class="filter-chip" data-tool-risk="high">高风险</button>
+                  <button class="filter-chip" data-tool-risk="medium">中风险</button>
+                  <button class="filter-chip" data-tool-risk="low">低风险</button>
+                </div>
+              </header>
+              <div class="tool-table-head"><span>工具</span><span>风险</span><span>副作用</span><span>智能体</span><span>24h</span><span>完整性</span><span></span></div>
+              <div id="toolRows"></div>
+            </article>
+            <aside class="card tool-detail-card" id="toolDetail"></aside>
+          </section>
+          <section class="tool-bottom-grid">
+            <article class="card integrity-board">
+              <header class="ops-panel-header compact"><div><span class="card-kicker">SUPPLY CHAIN</span><h2>工具完整性</h2><p>Manifest、digest pinning 与未知工具审批。</p></div><span class="profile-live" id="toolIntegrityStatus"><i></i>正在读取</span></header>
+              <div class="integrity-grid" id="toolIntegrityGrid"></div>
+            </article>
+            <article class="card tool-usage-card">
+              <header class="ops-panel-header compact"><div><span class="card-kicker">CALL SURFACE</span><h2>工具调用面</h2><p>近 24 小时调用量与高副作用能力暴露。</p></div><span class="subtle-link">按调用次数</span></header>
+              <div class="tool-usage-list" id="toolUsageList"></div>
+            </article>
+          </section>
+        </div>
+
+        <div class="page-view" id="page-alerts">
+          <section class="page-heading alert-heading">
+            <div>
+              <div class="eyebrow"><span></span>SECURITY RESPONSE QUEUE</div>
+              <h1>告警中心</h1>
+              <p>将 DENY、ASK、完整性异常与行为漂移聚合为可处置告警；从告警直接回到会话和语义动作图。</p>
+            </div>
+            <div class="heading-actions alert-heading-actions">
+              <label class="search-box alert-search"><svg><use href="#i-search"/></svg><input id="alertSearch" placeholder="搜索告警 / 智能体 / 规则码" /></label>
+              <button class="secondary-button" id="alertMarkReadButton"><svg><use href="#i-check"/></svg>全部标为已读</button>
+            </div>
+          </section>
+          <section class="alert-metrics" id="alertMetrics"></section>
+          <section class="alert-main-grid">
+            <article class="card alert-list-card">
+              <header class="ops-panel-header compact"><div><span class="card-kicker">ALERT QUEUE</span><h2>告警队列</h2><p>默认优先展示未关闭的高风险告警。</p></div><span id="alertVisibleCount" class="subtle-link"></span></header>
+              <div class="alert-toolbar">
+                <div class="alert-toolbar-left">
+                  <button class="filter-chip active" data-alert-status="all">全部</button>
+                  <button class="filter-chip" data-alert-status="open">待处置</button>
+                  <button class="filter-chip" data-alert-status="investigating">调查中</button>
+                  <button class="filter-chip" data-alert-status="resolved">已解决</button>
+                </div>
+                <div class="alert-toolbar-right">
+                  <button class="filter-chip active" data-alert-severity="all">全部等级</button>
+                  <button class="filter-chip" data-alert-severity="high">高危</button>
+                  <button class="filter-chip" data-alert-severity="medium">中危</button>
+                </div>
+              </div>
+              <div id="alertRows"></div>
+            </article>
+            <aside class="card alert-detail-card" id="alertDetail"></aside>
+          </section>
+          <section class="alert-bottom-grid">
+            <article class="card alert-summary-card">
+              <header class="ops-panel-header compact"><div><span class="card-kicker">ALERT SOURCES</span><h2>告警来源</h2><p>哪些安全边界产生了最多需要关注的事件。</p></div><span class="subtle-link">近 24 小时</span></header>
+              <div class="alert-summary-bars" id="alertSummaryBars"></div>
+            </article>
+            <article class="card alert-routing-card">
+              <header class="ops-panel-header compact"><div><span class="card-kicker">ROUTING</span><h2>处置路由</h2><p>告警如何进入安全运营流程。</p></div><button class="ghost-button" id="alertRoutingButton">配置路由</button></header>
+              <div class="routing-list" id="alertRoutingList"></div>
+            </article>
+          </section>
+        </div>
+
+        <div class="page-view" id="page-audit">
+          <section class="page-heading audit-heading">
+            <div>
+              <div class="eyebrow"><span></span>APPEND-ONLY AUDIT TELEMETRY</div>
+              <h1>审计日志</h1>
+              <p>记录动作裁决、策略变更、审批与配置操作；通过 event hash 与 previous hash 形成可校验事件链。</p>
+            </div>
+            <div class="heading-actions audit-heading-actions">
+              <label class="search-box audit-search"><svg><use href="#i-search"/></svg><input id="auditSearch" placeholder="搜索 Trace / 主体 / 操作者 / 规则" /></label>
+              <button class="primary-button" id="auditExportButton"><svg><use href="#i-file"/></svg>导出审计记录</button>
+            </div>
+          </section>
+          <section class="audit-metrics" id="auditMetrics"></section>
+          <section class="audit-integrity-banner">
+            <div class="audit-integrity-copy"><i><svg><use href="#i-shield"/></svg></i><div><strong>审计链完整性校验通过</strong><small>当前模拟窗口内所有记录的 previous_hash → event_hash 连续，无缺口。</small></div></div>
+            <div class="audit-integrity-meta"><span><small>已校验记录</small><strong id="auditVerifiedCount">0</strong></span><span><small>最后校验</small><strong>17:33:18</strong></span><span><small>写入模式</small><strong>async batch</strong></span></div>
+          </section>
+          <section class="audit-main-grid">
+            <article class="card audit-log-card">
+              <header class="ops-panel-header compact"><div><span class="card-kicker">EVENT LEDGER</span><h2>事件账本</h2><p>按时间倒序查看所有安全相关操作。</p></div><span id="auditVisibleCount" class="subtle-link"></span></header>
+              <div class="audit-toolbar">
+                <div class="ops-panel-actions"><button class="filter-chip active" data-audit-type="all">全部类型</button><button class="filter-chip" data-audit-type="action">动作</button><button class="filter-chip" data-audit-type="policy">策略</button><button class="filter-chip" data-audit-type="config">配置</button><button class="filter-chip" data-audit-type="auth">认证</button></div>
+                <div class="ops-panel-actions"><button class="filter-chip active" data-audit-verdict="all">全部结果</button><button class="filter-chip" data-audit-verdict="deny">DENY</button><button class="filter-chip" data-audit-verdict="ask">ASK</button><button class="filter-chip" data-audit-verdict="allow">ALLOW</button></div>
+              </div>
+              <div class="audit-table-head"><span>时间</span><span>类型</span><span>事件</span><span>操作者</span><span>结果</span><span>Trace</span><span>Event Hash</span><span></span></div>
+              <div id="auditRows"></div>
+            </article>
+            <aside class="card audit-detail-card" id="auditDetail"></aside>
+          </section>
+        </div>
+
+        <div class="page-view" id="page-settings">
+          <section class="page-heading settings-heading">
+            <div>
+              <div class="eyebrow"><span></span>SYSTEM CONFIGURATION</div>
+              <h1>系统设置</h1>
+              <p>配置执行 Profile、审批、Semantic Judge、Dashboard 访问、审计留存与通知；确定性安全边界默认保持 fail-safe。</p>
+            </div>
+            <div class="heading-actions"><button class="secondary-button" id="settingsResetButton"><svg><use href="#i-refresh"/></svg>恢复当前配置</button><button class="primary-button" id="settingsSaveButton"><svg><use href="#i-check"/></svg>保存配置</button></div>
+          </section>
+          <section class="settings-layout">
+            <aside class="card settings-nav" id="settingsNav">
+              <button class="active" data-settings-section="enforcement"><svg><use href="#i-shield"/></svg>执行与审批</button>
+              <button data-settings-section="semantic"><svg><use href="#i-activity"/></svg>Semantic Judge</button>
+              <button data-settings-section="access"><svg><use href="#i-lock"/></svg>Dashboard 访问</button>
+              <button data-settings-section="audit"><svg><use href="#i-audit"/></svg>审计与留存</button>
+              <button data-settings-section="notifications"><svg><use href="#i-bell"/></svg>通知与路由</button>
+              <button data-settings-section="checkpoints"><svg><use href="#i-refresh"/></svg>Checkpoint</button>
+              <footer><strong>AgentSentry Dashboard</strong><span>可写配置会提交后端；不可用项会明确标注。</span></footer>
+            </aside>
+            <article class="card settings-content-card" id="settingsContent"></article>
+          </section>
+        </div>
+
+      </main>
+    </section>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="event-drawer" id="eventDrawer" aria-hidden="true">
+    <header><div><span class="drawer-kicker">EVENT INSPECTOR</span><h3 id="drawerTitle">安全事件详情</h3></div><button id="drawerClose">×</button></header>
+    <div class="drawer-body" id="drawerBody"></div>
+  </aside>
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/dashboard.js?v=20260817-4"></script>
+</body>
 </html>

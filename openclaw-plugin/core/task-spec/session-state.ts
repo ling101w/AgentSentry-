@@ -92,7 +92,13 @@ export function updateAuthorizationState(
 
   const shouldMerge = Boolean(current.activeTask)
     && (kind === "task_continuation" || kind === "preference" || derived.capabilities.length === 0);
-  const taskSpec = shouldMerge ? mergeTaskSpecs(current.taskSpec, derived, message) : derived;
+  // (P1) Capability TTLs decay with each turn: a grant created N turns ago
+  // expires after expiresAfterTurn turns instead of every single turn, which
+  // caused approval fatigue on multi-step tasks.
+  const decayed = decayCapabilityTtls(current.taskSpec.capabilities, current.turn, turn);
+  const taskSpec = shouldMerge
+    ? mergeTaskSpecs({ ...current.taskSpec, capabilities: decayed }, derived, message)
+    : derived;
   const preferences = kind === "preference"
     ? unique([...current.preferences, message]).slice(-16)
     : current.preferences;
@@ -119,6 +125,25 @@ export function updateAuthorizationState(
     changed: true,
     kind,
   };
+}
+
+/**
+ * (P1) Decrement capability TTLs as session turns advance. Expired
+ * capabilities are dropped so the next use of that tool degrades to an
+ * approval request rather than silently persisting forever.
+ */
+function decayCapabilityTtls(capabilities: TaskCapability[], fromTurn: number, toTurn: number): TaskCapability[] {
+  const elapsed = Math.max(0, toTurn - fromTurn);
+  if (!elapsed) return capabilities;
+  return capabilities
+    .map((capability) => ({
+      ...capability,
+      usage: capability.usage
+        ? { ...capability.usage, expiresAfterTurn: Math.max(0, capability.usage.expiresAfterTurn - elapsed) }
+        : undefined,
+      expiresAfterTurn: Math.max(0, capability.expiresAfterTurn - elapsed),
+    }))
+    .filter((capability) => capability.expiresAfterTurn > 0 || capability.usage?.expiresAfterTurn);
 }
 
 function authorizationExpired(state: AuthorizationState): boolean {
@@ -156,6 +181,9 @@ function classifyMessage(
 }
 
 function mergeTaskSpecs(left: TaskSpec, right: TaskSpec, message: string): TaskSpec {
+  // (P0-1) Capabilities merge by identity (action, resource, effect, bound
+  // tuple) so distinct clause bindings are never collapsed into a cartesian
+  // authorization across turns either.
   const capabilities = mergeCapabilities([...left.capabilities, ...right.capabilities]);
   const denied = unique([...left.denied_tools, ...right.denied_tools]);
   const allowed = unique([...left.allowed_tools, ...right.allowed_tools]).filter((tool) => !denied.includes(tool));
@@ -168,6 +196,10 @@ function mergeTaskSpecs(left: TaskSpec, right: TaskSpec, message: string): TaskS
     forbidden_tools: CANONICAL_TOOLS.filter((tool) => !allowed.includes(tool)),
     allowed_targets: unique([...left.allowed_targets, ...right.allowed_targets]),
     sensitive_assets: unique([...left.sensitive_assets, ...right.sensitive_assets]),
+    pending_capability_requests: uniqueBy(
+      [...(left.pending_capability_requests || []), ...(right.pending_capability_requests || [])],
+      (item) => `${item.action}:${item.resourceType}:${item.targets.slice().sort().join(",")}`,
+    ).slice(-16) || undefined,
     output_policy: allowed.includes("send_email")
       ? "External delivery is limited to explicitly authorized recipients and payloads."
       : left.output_policy || right.output_policy,
@@ -177,21 +209,42 @@ function mergeTaskSpecs(left: TaskSpec, right: TaskSpec, message: string): TaskS
 function mergeCapabilities(capabilities: TaskCapability[]): TaskCapability[] {
   const merged = new Map<string, TaskCapability>();
   for (const capability of capabilities) {
-    const key = `${capability.action}:${capability.resourceType}:${capability.effect}`;
+    // (P0-1) Same identity rule as the extractor: merging never crosses
+    // clause bindings and constraints intersect instead of unioning.
+    const key = capability.capabilityId
+      || `${capability.action}:${capability.resourceType}:${capability.effect}:${capability.targets.slice().sort().join(",")}`;
     const current = merged.get(key);
     if (!current) {
       merged.set(key, structuredClone(capability));
       continue;
     }
     current.targets = unique([...current.targets, ...capability.targets]);
-    current.constraints.allowedMethods = mergeOptional(current.constraints.allowedMethods, capability.constraints.allowedMethods);
-    current.constraints.allowedPaths = mergeOptional(current.constraints.allowedPaths, capability.constraints.allowedPaths);
-    current.constraints.allowedHosts = mergeOptional(current.constraints.allowedHosts, capability.constraints.allowedHosts);
-    current.constraints.allowedRecipients = mergeOptional(current.constraints.allowedRecipients, capability.constraints.allowedRecipients);
+    current.constraints.allowedMethods = intersectOptional(current.constraints.allowedMethods, capability.constraints.allowedMethods);
+    current.constraints.allowedPaths = intersectOptional(current.constraints.allowedPaths, capability.constraints.allowedPaths);
+    current.constraints.allowedHosts = intersectOptional(current.constraints.allowedHosts, capability.constraints.allowedHosts);
+    current.constraints.allowedRecipients = intersectOptional(current.constraints.allowedRecipients, capability.constraints.allowedRecipients);
     current.evidence.explicitSpan = `${current.evidence.explicitSpan}; ${capability.evidence.explicitSpan}`.slice(0, 320);
     current.evidence.confidence = Math.max(current.evidence.confidence, capability.evidence.confidence);
   }
   return [...merged.values()];
+}
+
+function intersectOptional(left?: string[], right?: string[]): string[] | undefined {
+  if (!left?.length) return right?.length ? [...right] : undefined;
+  if (!right?.length) return [...left];
+  const rightSet = new Set(right);
+  const intersection = left.filter((item) => rightSet.has(item));
+  return intersection.length ? intersection : undefined;
+}
+
+function uniqueBy<T>(items: T[], keyOf: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = keyOf(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function sameTaskFamily(left: TaskSpec, right: TaskSpec): boolean {
@@ -234,11 +287,6 @@ function stripQuotedAndCode(text: string): string {
     .replace(/‘[^’\n]*’/g, " ")
     .replace(/「[^」\n]*」/g, " ")
     .replace(/『[^』\n]*』/g, " ");
-}
-
-function mergeOptional(left?: string[], right?: string[]): string[] | undefined {
-  const merged = unique([...(left || []), ...(right || [])]);
-  return merged.length ? merged : undefined;
 }
 
 function unique<T>(items: T[]): T[] {

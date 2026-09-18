@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 112" role="img" aria-labelledby="title desc">
+  <title id="title">玄鉴</title>
+  <desc id="desc">玄鉴安全产品标志</desc>
+  <defs>
+    <linearGradient id="shieldGradient" x1="18" y1="15" x2="95" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2BE0B8"/>
+      <stop offset="0.55" stop-color="#13B9A0"/>
+      <stop offset="1" stop-color="#087E74"/>
+    </linearGradient>
+    <linearGradient id="orbitGradient" x1="12" y1="75" x2="104" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A8F3E5" stop-opacity=".62"/>
+      <stop offset=".48" stop-color="#48D9C0" stop-opacity=".95"/>
+      <stop offset="1" stop-color="#0EA48F" stop-opacity=".86"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Transparent background -->
+  <g>
+    <!-- Shield -->
+    <path d="M58 10 C70 18 82 24 96 29 V55 C96 75 83 91 58 102 C33 91 20 75 20 55 V29 C34 24 46 18 58 10 Z"
+          fill="none" stroke="url(#shieldGradient)" stroke-width="5.5" stroke-linejoin="round"/>
+    <path d="M42 55 L53 66 L76 42"
+          fill="none" stroke="url(#shieldGradient)" stroke-width="6.5"
+          stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Orbit -->
+    <path d="M11 66 C28 82 68 82 95 61 C108 51 108 42 99 38"
+          fill="none" stroke="url(#orbitGradient)" stroke-width="3.5" stroke-linecap="round"/>
+    <circle cx="98.5" cy="38.5" r="4.8" fill="#11AF99"/>
+    <circle cx="12.5" cy="66.8" r="3.5" fill="#6AE0CC"/>
+
+    <!-- Wordmark converted to vector paths -->
+    <g fill="#10201D">
+      <path d="M391 817C407 788 425 752 440 719H55V601H369C307 522 230 453 202 433C172 409 150 393 124 388C139 354 158 294 164 268C192 279 231 284 442 297C356 227 281 174 243 152C177 109 140 88 98 80C114 46 135 -15 142 -39C192 -19 261 -13 795 30C821 -11 843 -49 858 -81L968 -15C925 69 838 191 756 284L652 229C677 199 703 164 728 129L371 107C519 201 670 318 805 459L692 534C652 489 609 445 564 403L328 393C394 445 459 508 513 570L456 601H945V719H575C557 759 530 811 504 853Z" transform="translate(132.000 83.000) scale(0.062000 -0.062000)"/>
+      <path d="M87 806V500H203V806ZM490 564C465 541 435 519 400 500V847H282V479H359C260 433 138 400 20 380C45 354 72 314 84 284C154 299 224 319 291 342V289H437V241H133V151H437V31H301L357 50C347 76 325 119 307 151L204 119C218 92 233 58 242 31H59V-67H937V31H754C772 60 790 93 808 126L686 147C676 112 658 69 640 31H559V151H875V241H559V289H707V347C776 323 847 304 912 292C928 319 959 362 983 385C840 406 675 450 574 501L588 514ZM370 374C415 393 456 415 494 440C536 416 583 394 633 374ZM619 593C679 552 765 491 807 455L878 539C838 570 761 619 703 656H949V756H662C671 778 680 800 687 822L573 848C546 756 492 669 425 614C452 599 501 566 523 548C554 577 583 614 610 656H676Z" transform="translate(196.000 83.000) scale(0.062000 -0.062000)"/>
+    </g>
+  </g>
+</svg>

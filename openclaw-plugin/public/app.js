@@ -26,6 +26,9 @@ const state = {
   refreshTimer: null,
   playbackTimer: null,
   search: "",
+  listSearch: "",
+  listAttackType: "all",
+  listAttackResult: "all",
 };
 
 const semanticGraph = new SemanticGraph({
@@ -132,7 +135,14 @@ async function fetchJson(url, options = {}) {
 
 function renderAll() {
   renderSessions();
+  renderShellView();
   renderHeader();
+  renderAttackMonitor();
+  if (!isIncidentDetailView()) {
+    semanticGraph.setGraph(null);
+    renderIcons();
+    return;
+  }
   renderIncidentConclusion();
   renderRequestContext();
   renderGraph();
@@ -140,6 +150,26 @@ function renderAll() {
   renderIncidentSummary();
   renderTimeline();
   renderIcons();
+}
+
+function renderShellView() {
+  const detail = isIncidentDetailView();
+  $("attackMonitor").hidden = detail;
+  $("incidentConsole").hidden = !detail;
+  $("backToEvents").hidden = !detail;
+  $("eventSelector").hidden = !detail;
+  $("severityBadge").hidden = !detail;
+  $("incidentHeadingTitle").textContent = detail ? "攻击事件详情" : "攻击监控";
+  document.title = detail ? `玄鉴 · ${incidentId(currentSession())}` : "玄鉴 · 攻击监控";
+}
+
+function requestedSessionId() {
+  return String(new URLSearchParams(window.location.search).get("session") || "");
+}
+
+function isIncidentDetailView() {
+  const requested = requestedSessionId();
+  return Boolean(requested && currentSession()?.id === requested);
 }
 
 function renderHeader() {
@@ -173,6 +203,112 @@ function renderHeader() {
   const tone = decisionTone(session);
   badge.className = `severity-badge tone-${tone}`;
   badge.textContent = !session ? "等待" : tone === "danger" ? "高危" : tone === "warning" ? "中危" : "安全";
+}
+
+function renderAttackMonitor() {
+  const sessions = state.model.sessions || [];
+  const incidentRows = sessions.map((session) => {
+    const conclusion = buildIncidentConclusion(session);
+    return { session, conclusion, attackState: incidentAttackState(session, conclusion) };
+  });
+  const attackTypes = Array.from(new Set(incidentRows.map((item) => item.conclusion.attackType).filter(Boolean)))
+    .sort((left, right) => left.localeCompare(right, "zh-CN"));
+  const typeFilter = $("attackTypeFilter");
+  typeFilter.innerHTML = `<option value="all">全部类型</option>${attackTypes
+    .map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}</option>`)
+    .join("")}`;
+  if (!attackTypes.includes(state.listAttackType)) state.listAttackType = "all";
+  typeFilter.value = state.listAttackType;
+  $("attackResultFilter").value = state.listAttackResult;
+  $("incidentSearchInput").value = state.listSearch;
+
+  const query = state.listSearch.trim().toLowerCase();
+  const filtered = incidentRows.filter(({ session, conclusion, attackState }) => {
+    if (state.listAttackType !== "all" && conclusion.attackType !== state.listAttackType) return false;
+    if (state.listAttackResult !== "all" && attackState.key !== state.listAttackResult) return false;
+    if (!query) return true;
+    const searchable = [
+      incidentId(session),
+      session.id,
+      session.title,
+      session.subtitle,
+      conclusion.attackType,
+      conclusion.target,
+      conclusion.policy,
+      ...(session.requestContext?.tools || []),
+    ].join(" ").toLowerCase();
+    return searchable.includes(query);
+  });
+
+  const attackCount = incidentRows.filter((item) => item.attackState.key !== "benign").length;
+  const blockedCount = incidentRows.filter((item) => item.attackState.key === "blocked").length;
+  const succeededCount = incidentRows.filter((item) => item.attackState.key === "successful").length;
+  $("monitorTotalCount").textContent = formatNumber(sessions.length);
+  $("monitorAttackCount").textContent = formatNumber(attackCount);
+  $("monitorBlockedCount").textContent = formatNumber(blockedCount);
+  $("monitorSucceededCount").textContent = formatNumber(succeededCount);
+  $("incidentListMeta").textContent = `${formatNumber(filtered.length)} / ${formatNumber(sessions.length)} 条事件`;
+
+  const source = state.model.source || {};
+  $("monitorSourceState").textContent = source.available === false ? "降级读取" : "实时同步";
+  $("monitorWindowMeta").textContent = source.totalRecords
+    ? `${formatNumber(source.windowRecords)} / ${formatNumber(source.totalRecords)} 条审计记录`
+    : "等待审计记录";
+
+  $("incidentTableBody").innerHTML = filtered.map(renderIncidentRow).join("");
+  $("incidentTableWrap").hidden = filtered.length === 0;
+  $("incidentListEmpty").hidden = filtered.length > 0;
+}
+
+function renderIncidentRow({ session, conclusion, attackState }) {
+  const eventId = incidentId(session);
+  const eventUrl = `/?session=${encodeURIComponent(session.id)}`;
+  const confidence = Math.round(Math.max(0, Math.min(1, Number(session.graph?.confidence) || 0)) * 100);
+  const tools = (session.requestContext?.tools || []).slice(0, 2);
+  const toolLabel = tools.length ? tools.join(" · ") : "未记录工具";
+  const target = conclusion.target || session.metadata?.scenario || "当前任务边界";
+  const verdict = verdictMeta(session.decision);
+  const policy = conclusion.policy && conclusion.policy !== "EXECUTION_BOUNDARY" ? conclusion.policy : session.alert?.rule || "EXECUTION_BOUNDARY";
+  return `<tr class="incident-row tone-${escapeHtml(attackState.tone)}">
+    <td data-label="事件 ID / 时间">
+      <a class="incident-id-link" href="${eventUrl}" aria-label="查看事件 ${escapeHtml(eventId)}">
+        <strong>${escapeHtml(eventId)}</strong><i data-lucide="arrow-up-right"></i>
+      </a>
+      <time>${escapeHtml(formatDateTime(session.latest || session.metadata?.latestAt))}</time>
+    </td>
+    <td data-label="攻击类型">
+      <span class="incident-type-cell"><strong>${escapeHtml(conclusion.attackType)}</strong><small>${escapeHtml(conclusion.severity)} · ${escapeHtml(policy)}</small></span>
+    </td>
+    <td data-label="工具与目标">
+      <span class="incident-target-cell"><strong>${escapeHtml(toolLabel)}</strong><small title="${escapeHtml(target)}">${escapeHtml(target)}</small></span>
+    </td>
+    <td data-label="玄鉴裁决">
+      <span class="monitor-verdict verdict-${escapeHtml(verdict.key)}"><strong>${escapeHtml(verdict.label)}</strong><code>${escapeHtml(verdict.code)}</code></span>
+    </td>
+    <td data-label="攻击是否成功">
+      <span class="attack-result-cell tone-${escapeHtml(attackState.tone)}"><i data-lucide="${escapeHtml(attackState.icon)}"></i><span><strong>${escapeHtml(attackState.label)}</strong><small>${escapeHtml(attackState.detail)}</small></span></span>
+    </td>
+    <td data-label="证据置信度">
+      <span class="incident-confidence"><span><strong>${confidence}%</strong><small>${formatNumber(session.graph?.nodes?.length || 0)} 个节点</small></span><i><b style="width:${confidence}%"></b></i></span>
+    </td>
+    <td data-label="查看详情"><a class="incident-open-button" href="${eventUrl}" title="打开事件详情" aria-label="打开事件 ${escapeHtml(eventId)} 详情"><i data-lucide="chevron-right"></i></a></td>
+  </tr>`;
+}
+
+function incidentAttackState(session, conclusion) {
+  const attackDetected = session.requestContext?.attackDetected === true
+    || !["授权工作流", "正常行为"].includes(String(conclusion.attackType || ""));
+  if (!attackDetected) {
+    return { key: "benign", label: "非攻击事件", detail: "授权工作流", tone: "neutral", icon: "circle-check" };
+  }
+  const bypass = session.graph?.traceKind === "enforcement_bypass" || session.graph?.risk === "execution_after_block";
+  if (bypass || session.decision === "allow") {
+    return { key: "successful", label: "攻击成功", detail: bypass ? "阻断后仍有执行迹象" : "危险行为已执行", tone: "danger", icon: "shield-alert" };
+  }
+  if (session.decision === "deny") {
+    return { key: "blocked", label: "攻击未成功", detail: "执行前已阻断", tone: "safe", icon: "shield-check" };
+  }
+  return { key: "review", label: "尚未成功", detail: "等待人工确认", tone: "warning", icon: "clock-3" };
 }
 
 function renderIncidentConclusion() {
@@ -236,6 +372,9 @@ function selectSession(id) {
   const session = currentSession();
   state.playhead = Math.max(0, session.timeline.length - 1);
   state.selectedItem = defaultSelection(session);
+  const url = new URL(window.location.href);
+  url.searchParams.set("session", id);
+  window.history.replaceState({ session: id }, "", `${url.pathname}${url.search}${url.hash}`);
   renderAll();
 }
 
@@ -804,6 +943,32 @@ function bindInteractions() {
   $("refreshBtn").addEventListener("click", () => void refreshData({ keepSelection: true }));
   $("modeSelect").addEventListener("change", (event) => void updateEnforcementMode(event.target.value));
   $("sessionSelect").addEventListener("change", (event) => selectSession(event.target.value));
+  $("incidentSearchInput").addEventListener("input", (event) => {
+    state.listSearch = event.target.value;
+    renderAttackMonitor();
+    renderIcons();
+  });
+  $("attackTypeFilter").addEventListener("change", (event) => {
+    state.listAttackType = event.target.value;
+    renderAttackMonitor();
+    renderIcons();
+  });
+  $("attackResultFilter").addEventListener("change", (event) => {
+    state.listAttackResult = event.target.value;
+    renderAttackMonitor();
+    renderIcons();
+  });
+  $("clearIncidentFiltersBtn").addEventListener("click", () => {
+    state.listSearch = "";
+    state.listAttackType = "all";
+    state.listAttackResult = "all";
+    renderAttackMonitor();
+    renderIcons();
+    $("incidentSearchInput").focus();
+  });
+  document.querySelector(".notification-button")?.addEventListener("click", () => {
+    window.location.href = "/alerts";
+  });
   $("sessionSearch").addEventListener("input", (event) => {
     state.search = event.target.value;
     renderSessions();

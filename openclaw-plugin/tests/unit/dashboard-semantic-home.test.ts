@@ -6,7 +6,8 @@ import { buildDashboardModel, buildIncidentConclusion, buildSelectionEvidence, c
 const indexSource = readFileSync(new URL("../../public/index.html", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../../public/app.js", import.meta.url), "utf8");
 const graphSource = readFileSync(new URL("../../public/semantic-graph.js", import.meta.url), "utf8");
-const stylesSource = readFileSync(new URL("../../public/styles.css", import.meta.url), "utf8");
+const dashboardSource = readFileSync(new URL("../../public/dashboard.js", import.meta.url), "utf8");
+const dashboardStylesSource = readFileSync(new URL("../../public/dashboard.css", import.meta.url), "utf8");
 
 describe("semantic action graph homepage", () => {
   it("projects a real causal graph into typed security nodes and an explicit decision chain", () => {
@@ -206,32 +207,80 @@ describe("semantic action graph homepage", () => {
     ]));
   });
 
-  it("makes the incident context, causal graph, evidence inspector and replay rail the homepage structure", () => {
-    for (const id of ["incidentConclusion", "requestContext", "graphViewport", "graphNodes", "inspectorBody", "outcomeActions", "timelineRange", "pathFocusBtn", "resetGraphBtn"]) {
+  it("keeps the event list and incident investigation as one monitor workflow", () => {
+    for (const id of ["attackSessionsView", "attackSessionList", "attackSearch", "backToSessions"]) {
       expect(indexSource).toContain(`id="${id}"`);
     }
+    for (const id of ["attackDetailView", "detailConclusionType", "detailRequestContext", "semanticViewport", "semanticNodes", "semanticInspector", "incidentTimeline", "graphPathButton", "graphResetButton"]) {
+      expect(indexSource).toContain(`id="${id}"`);
+    }
+    expect(indexSource).toContain("攻击类型 / 用户任务");
+    expect(indexSource).toContain("攻击结果");
+    expect(indexSource).toContain("玄鉴裁决");
+    expect(dashboardSource).toContain("function renderAttackSessions()");
+    expect(dashboardSource).toContain("function openAttackSession(id)");
+    expect(dashboardSource).toContain('attackSubview: new URLSearchParams(window.location.search).has("session") ? "detail" : "sessions"');
+    expect(dashboardSource).toContain("window.history.pushState");
     expect(indexSource).toContain("核心结论");
-    expect(indexSource).toContain("攻击事件路径");
+    expect(indexSource).toContain("语义动作图");
     expect(indexSource).toContain("请求上下文");
+    for (const className of ["context-conversation", "context-message-user", "context-message-model", "context-capabilities", "attack-detection-summary", "context-payload-label"]) {
+      expect(dashboardSource).toContain(className);
+    }
+    expect(dashboardSource).toContain("SECURITY VERDICT");
+    expect(dashboardSource).toContain("PAYLOAD EVIDENCE");
+    expect(dashboardStylesSource).toContain(".context-message-model .context-message-body");
+    expect(dashboardStylesSource).toContain(".context-meta>span:last-child");
     expect(indexSource).toContain("证据详情");
-    expect(indexSource).toContain("事件处理结果");
-    expect(indexSource).not.toContain("id=\"incidentFlow\"");
-    expect(indexSource).not.toContain("攻击图</strong>");
-    expect(indexSource).not.toContain("自动弹出</span>");
-    expect(indexSource).not.toContain("id=\"statsGrid\"");
-    expect(indexSource).toContain('/brand-mark.png?v=20260809-1');
-    expect(indexSource).toContain("<strong>玄鉴</strong>");
-    expect(indexSource).not.toContain("AgentSentry / OpenClaw");
-    expect(indexSource).not.toContain("Agent 行为安全裁决系统");
+    expect(indexSource).toContain("会话处理时间线");
+    expect(indexSource).toContain('class="dashboard-brand-logo"');
+    expect(indexSource).toContain('alt="玄鉴 AgentSentry"');
+    expect(indexSource).toContain('aria-label="主导航"');
     expect(indexSource).toContain("智能体行为安全裁决系统");
-    expect(appSource).toContain("这里发生了什么");
-    expect(appSource).toContain("现场信息");
-    expect(appSource).toContain("dashboardDataSignature");
-    expect(appSource).toContain("if (shouldRender)");
-    expect(appSource).toContain("semanticGraph.resetLayout()");
-    expect(stylesSource).toContain("#severityBadge {");
-    expect(stylesSource).not.toContain(".severity-badge:not(#summarySeverity)");
+    expect(indexSource).toContain("Agent Security Controls");
+    expect(indexSource).toContain("用控流、控权、控态三条主线约束数据流、能力边界与执行状态");
+    for (const control of ["控流", "控权", "控态", "数据从哪里来", "用户究竟授权了什么", "是否仍在合法生命周期"]) {
+      expect(indexSource).toContain(control);
+    }
+    for (const key of ["taint", "auth", "state"]) {
+      expect(indexSource).toContain(`data-risk-surface="${key}"`);
+      expect(indexSource).toContain(`data-control-line="${key}"`);
+    }
+    expect(dashboardSource).toContain("function classifyControlLines(session)");
+    expect(dashboardSource).toContain("function buildControlLineSummary()");
+    expect(dashboardSource).toContain("classifyControlLines(session).forEach");
+    expect(indexSource).toContain('class="control-rails"');
+    expect(indexSource).toContain('class="control-rail rail-taint');
+    expect(indexSource).toContain('class="control-rail rail-auth');
+    expect(indexSource).toContain('class="control-rail rail-state');
+    expect(indexSource).toContain("三条主线并行判定");
+    expect(indexSource).not.toContain("control-graph-lines");
+    expect(indexSource).not.toContain("control-center-label");
+    expect(indexSource).not.toContain('data-risk-surface="injection"');
+    expect(indexSource).not.toContain('data-risk-surface="persistence"');
+    expect(indexSource).not.toContain('data-risk-surface="hijack"');
+    expect(dashboardSource).toContain("function buildSemanticLayout(nodes, viewportWidth)");
+    expect(dashboardSource).toContain("applySemanticCanvasStyles()");
+    expect(dashboardStylesSource).toContain("width:var(--semantic-node-width,188px)");
+    expect(dashboardStylesSource).toContain(".semantic-edge-group.tone-danger path{stroke:#df6a5b;stroke-width:1.8}");
     expect(indexSource).not.toContain("v1.2.0");
+  });
+
+  it("keeps capability inventory as the single tools entry point", () => {
+    expect(indexSource).not.toContain('data-page="assets"');
+    expect(indexSource).not.toContain('data-page="policy"');
+    expect(indexSource).not.toContain('id="profileSelect"');
+    expect(indexSource).not.toContain('id="page-assets"');
+    expect(indexSource).not.toContain('id="page-policy"');
+    expect(indexSource).toContain('id="capabilityInventoryGrid"');
+    for (const label of ["登记工具", "MCP 工具", "Skill", "会话记忆"]) {
+      expect(dashboardSource).toContain(`label: "${label}"`);
+    }
+    expect(dashboardSource).toContain('["能力资产",capabilityTotal');
+    expect(indexSource).toContain('<div class="tool-table-head"><span>工具</span><span>风险</span><span>副作用</span><span>智能体</span><span>24h</span><span>完整性</span><span></span></div>');
+    expect(indexSource).not.toContain('<div class="tool-table-head"><span>工具</span><span>风险</span><span>来源</span>');
+    expect(dashboardSource).not.toContain('<span class="tool-source">');
+    expect(dashboardSource).toContain('<span class="side-effect-tags">');
   });
 
   it("keeps graph selections stable and reserves edge labels for edge interaction", () => {
