@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="玄鉴真实治理过程演示：提示注入、工具调用劫持、记忆投毒。" />
+    <title>玄鉴 · 真实治理过程演示</title>
+    <link rel="stylesheet" href="./demo.css" />
+  </head>
+  <body>
+    <div class="demo-shell">
+      <header class="demo-top">
+        <div class="brand">
+          <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#0f766e"/><path fill="#fff" d="M16 5 7 9v6c0 5.7 3.8 9.9 9 12 5.2-2.1 9-6.3 9-12V9l-9-4Zm0 5.1 4.8 2.1v3.1c0 3.1-1.8 5.7-4.8 7.3-3-1.6-4.8-4.2-4.8-7.3v-3.1L16 10.1Z"/></svg>
+          <div>
+            <p class="eyebrow">玄鉴 · AgentSentry</p>
+            <h1>真实治理过程演示</h1>
+          </div>
+        </div>
+        <p class="lead">从公开 benchmark 录制的三条治理轨迹。左侧是会话时间线，右侧是当步裁决、污点与规则命中。不连接实时模型，播放的是已经跑过的拦截证据。</p>
+        <nav class="case-nav" id="caseNav" aria-label="演示场景"></nav>
+      </header>
+
+      <section class="case-banner" id="caseBanner"></section>
+
+      <section class="demo-grid">
+        <article class="panel timeline-panel">
+          <div class="panel-head">
+            <div>
+              <span class="kicker">用户视角 · 对话与时间线</span>
+              <h2>拖动下方进度或播放</h2>
+            </div>
+            <div class="transport">
+              <button type="button" id="playBtn">播放</button>
+              <button type="button" id="resetBtn" class="ghost">重置</button>
+            </div>
+          </div>
+          <div class="timeline" id="timeline" role="list"></div>
+          <div class="scrubber">
+            <input id="progress" type="range" min="0" max="0" value="0" aria-label="时间线进度" />
+            <span id="progressLabel">0 / 0</span>
+          </div>
+        </article>
+
+        <aside class="panel analysis-panel">
+          <div class="panel-head">
+            <div>
+              <span class="kicker">逐步分析</span>
+              <h2 id="analysisTitle">本步详情</h2>
+            </div>
+            <span class="pill" id="analysisPill">待播放</span>
+          </div>
+          <div id="analysis" class="analysis-body"></div>
+        </aside>
+      </section>
+    </div>
+    <script src="./demo-cases.js"></script>
+    <script src="./demo.js"></script>
+  </body>
+</html>

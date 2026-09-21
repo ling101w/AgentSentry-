@@ -94,6 +94,11 @@ describe("Tool Security Manifest", () => {
     expect(misleading).toEqual(expect.arrayContaining([expect.objectContaining({ verdict: "require_approval" })]));
   });
 
+  it("treats OpenClaw write aliases as the builtin write_file manifest", () => {
+    expect(toolManifestFindings("write", "write_file", {})).toEqual([]);
+    expect(toolManifestFindings("apply_patch", "write_file", {})).toEqual([]);
+  });
+
   it("accepts a registered manifest and rejects identity substitution", () => {
     const registered = registerToolManifest(CRM_MANIFEST, { version: "2" });
     expect(toolManifestFindings("crm_create_ticket", "crm_create_ticket", {})).toEqual([]);

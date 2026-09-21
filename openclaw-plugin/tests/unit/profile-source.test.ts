@@ -28,6 +28,8 @@ describe("security profile source files", () => {
     for (const profile of profiles) {
       const definition = loadSecurityProfileDefinition(profile);
       expect(definition.profile).toBe(profile);
+      expect(definition.intervention.mode).toBe("risk-based");
+      expect(definition.intervention.preserveSafetyBoundaries).toBe(true);
       expect(definition.policy.deterministic).toBe(true);
       expect(definition.semantic.mode).toBe("risk-tiered");
     }

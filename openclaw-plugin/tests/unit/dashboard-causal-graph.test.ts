@@ -345,6 +345,10 @@ describe("dashboard causal graph projection", () => {
     ];
 
     expect(overviewAlerts(events).map((row) => row.id)).toEqual(["risk-1"]);
+    expect(overviewAlerts(events)[0]).toMatchObject({
+      id: "risk-1",
+      created_at: "2026-07-12T00:00:00.000Z",
+    });
     const overview = overviewAlerts(events, { includeAuthorizedTrace: true });
     expect(overview.map((row) => row.id)).toEqual(["allow-1", "risk-1"]);
     expect(overview.filter((row) => (row.causal_graph as { trace_kind?: string } | null)?.trace_kind === "authorized")).toHaveLength(1);

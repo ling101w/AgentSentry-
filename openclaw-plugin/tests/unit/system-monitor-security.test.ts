@@ -124,6 +124,23 @@ describe("system monitor pre-execution policy", () => {
     expect(findingWithReason(authorityFile, "memory, startup, or OpenClaw")).toMatchObject({ verdict: "block" });
   });
 
+  it("does not treat trusted workspace identity and memory reads as sensitive or unauthorized", () => {
+    for (const path of [
+      "/root/.openclaw/workspace/USER.md",
+      "/root/.openclaw/workspace/MEMORY.md",
+      "/root/.openclaw/workspace/AGENTS.md",
+      "/root/.openclaw/workspace/memory/2026-08-19.md",
+    ]) {
+      const result = systemPreflight("read_file", { path });
+      expect(findingWithReason(result, "sensitive local paths")).toBeUndefined();
+      expect(findingWithReason(result, "memory, startup, or OpenClaw")).toBeUndefined();
+      expect(result.findings.some((finding) => finding.verdict === "block")).toBe(false);
+    }
+
+    const secret = systemPreflight("read_file", { path: "/root/.ssh/id_rsa" });
+    expect(findingWithReason(secret, "sensitive local paths")).toMatchObject({ verdict: "block" });
+  });
+
   it("allows a local Control UI gateway but blocks a remote gateway override", () => {
     const local = systemPreflight("call_api", {
       url: "http://ControlUI/?gatewayURL=ws://localhost:18789/ws",

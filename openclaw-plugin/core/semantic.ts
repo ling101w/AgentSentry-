@@ -68,9 +68,11 @@ export async function semanticJudgeAmbiguousAction(input: {
   if (!config.semantic.enabled || !config.semantic.judgeToolCalls || config.semantic.mode === "off") return [];
   if (input.preliminary.deterministic_disposition !== "ambiguous") return [];
   const cacheKey = semanticActionCacheKey(input.taskSpec, input.action);
-  const cached = semanticActionCache.get(cacheKey);
-  if (cached?.expiresAt && cached.expiresAt > Date.now()) return markSemanticCacheHit(cached.findings, cacheKey);
-  if (cached) semanticActionCache.delete(cacheKey);
+  if (config.semantic.cacheEnabled) {
+    const cached = semanticActionCache.get(cacheKey);
+    if (cached?.expiresAt && cached.expiresAt > Date.now()) return markSemanticCacheHit(cached.findings, cacheKey);
+    if (cached) semanticActionCache.delete(cacheKey);
+  }
   const inflight = semanticActionInflight.get(cacheKey);
   if (inflight) return markSemanticCacheHit(await inflight, cacheKey);
 
@@ -78,11 +80,13 @@ export async function semanticJudgeAmbiguousAction(input: {
   semanticActionInflight.set(cacheKey, request);
   try {
     const findings = await request;
-    semanticActionCache.set(cacheKey, { expiresAt: Date.now() + SEMANTIC_ACTION_CACHE_TTL_MS, findings: structuredClone(findings) });
-    while (semanticActionCache.size > SEMANTIC_ACTION_CACHE_MAX) {
-      const oldest = semanticActionCache.keys().next().value;
-      if (oldest === undefined) break;
-      semanticActionCache.delete(oldest);
+    if (config.semantic.cacheEnabled) {
+      semanticActionCache.set(cacheKey, { expiresAt: Date.now() + SEMANTIC_ACTION_CACHE_TTL_MS, findings: structuredClone(findings) });
+      while (semanticActionCache.size > SEMANTIC_ACTION_CACHE_MAX) {
+        const oldest = semanticActionCache.keys().next().value;
+        if (oldest === undefined) break;
+        semanticActionCache.delete(oldest);
+      }
     }
     return findings;
   } finally {
@@ -392,7 +396,8 @@ export function semanticGateForToolCall(
     && hasMaterialTaskScope(state)) {
     reasons.push("task-bound third-party data operation needs purpose consistency review");
   }
-  if (manifest?.dataOrigins.some((origin) => origin === "external_web" || origin === "email" || origin === "third_party_api")
+  if ((!url || externalUrl(url))
+    && manifest?.dataOrigins.some((origin) => origin === "external_web" || origin === "email" || origin === "third_party_api")
     && manifest.sideEffects.some((effect) => effect === "network_write" || effect === "process_exec" || effect === "persistent_state")) {
     reasons.push("external-origin tool combines intake with material side effects");
   }
@@ -792,18 +797,21 @@ async function callJudge(prompt: JudgeEnvelope, config: PluginConfig): Promise<J
   const apiKey = resolveSemanticApiKey(config.semantic.apiKeyEnv);
   if (!apiKey) return null;
 
+  const deadline = Date.now() + semanticBudgetMs(config);
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const result = await callJudgeOnce(prompt, config, apiKey);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const result = await callJudgeOnce(prompt, config, apiKey, remainingMs);
     if (result) return result;
   }
   return null;
 }
 
-async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey: string): Promise<JudgeResult | null> {
+async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey: string, timeoutMs: number): Promise<JudgeResult | null> {
   const baseUrl = config.semantic.baseUrl.replace(/\/+$/, "");
   const url = `${baseUrl}/chat/completions`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), semanticBudgetMs(config));
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -847,7 +855,7 @@ async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey
 }
 
 function semanticBudgetMs(config: PluginConfig): number {
-  return Math.min(10000, Math.max(500, config.semantic.timeoutMs));
+  return Math.min(2000, Math.max(500, config.semantic.timeoutMs));
 }
 
 function markSemanticCacheHit(findings: DetectionFinding[], cacheKey: string): DetectionFinding[] {

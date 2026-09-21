@@ -5,6 +5,8 @@ const indexHtml = readFileSync(new URL("../../public/index.html", import.meta.ur
 const workspaceHtml = readFileSync(new URL("../../public/workspace.html", import.meta.url), "utf8");
 const workspaceJs = readFileSync(new URL("../../public/workspace.js", import.meta.url), "utf8");
 const appJs = readFileSync(new URL("../../public/app.js", import.meta.url), "utf8");
+const dashboardJs = readFileSync(new URL("../../public/dashboard.js", import.meta.url), "utf8");
+const dashboardApiJs = readFileSync(new URL("../../public/dashboard-api.js", import.meta.url), "utf8");
 const themeJs = readFileSync(new URL("../../public/theme.js", import.meta.url), "utf8");
 const themesCss = readFileSync(new URL("../../public/themes.css", import.meta.url), "utf8");
 const verdictJs = readFileSync(new URL("../../public/verdict.js", import.meta.url), "utf8");
@@ -12,15 +14,15 @@ const dashboardTs = readFileSync(new URL("../../server/dashboard.ts", import.met
 
 describe("玄鉴 operations workspace", () => {
   it("exposes every operations view through the shared shell", () => {
-    expect(indexHtml).toContain('/brand-mark.png?v=20260809-1');
-    expect(workspaceHtml).toContain('/brand-mark.png?v=20260809-1');
-    for (const path of ["/overview", "/agents", "/policies", "/tools", "/alerts", "/audit", "/settings"]) {
-      expect(workspaceHtml).toContain(`href="${path}"`);
-      expect(workspaceHtml).toContain(`data-nav="${path.slice(1)}"`);
+    expect(indexHtml).toContain('class="dashboard-brand-logo"');
+    expect(indexHtml).toContain('alt="玄鉴 AgentSentry"');
+    expect(workspaceHtml).toContain('/xuanjian-brand-lockup.png?v=20260809-1');
+    for (const [path, page] of [["/overview", "overview"], ["/monitor", "attack"], ["/tools", "tools"], ["/alerts", "alerts"], ["/audit", "audit"], ["/settings", "settings"]]) {
+      expect(indexHtml).toContain(`id="page-${page}"`);
+      expect(indexHtml).toContain(`data-page="${page}"`);
+      expect(dashboardJs).toContain(`["${path}", "${page}"]`);
     }
-    expect(workspaceHtml).toContain('href="/" data-nav="monitor"');
-    expect(dashboardTs).toContain('"/workspace.html"');
-    expect(dashboardTs).toContain('["/overview", "/agents", "/policies", "/tools", "/alerts", "/audit", "/settings"]');
+    expect(dashboardTs).toContain('["/monitor", "/overview", "/agents", "/policies", "/tools", "/alerts", "/audit", "/settings"]');
   });
 
   it("uses the live dashboard contracts for each workspace surface", () => {
@@ -33,9 +35,20 @@ describe("玄鉴 operations workspace", () => {
       "/api/stats",
       "/api/health",
       "/api/checkpoints",
+      "/api/mcp/servers",
+      "/api/skills/inventory",
+      "/api/memory/inventory",
+      "/api/dashboard/metrics",
+      "/api/audit/integrity",
+      "/api/settings/dashboard",
+      "/api/settings/notifications",
     ]) {
-      expect(workspaceJs).toContain(endpoint);
+      expect(dashboardApiJs).toContain(endpoint);
     }
+    expect(dashboardApiJs).toContain("loadLiveMonitorData");
+    expect(dashboardApiJs).toContain("/api/records?compact=1");
+    expect(dashboardJs).toContain("function startAttackLiveSync");
+    expect(dashboardJs).toContain("function refreshLiveMonitor");
     for (const endpoint of [
       "/api/policy/config",
       "/api/settings/enforcement",
@@ -43,8 +56,16 @@ describe("玄鉴 operations workspace", () => {
       "/api/tools/manifests/revoke",
       "/api/tools/manifests/restore",
       "/api/checkpoints/restore",
+      "/api/security/alerts/read",
+      "/api/security/alerts/state",
+      "/api/policy/test",
+      "/api/reset",
     ]) {
-      expect(workspaceJs).toContain(endpoint);
+      expect(dashboardApiJs).toContain(endpoint);
+    }
+    expect(dashboardJs).toContain("function resetAttackSessions");
+    for (const handler of ["markAllAlertsRead", "updateAlertStatusFromUi", "runPolicyTestFromUi"]) {
+      expect(dashboardJs).toContain(`function ${handler}`);
     }
   });
 
@@ -79,13 +100,31 @@ describe("玄鉴 operations workspace", () => {
     expect(verdictJs).toContain('code: "ALLOW"');
   });
 
+  it("turns repeated alerts into an explicit aggregate outcome", () => {
+    expect(dashboardJs).toContain("function aggregatePendingAlerts(alerts)");
+    expect(dashboardJs).toContain("current.count += 1");
+    expect(dashboardJs).toContain('` ×${alert.count}`');
+    expect(dashboardJs).toContain("含阻断后执行迹象");
+  });
+
   it("exposes a persistent theme switch on both investigation shells", () => {
     expect(workspaceHtml).toContain("data-theme-toggle");
-    expect(workspaceHtml).toContain('/themes.css?v=20260809-3');
-    expect(workspaceHtml).toContain('/theme.js?v=20260809-2');
+    expect(workspaceHtml).toContain('/themes.css?v=20260810-1');
+    expect(workspaceHtml).toContain('/theme.js?v=20260810-1');
     expect(indexHtml).toContain("data-theme-toggle");
     expect(themeJs).toContain("agentsentry-console-theme");
     expect(themeJs).toContain("localStorage.setItem");
+    expect(themeJs).toContain('const DEFAULT_THEME = "safeline"');
+    expect(themeJs).toContain('["safeline", "midnight", "graphite"]');
     expect(themesCss).toContain('html[data-theme="graphite"]');
+    expect(themesCss).toContain('html[data-theme="safeline"]');
+    expect(themesCss).toContain('--action: #0fc6c2');
+  });
+
+  it("keeps observe/approval/block as a separate settings control from evidence gating", () => {
+    expect(dashboardJs).toContain('settingSelect("运行模式"');
+    expect(dashboardJs).toContain('"enforcementProfile", s.enforcementProfile, ["observe", "approval", "block"]');
+    expect(dashboardJs).toContain('settingSelect("裁决策略"');
+    expect(dashboardJs).toContain('"interventionMode", s.interventionMode, ["risk-based", "evidence-gated"]');
   });
 });

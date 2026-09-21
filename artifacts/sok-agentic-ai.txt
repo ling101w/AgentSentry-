@@ -1,0 +1,1587 @@
+
+===== PAGE 1 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                 SoK: Attack and Defense Landscape of Agentic AI Systems            
+                                                                                    
+                                                                                    
+                             Juhee Kim1,2∗, Wenbo Guo3, Dawn Song1                  
+                     1 UC Berkeley, 2 Seoul National University, 3 UC Santa Barbara 
+                  kimjuhi96@snu.ac.kr, {dawnsong}@berkeley.edu, {henrygwb}@ucsb.edu 
+                                                                                    
+                                                                                    
+                                                                                    
+                     Abstract               mation through malicious document attachments and email
+                                            forwarding, servers have exposed user chat and credential
+       AI agents that combine large language models with non-AI                     
+                                            data [98,115], and attackers can gain access to users’ per-
+       system components are rapidly emerging in real-world ap-                     
+                                            sonal banking accounts exploiting web agents [13]. These
+       plications, offering unprecedented automation and flexibility.               
+                                            incidents underscore that the flexibility and automation capa-
+       However, this unprecedented flexibility introduces complex                   
+                                            bilities make agentic systems powerful, while also creating
+       security challenges that differ from those found in traditional              
+                                            complex security challenges, fundamentally different from
+       software systems. This paper presents the first comprehensive                
+                                            traditional software systems or standalone AI models.
+       systematization of knowledge on AI agent security, including                 
+                                             Existing literature reviews primarily focus on LLM secu-
+       an analysis of agents’ design space, attack landscape, and                   
+                                            rity [49,58,81,138], and the few recent surveys on agents
+       defense mechanisms for secure AI agent systems. We further                   
+                                            largely concentrate on specific attack vectors or isolated sys-
+       identify open challenges that point to promising directions                  
+                                            tem components [52,138,155]. The community lacks a sys-
+       for future research in this emerging domain. Our work intro-                 
+                                            tematic view or framework for understanding the overall risks
+       duces the first systematic framework for understanding the                   
+                                            of the agentic system as a whole, as well as guidance for
+       security risks and defense landscapes of AI agents, serving                  
+                                            security principles and mechanisms for agentic systems.
+       as a foundation for building both secure agentic systems and                 
+                                             This paper addresses this gap by providing the first com-
+       advancing research in this critical area.                                    
+                                            prehensive systematization of knowledge on the security land-
+                                            scape of agentic AI systems. We approach agent security from
+       1  Introduction                      a holistic systems perspective, examining how the combina-
+                                            tion of LLMs with traditional software creates unique security
+       The rapid advancement of agentic AI systems1 has funda- challenges that cannot be addressed through component-level
+       mentally transformed the AI landscape, marking a paradigm defenses alone. Our analysis begins with a systematic charac-
+       shift from isolated language models to integrated systems terization of agent design dimensions that influence security
+       that combine Large Language Models (LLMs) with diverse properties, followed by a comprehensive taxonomy of attack
+       software components. These hybrid systems demonstrate un- vectors and security risks across the entire agent ecosystem.
+       precedented capabilities by seamlessly integrating AI models We then discuss the defense principles for agents and conduct
+       and traditional symbolic software, enabling autonomous task a systematic survey of existing defense mechanisms, cate-
+       execution and dynamic tool usage. Agentic AI systems span gorizing them by their protection approaches. Through the
+       various applications, from software development [28,44] to process, we identify limitations in current defenses and dis-
+       web browser use [99,108].            cuss open challenges for constructing secure agentic systems.
+         The security implications of agentic AI systems are be- Our contributions are threefold:
+       coming increasingly critical as recent incidents demonstrate                 
+                                             • Agent Design Dimensions: We present a systematic
+       the severity of potential vulnerabilities. Prompt injection at-              
+                                               framework that characterizes agentic AI systems through
+       tacks have been exploited to access private GitHub reposito-                 
+                                               seven key design dimensions, input trust, access sensitiv-
+       ries [54], while remote code execution vulnerabilities [88]                  
+                                               ity, workflow, action, memory, tool, and user interface,
+       have enabled unauthorized system access. Data exfiltra-                      
+                                               and analyze how flexibility along each dimension im-
+       tion attacks [112, 117] have compromised sensitive infor-                    
+                                               pacts security risks.                
+         ∗Workdoneduringtheauthor’svisittoUCBerkeley.                               
+         1Inthispaper,weuseagenticAIsystemsandAIagentsinterchangeably. • Comprehensive Attack Landscape and Taxonomy:
+       USENIX Association                             35th USENIX Security Symposium 6047
+
+===== PAGE 2 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+          We develop a systematic taxonomy of attack vectors or- search with keywords across four dimensions: i) general ter-
+          ganized by threat models (i.e., external, user-level, and minology (e.g.,agent security),ii) OWASP-defined risks (e.g.,
+          internal adversaries) and provide a comprehensive clas- prompt injection, memory poisoning), iii) component-centric
+          sification of nine security risk categories that encompass terms (e.g., RAG security, tool security), and iv) traditional
+          user interaction, model behavior, memory systems, tool security adaptations (e.g., isolation, access control). We pri-
+          integration, and environment interaction. oritize top-tier security venues (e.g., USENIX Security, IEEE
+                                            S&P, CCS, and NDSS) and ML conferences (e.g., NeurIPS,
+         • Defense Landscape Systematization: We systemati- ICLR, and ICML), alongside high-impact preprints, indus-
+          cally survey existing defense mechanisms in three cate- try whitepapers, and CVEs. We manually exclude work on
+          gories: runtime protection,secure-by-design,andcompo- standalone models to focus explicitly on agents. The review
+          nent hardening, identifying specific design dimensions yields 128 papers, including 51 attack methods and 60 de-
+          for defense and open challenges.  fense methods; the remaining works address both attacks and
+                                            defenses or focus on case studies without introducing new
+         Tothebestofourknowledge,thisisthefirstworktosystem-                        
+                                            methods.                                
+       atically analyze the security landscape of agentic AI systems                
+                                            Differences From Existing Surveys. Existing surveys on AI
+       from a comprehensive system perspective. Our systematiza-                    
+                                            and LLM security primarily emphasize model-level threats
+       tion provides a foundational framework for understanding                     
+                                            and overlook the expanded attack surface and downstream
+       agent security risks and defense strategies, guiding future re-              
+                                            consequences introduced by agentic systems [49,58,81,138].
+       search toward building secure agentic systems. This work can                 
+                                            Prior agent-focused studies typically narrow their scope to
+       serve as a handbook for researchers and developers working                   
+                                            specific attack vectors [155], agent types [65,73], or individ-
+       with agentic AI systems.                                                     
+                                            ual components [52], while design-oriented work proposes
+                                            high-level principles without systematizing attacks or de-
+       2  Overview                          fenses [12,156]. The closest surveys [31,151] consider cross-
+                                            component interactions but largely limit their defense tax-
+       In this section, we define the scope of our work, introduce our onomies to model-based techniques. In contrast, our work
+       methodology, and discuss the key differences from existing provides a unified risk taxonomy covering all agent compo-
+       agent security surveys.              nents and their interactions, together with a defense-in-depth
+       Scope. We focus on security risks and defenses that are framework that integrates both model-based and system-level
+       unique to, or significantly amplified in, agentic systems com- defenses, offering actionable guidance for securing agentic
+       pared to traditional software and standalone LLMs. We first systems.         
+       characterize how agents differ from standalone models across                 
+       seven design dimensions (§3). We then analyze agent-specific                 
+                                            3 AI Agent and Security Implications    
+       security risks both at the component and system levels (§4).                 
+       For risks that exist in non-agentic LLMs (e.g., jailbreak, hal-              
+                                            3.1 AI Agents                           
+       lucination), we emphasize how agent autonomy and envi-                       
+       ronment access magnify their impact (e.g., data exfiltration,                
+                                            In this paper, we define AI agents as hybrid software systems
+       unintended system manipulation). We exclude attacks target-                  
+                                            that combine traditional software components with neural
+       ing model internals, such as model inversion [38], as these do components.2 An AI agent typically consists of the following
+       not fundamentally worsen in agentic contexts where agents                    
+                                            components.                             
+       operate purely through inference-time input-output interfaces.               
+                                            LLMs. As the brain of the agent, the LLM(s) receive and
+       Finally, §5 systematizes the agent defense landscape, describ-               
+                                            analyze user tasks, create a step-by-step plan, and take actions
+       ing existing approaches and open challenges.                                 
+                                            following the plan. These processes can be performed by a
+       Methodology. First, we define the agent structure and design                 
+                                            single or multiple LLMs, each tailored to a specific role.
+       dimensions based on existing definitions and real-world agent                
+                                            Memory. Memory stores the agent’s internal knowledge
+       implementations. This forms the foundation of our agent risk                 
+                                            base and historical action trajectories, which may include the
+       taxonomy, which analyzes risks at both the component and                     
+                                            agent’s past experiences and observations. This information
+       system levels. We also refer to the taxonomy of the OWASP                    
+                                            is often vectorized for efficient retrieval and can facilitate the
+       Top 10 for LLM Applications [104] and MITRE ATLAS Ma-                        
+                                            agent to make future decisions based on knowledge and prior
+       trix [25]. We then propose the defense landscape for agentic                 
+                                            experience.                             
+       systems by applying the defense in-depth principle, informed                 
+       by traditional system security. Under this framework, we con- Tools. Tools are symbolic functions that the agent uses to
+       duct a systematic review of academic literature and web doc-                 
+                                             2Our definition is built upon earlier agentdefinitions in the literature [35,
+       uments on agentic AI security from 2023 to October 2025,                     
+                                            72,114,135]andistailoredforsecurityanalysesinlatersections.Wedonot
+       corresponding to the proliferation of agent systems [150]. We claimthesuperiorityofourdefinition.
+       6048 35th USENIX Security Symposium                        USENIX Association
+
+===== PAGE 3 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                             User                                                   
+                         Agent                                                      
+                                           Action    External Environment           
+                                           Read                                     
+                             User Interface Retrieval       Web env.                
+                   Other                   Write                                    
+                  Agents                  Update, Respond                           
+                                                            Computer                
+                   ●               Planner Actio E ns x , e C c o u d t e e exec env.
+                              LLM                                                   
+                                                   Tool                             
+                                                            Domain-                 
+                              Agent …                       specific env.           
+                   ●         Workflow                                               
+                                   Actors                                           
+                                                            Third-party             
+                                                            services                
+                                   Memory                                           
+                            Internal Session Trace Tool/System External RAG         
+                             RAG  Long-term Storage Credential                      
+       Figure 1: Overview of an AI Agent’s structure. The LLM and agent workflow together govern the agent’s planning and execution.
+       Multi-agent systems have multiple such cores, each with their own memory, system prompts, and tool sets.
+       interact with the external environment. With tools, agents flows.            
+       can perform three types of actions: read, write, and execute.                
+       Retrieval tools provide read-only access to the external envi-               
+                                            3.2 Agent Design Dimensions             
+       ronment, such as searching or reading a file, while tools that               
+       modify the environment, such as writing a file, sending an We identify seven design dimensions that characterize agent
+       email, or running a command, have read, write, and execution design. Each dimension represents a continuum spectrum of
+       access. Tools can be implemented through standardized pro- flexibility, and we illustrate three representative levels (least,
+       tocols (e.g., MCP [6]), by the agent designer or by third-party moderately, and most flexible) for simplicity. As shown in Ta-
+       providers [8,105].                   ble 1, agents can operate at any point along these spectrums.
+       External Environment. External environment is the external Input Trust. This dimension categorizes the trustworthiness
+       context in which the agent interacts to accomplish tasks. Dif- of external data sources on which an agent is relying. It cap-
+       ferent agents operate in different environments. For example, tures the progression from using no external data (highest
+       a web agent typically interacts with a browser, while a code trust) to relying on arbitrary, potentially untrusted external
+       agent operates within an integrated development environment data sources (lowest trust but highest flexibility). As agents
+       (IDE). The agent interacts with the environment (e.g., access, access more diverse and potentially untrusted information
+       read, and write to a SQL database) through tools. sources, they gain improved knowledge and decision-making
+                                            capabilities, but face increased security risks from compro-
+       Overall Workflow. An AI agent receives a user query and                      
+                                            mised or malicious data sources.        
+       automatically takes a sequence of actions to assist the user.                
+       The LLM components conduct task planning and decide what Access Sensitivity. This dimension categorizes an agent’s
+       actions to take for different tasks, including tool call, content level of access to sensitive data within the system or envi-
+       generation, and querying memory. Together, the LLM and the ronment. Flexibility increases as agents gain access from no
+       agent workflow form the decision-making core that orches- sensitive data to known sensitive data sources, and finally to
+       trates how the agent reasons about tasks and sequences its arbitrary sensitive data. Higher levels enable agents to handle
+       actions. For example, when asked to update a file, the agent more complex tasks that require sensitive information access
+       will first call a file read tool, generate new file content based while significantly expanding both theiroperational scope and
+       on what it reads, and call a file write tool to update the file. the potential impact of security breaches.
+       Agentic Systems vs. Traditional Software Systems. The Workflow. This dimension refers to the action sequences of
+       key uniqueness of agentic systems compared to traditional the agent and determines who defines these sequences, analo-
+       systems arises in the composition and workflow of the system. gous to the code in traditional software. Flexibility increases
+       First, agent systems combine traditional software programs as it shifts from no complex workflows (simple chatbots) to
+       with AI models, whereas traditional systems operate mainly developer-defined workflows, and ultimately to LLM-defined
+       on pre-determined program logic defined in source code. This dynamic workflows. This progression allows agents to adapt
+       makes agentic systems more flexible and adaptive. Second, their execution patterns from rigid, predetermined sequences
+       workflow in traditional software is mainly pre-programmed, to flexible, context-aware task planning.
+       whereas agentic systems run on dynamically generated work- Action. This dimension specifies the types of operations an
+       USENIX Association                             35th USENIX Security Symposium 6049
+
+===== PAGE 4 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+       Table 1: Agent design dimensions and corresponding flexibility for each dimension. Note that the dimensions are orthogonal;
+       they can be used in the same agent, allowing it to have different levels along different dimensions.
+       Dimension  Level 1: Least flexible Level 2: Moderately flexible Level 3: Most flexible
+                                                                                    
+       Input Trust No external data [2,43,130] Predefined external data [68] Arbitrary external data [8,105,147]
+       Access Sensitivity No sensitive data [2,43,130] Predefined sensitive data [101] Arbitrary sensitive data [28,108]
+       Workflow   Simple chatbot [2,43,130] Fixed, Developer-defined [61] Dynamic, LLM-defined [139,147,150]
+       Action     LLM response only [2,43,130] LLM response, Retrieval [68, LLM response, Retrieval, Execution [28,108]
+                                    101]                                            
+       Memory     No memory [2,43,130] Transient session memory [63] Persistent memory across sessions [66,102]
+       Tool       No tool [2,43,130] Known tools [116] Arbitrary tools [105]        
+       User Interface Text-only [2,43,130] Web-based image preview [42] Interactable Web elements [41,100]
+       agent can perform, with flexibility increasing from generating 4.1 Threat Model and Attack Vectors
+       responses only to adding retrieval capabilities, and finally to              
+                                            Given the diverse participants in AI agent ecosystems, attack-
+       executing environment-modifying actions. This progression                    
+                                            ers and victims vary across different scenarios. We identify
+       significantly expands an agent’s operational impact and abil-                
+                                            three adversarytypes categorizedbythe attacker’s capabilities
+       ity to accomplish complex tasks. This dimension is closely                   
+                                            and their corresponding attack vectors. 
+       related to the tool dimension, as execution capabilities often               
+       require corresponding tools.         ExternalAdversary. An attackerin the externalenvironment
+                                            cannot directly interact with the agent, but the attacker can
+       Tool. This dimension categorizes the range of tools avail-                   
+                                            manipulate external resources that the agent may retrieve and
+       able to an agent, increasing the flexibility from no tools to                
+                                            process, such as public web pages or documents. This threat
+       known, vetted tools, and ultimately to arbitrary tools that can              
+                                            model represents the most constrained, yet highly realistic
+       be dynamically discovered and used. This progression maxi-                   
+                                            scenario, in which the adversary has no direct access to the
+       mizes functional capability by expanding the agent’s ability                 
+                                            agent system.                           
+       to interact with diverse systems and environments. The tool                  
+                                             • V1. Indirect Prompt Injection [48,54,153]: Attacker-
+       dimension directly enables the action dimension, as more                     
+                                               supplied content is crafted to instruct the agent to per-
+       sophisticated actions typically require more diverse tools.                  
+                                               form unintended actions, potentially leading to unau-
+       Memory. This dimension categorizes how an agent stores thorized access to the agent user’s data or the agent
+       and retrieves information, with increasing flexibility from provider’s internal resources.
+       stateless operation to transient session memory and finally to • V2. Malicious Data Injection [106,127]: The attacker
+       persistent cross-session memory. This progression enables in- can inject malicious data in addition to prompts. When
+       creasingly sophisticated learning, personalization, and knowl- such data is consumed during sensitive operations, it can
+       edge accumulation capabilities.         trigger security failures and breaches. Examples include
+                                               malicious software packages [127] or attacker-supplied
+       User Interface. This dimension defines how users interact                    
+                                               values for sensitive financial parameters [106].
+       withthe agent,increasing flexibilityfrom text-onlyinteraction                
+                                             • V3. Tool Poisoning [74,96,121]: Attackers can provide
+       to web-based previews and media rendering, and ultimately to                 
+                                               third-party tools that embed malicious prompts in the
+       fully interactive web elements and dynamic interfaces. This                  
+                                               tool’s name or description, or the tool’s implementation
+       progressionenablesricheruserexperiencesandmorecomplex                        
+                                               itself contains malicious code.      
+       interaction patterns.                                                        
+                                            User-level Adversary. A user-level attacker can directly
+                                            compromise the agent by feeding malicious inputs to the
+                                            agent directly. The adversary could be a malicious user [79,
+                                            80,107,154], or a third-party actor that poisons benign user
+       4  Attack Landscape of AI Agents                                             
+                                            input [39,40].                          
+                                             • V4. Direct Prompt Injection [39,40,79,80,107,154]:
+                                               The attacker’s malicious prompt instructs the agent to
+       In this section, we conduct a comprehensive analysis of at-                  
+                                               perform unauthorized actions that are prohibited by the
+       tacks against agentic systems by identifying key attack vec-                 
+                                               system prompt.                       
+       tors (§4.1) and risk taxonomy (§4.2), and by examining how                   
+       design dimensions correspond to these risks and how differ- Internal Adversary. An attacker with access to agent compo-
+       ent risks interact. Figure 2 provides an overview of the attack nents can directly compromise the agent. The adversary may
+       landscape.                           be the agent developer or a third-party provider responsible
+       6050 35th USENIX Security Symposium                        USENIX Association
+
+===== PAGE 5 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                             User   V4. Direct                                      
+                                  Prompt Injection                                  
+                                 R1                                                 
+                Agent                R5, R6, R7 V3. Tool External Environment       
+                              User Interface    Poisoning V1. Indirect V2. Malicious
+                                                      Prompt Injection Data Injection
+                                                 R1                                 
+                                                         R1. Heterogeneous          
+                                                         Untrusted Interfaces       
+                    V5.                                                             
+                   Model R1      LLM                      Web env.                  
+                  Poisoning                                                         
+                                                          Computer env.             
+                          R2. Wrong Instruction Following                           
+                          R3. Unconstrained / Unsafe Data Flow Tool Domain-specific env.
+                          R4. Hallucination and Model Mistakes Third-party services 
+                                                          External RAG              
+                                        R5, R6, R7                                  
+                               Memory                                               
+                                                 R5. Private Data Leakage           
+                Me V m 6 o . ry R1 In R te A r G nal Lo S n e g s -t s e i r o m n T S r t a o c ra e ge T C oo re l/ d S e y n s t t i e a m l R D 6 a . t a U C ni o n r t r e u n p d ti e o d n /Unauthorized Action and
+                Poisoning                        R7. Resource Drain and Denial-of-Service
+       Figure 2: Demonstrations of attack vectors (V*) and security risks (R*) against agentic systems. Black boxes and arrows represent
+       agent components and data flows. Purple boxes and arrows indicate attack vectors and how they enter the system. Red boxes
+       indicate security risks.                                                     
+       for the individual agent component,such as memory or model. R3. Unconstrained/Unsafe Data Flow. LLMs suffer from
+       This attack is the most difficult to achieve in practice. unconstrained data flow due to their stochastic nature. In
+         • V5. Model Poisoning [19,91]: The attacker embeds agentic systems, this manifests as data flowing freely from
+          hidden malicious behavior into the model to perform any input from untrusted interfaces (R1) to any output (e.g.,
+          unauthorized actions or leak user data. user responses or subsequent tool calls), unlike traditional
+         • V6. Memory Poisoning [21, 34, 162]: The attacker systems where data propagation is regulated by programming
+          can directly manipulate the agent’s memory to inject languages, type systems, and access controls. This leads to
+          malicious content, modify the agent’s behavior, or leak consequential risks: private data leakage (R5), data corrup-
+          private data.                     tion (R6), and resource drain (R7). For example, when an
+                                            agent retrieves untrusted web content and produces a URL
+                                            in its response, that URL may contain attacker-controlled
+       4.2 Security Risks                                                           
+                                            data. Automatically fetching such URLs enables data exfiltra-
+                                            tion [87,112], resulting in R5.         
+       We present a comprehensive taxonomy of security risks in                     
+       agents, categorized by components that can be targeted by R4. Hallucination and Model Mistakes. Models often hallu-
+       different attack vectors. This taxonomy provides a systematic cinateandgenerateincorrectinformation,andthisproblembe-
+       map of the entire security risk landscape for agentic systems. comes more severe in agent-environment interactions because
+       We further connect this taxonomy to MITRE ATLAS [25] agents act on hallucinated content, creating real-world conse-
+       in Appendix A.                       quences beyond misinformation, such as accessing attacker-
+                                            controlled resources. Attackers exploit this behavior through
+       R1. HeterogeneousUntrustedInterfaces. Comparedtostan-                        
+                                            package hallucination attacks [127], where they register mali-
+       dalone LLMs,agentic systems expose multiple heterogeneous                    
+                                            cious packages with names that LLMs frequently hallucinate.
+       interfaces to users, including external data sources that agents             
+                                            This turns a model limitation into a reliable attack vector for
+       retrieve and process, persistent memory stores that accumu-                  
+                                            code injection and supply chain compromise.
+       late over time, and third-party tools with various trust levels.             
+       These interfaces can be leveraged by attackers as attack entry R5. Private Data Leakage. Agents handle sensitive data
+       points, which introduce way larger attack surfaces compared across multiple components such as user conversations, per-
+       to standalone LLMs.                  sistent memory, tool credentials, and environment resources,
+       R2. Wrong Instruction Following. The agent follows mali- creating opportunities for unauthorized data access. Attackers
+       cious prompts injected by attackers rather than the intended exploit interactions among these components to exfiltrate pri-
+       instructions from benign users or system developers. This vate information. Examples include manipulating agents to
+       occurs because inputs from external or attacker-controlled send data to attacker-controlled servers, triggering automatic
+       sources are processed by the model inside the agent and can URL fetches that leak data through request parameters, or
+       therefore influence its behavior.    abusing domain-specific vulnerabilities such as SSRF, XSS,
+       USENIX Association                             35th USENIX Security Symposium 6051
+
+===== PAGE 6 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                     Agent Design Dimensions                        
+                  Input                       User    Access                        
+                  Trust Memory Tool Workflow  Interface Sensitivity Action          
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                      Hetero R g 1 e . n eous I R F n 2 o s . t l l r W o u w c ro t i i n n o g g n Un U c n o s n F a R s l f o e 3 t w r . D a i a n t e a d / Priva R te 5 . D ata A R / c 6 U t . i n o U a n n u i a t n h n t o e d r n D i d z a e e t d d a D R r 7 a . i n R e a s n o d u D rc o e S
+                       I U n n te tr r u fa s c te e d s Hallu R ci 4 n . a tion Leakage Corruption
+                                  and Model                                         
+                     Risks        Mistakes Model Risks                              
+             Figure 3: Relationship between agent design dimension and risks, and the connection across different risks.
+                                                                                    
+       path traversal, or SQL injection to reach protected resources. 4.3 System-level Analysis of Agent Risks
+       Recent incidents [90,98,115] show real confidentiality viola-                
+       tions where agent vulnerabilities exposed users’ chat histories Figure 3 illustrates how agent design dimensions map to secu-
+       and personal information.            rity risks in agents (§4.2) and how these risks interact to am-
+                                            plify system-level threats. Understanding these connections
+       R6. Unintended/Unauthorized Action and Data Corrup-                          
+                                            reveals that agent security cannot be addressed by securing
+       tion. Agents can violate integrity through two closely related               
+                                            individual components in isolation. Instead, we must design
+       risks, unintended and unauthorized actions and data corrup-                  
+                                            and apply system-level defenses with defense-in-depth,which
+       tion, both involving unauthorized changes to internal or exter-              
+                                            will be discussed in §5.                
+       nal state. Unintended actions make irreversible state changes                
+                                            Design Dimensions to Risks. Agent design dimensions
+       (e.g.,unauthorizedpurchases,arbitrary code execution),while                  
+                                            map to distinct risk categories, and we observe that greater
+       data corruption directly modifies stored resources (e.g., cor-               
+                                            flexibility amplifies security risks (Figure 3). The Input Trust,
+       rupting files or databases). At the user interface, agents may               
+                                            Memory,and Tool dimensions directly contribute to increased
+       provide false or misleading information. At memory compo-                    
+                                            attack surface (R1). Expanding external data sources enables
+       nents, agents may inject poisoned knowledge or malicious                     
+                                            indirect prompt injection, adding persistent memory creates
+       instructions [21] that corrupt subsequent behavior. At the en-               
+                                            memory poisoning targets, and incorporating third-party tools
+       vironment level, agents can be manipulated to execute unau-                  
+                                            introduces supply chain risks.          
+       thorized modifications through command injection, SQL in-                    
+                                             The Workflow dimension primarily drives model risks (R2,
+       jection, or file system manipulation.                                        
+                                            R3, R4). As workflows shift from simple chatbots to LLM-
+       R7. Resource Drain and Denial-of-Service. Agents intro-                      
+                                            defined dynamic execution, flexible control flows provide
+       duce availability risks through their consumption of compu-                  
+                                            more opportunities for hijacking agent reasoning, worsen-
+       tational resources, API calls, and interactions with external                
+                                            ing wrong instruction following and unconstrained data flow.
+       systems. Attackers exploit this autonomy to trigger costly                   
+                                            Hallucination risks amplify when agents dynamically select
+       API calls, force infinite execution loops, or cause excessive                
+                                            tools andresources,as incorrectmodeloutputs directly trigger
+       memory use, creating denial-of-service conditions that can                   
+                                            real-world actions.                     
+       render the agent and external systems unusable or economi-                   
+                                             The Access Sensitivity, Action, and User Interface dimen-
+       cally unsustainable.                                                         
+                                            sions determine the severity of consequence risks (R5, R6,
+       Otherrisks in agenticsystems. Attackers can also targetthe R7). Granting agents access to more sensitive data amplifies
+       agenticAIsystemitself,ratherthantheuserorsurroundingen- the impact of violations, as compromised agents can leak,
+       vironment, by stealing system prompts, tool descriptions, and corrupt, or drain more valuable resources. Expanding action
+       configurations that encode proprietary knowledge [120,148], capabilities from response-only to execution transforms infor-
+       underminingagentdevelopers andtoolproviders. Agenticsys- mation disclosure into environment corruption. Complex user
+       tems may also expose side-channel risks through observable interfaces introduce new attack channels through automatic
+       behaviors such as tool execution timing, API call sequences, URL fetching (confidentiality), executing destructive com-
+       or network traffic patterns. To the best of our knowledge, we mands (integrity), and interface manipulation (availability).
+       are not aware of prior work studying such side-channel at-                   
+       tacks in agentic systems, and thus defer deeper analysis to Risk Interactions and Amplification. Risks in agentic sys-
+       future work.                                                                 
+                                            tems (R1-R7) interact in a cascading manner, where initial
+                                            failures propagate across components and amplify system-
+       6052 35th USENIX Security Symposium                        USENIX Association
+
+===== PAGE 7 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+       level threats. An expanded attack surface (R1) increases entry when LLM inference and tools consume user resources. This
+       points for attacker-controlled data, allowing malicious inputs includes preventing token draining and protecting external
+       to reach and exploit model risks (R2, R3, R4). For example, systems and agent hosts from denial-of-service attacks. This
+       indirect prompt injection through external data can trigger goal addresses resource drain and denial-of-service (R7).
+       wrong instruction following, which then redirects agent be- Contextual Security. As discussed in §3, dynamic contexts
+       havior. Model risks then amplify consequence risks (R5, R6, are unique and essential to an AI agent’s overall functional-
+       R7). Wrong instruction following can lead to data exfiltra- ity and security. Given that agents actively interact with the
+       tion (confidentiality), data corruption (integrity), or exces- environment, the retrieved information will eventually be fed
+       sive resource consumption (availability). Unconstrained data to the planning and actor LLMs through their context. Ac-
+       flow heightens confidentiality and integrity risks by enabling cordingly, recent studies define contextual security [122,132]
+       data leakage and malicious code execution. Hallucination as a critical security goal for AI agents. Contextual security
+       increases integrity risks by causing agents to operate on fabri- ensures that the agent’s contexts are aligned with the agent’s
+       cated resources, leading to data leakage and corruption. intended user tasks, preventing attacks aimed at manipulating
+                                            contexts during agent execution. It complements confiden-
+                                            tiality and integrity that protect data correctness and secrecy,
+       5  Defense Landscape of Agentic AI Systems                                   
+                                            while contextual security governs which context elements
+                                            (e.g., system prompts, user goals, tool descriptions, retrieved
+       The comprehensive defense landscape of AI agents has been                    
+                                            snippets) are admissible and how they are prioritized to avoid
+       largely underexplored. We put together the defense landscape                 
+                                            instruction override, context drift, or unsafe tool selection.
+       by examining security goals (§5.1) and identifying key de-                   
+       fense mechanisms in different categories (§5.2,§5.3,§5.5).                   
+       Finally, we discuss defense design principles (§5.6). Table 2                
+                                            5.2 Runtime Protection                  
+       summarizes the defense mechanisms for AI agents and the                      
+       risks thateachdefense covers,organizedby category. Figure 4 Runtime protection mechanisms provide dynamic security en-
+       illustrates the defense landscape.   forcement during agent execution, detecting real-time threats
+                                            and behaviors.                          
+       5.1 Security Goals                                                           
+                                            5.2.1 Input Guardrail                   
+       In this section, we discuss the security goals for AI agents.                
+       They are based on standard security principles, specifically                 
+                                            Input guardrails validate inputs before they reach the agent.
+       the Confidentiality, Integrity, and Availability (CIA) triad that            
+                                            They provide a first-line defense by preventing malicious in-
+       forms the foundation of traditional security frameworks. Ad-                 
+                                            structions and data from reaching downstream components.
+       ditionally, we introduce Contextual Security as a new security               
+                                            By filtering malicious inputs early, input guardrails mitigate
+       goal for agentic systems.                                                    
+                                            heterogeneous untrusted interfaces (R1) risks from untrusted
+       Confidentiality. Confidentiality ensures that all information data sources. Input guardrails apply to both standalone mod-
+       is accessible only to authorized entities. It includes protecting els and agents. For standalone models, input guardrails focus
+       system-level secrets (API keys), agent internal memory, user on detecting malicious inputs such as jailbreak prompts or
+       private data,and LLM-related data (model parameters,system harmful content [22,55,82,119,123]. These techniques re-
+       prompts). This goal addresses unconstrained data flow (R3) main effective in agentic settings to validate various inputs,
+       and private data leakage (R5).       especially those from external environments. Specifically to
+       Integrity. Integrity ensures that all data in the agent sys- agents, input guardrails address risks introduced by dynamic
+       tem and the external environment remain trustworthy and data retrieval and tool execution, verifying the trustworthi-
+       unmodified by unauthorized entities. This includes prevent- ness of retrieved data. For instance, agents enforce URL al-
+       ing tampering with agent memory, LLM outputs, tool results, lowlists [46] to constrain data retrieval to trusted sources,
+       and environment data, as well as ensuring that agents are not mitigating risks from untrusted web content.
+       manipulated to perform unintended actions through malicious Representative Works. NeMo Guardrails [110] provides
+       instructions. The security goals associated with integrity can a domain-specific language for developer-defined input fil-
+       be differentfordifferentagents,depending on the components ters with customizable validation rules. Constitutional classi-
+       they have, as well as the data and control flows. This goal fiers [119],llama-firewall [22],andPromptShield [55] employ
+       addresses heterogeneous untrusted interfaces (R1), wrong specialized models to detect both direct and indirect prompt
+       instruction following (R2), unconstrained data flow (R3), hal- injection attempts in user inputs and external data. DataSen-
+       lucination (R4), and unintended action and data corruption tinel [82] leverages a prompt injection-vulnerable model to
+       (R6).                                improve detection rates by identifying subtle injection pat-
+       Availability. Availability protects against resource abuse terns that bypass other guardrails.
+       USENIX Association                             35th USENIX Security Symposium 6053
+
+===== PAGE 8 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                    User                                                            
+                                                                 Runtime Protection 
+                                                                   Input Guardrails 
+                                                   External environment Output Guardrails
+                                  Agent                            Information Flow Control
+                    User Interface                                 and Taint Tracking
+         Other                                       External Data Monitoring       
+                                                                   Human-in-the-loop
+        Agents                                                                      
+                                                                   Validation       
+                                                                 Secure By Design   
+         ●                 Agent                      Web env.     Privilege Separation
+                    LLM                                                             
+                          Workflow           Tool     Computer env. Formal Verification
+                                                      Domain-specific env. Identity and Access Management
+         ●                                                                          
+                                                                   Identity Management
+                                                                   Credential Management
+                          Memory                                                    
+                                                     Private Data  Access Control   
+                    Session Trace Internal Tool/System                              
+                   Long-term Storage RAG Credential              Component Hardening
+                                                                  Model and Tool hardening
+        Figure 4: The defense landscape of AI agents, showing which components or stages of the control flow each defense targets.
+                                        Action                                      
+       Design Dimensions. Input guardrail design varies across 5.2.2 Output Guardrail
+                                         Read                                       
+       three dimensions: detection mechanism, validation target,                    
+       and mitigation strategy.                                                     
+                                        RetrievalOutput guardrails perform security checks on an agent’s out-
+                                            put behaviors, such as responses to users and tool usages
+                                        Execution                                   
+         • Detection mechanism: Input guardrails face a funda- to interact with external systems. They complement input
+          mental tradeoff between security strictness and opera- guardrails by preventing attacks that appear seemingly benign
+          tional flexibility. Rule-based detection offers strict pro- but trigger malicious actions [87]. Output guardrails mitigate
+          tection through predefined patterns [110] or endpoint wrong instruction following (R2) byvalidating taskalignment,
+          allowlists [45,46], whereas model-based detection pro- hallucination (R4) through output verification, private data
+          vides adaptive protection through classifiers [22,55,82, leakage (R5) by checking for sensitive data exposure, and
+          119,123] that detect malicious patterns in content. unintended actions and data corruption (R6) by validating
+         • Validation target: Input guardrail validates various as- tool usage. Output guardrails for LLMs typically focus on
+          pects of input data. Content-based guardrails [22, 55, detecting harmful outputs, using classifiers or programmable
+          119,123] examine semantic input for malicious patterns rules [85,89,110,119]. Agent-specific output guardrails vali-
+          or harmful content, while source-based guardrails [46] date tool usage and action sequences [20,57,84,122,132,146],
+          verify data origin trustworthiness, uniquely addressing ensuring context-dependent policies and alignment with the
+          agents’ dynamic retrieval from external sources like web user intent.     
+          search and databases.                                                     
+                                            Representative Works. Progent [122], Conseca [132], and
+         • Mitigation strategy: Guardrails can simply detect and                    
+                                            Agrail [84] generate adaptive security policies based on the
+          filter out malicious input [22,55,82,119], sanitize ma-                   
+                                            runtime context to prevent environment data leakage, cor-
+          licious portion before incorporating the input into the                   
+                                            ruption, and resource drain through dynamic policy enforce-
+          system [123], or normalize input in a structured format                   
+                                            ment. GuardAgent [146] and ShieldAgent [20] create domain-
+          with type system and validation [161] to reduce attack                    
+                                            specific security checks based on human-provided policies,
+          surface.                                                                  
+                                            allowing customized protection for specialized agent applica-
+                                            tions. CodeShield and HeimdallM [85,89] apply static analy-
+       Limitations and Open Challenges. As the input space be-                      
+                                            sis techniques to agent-generated code, preventing arbitrary
+       comes vast and diverse, it is challenging to establish universal             
+                                            code execution through vulnerability detection. Network al-
+       security criteria. Model-based detectors are often bypassed                  
+                                            lowlists [46] restrict agent network connections to preautho-
+       by adaptive attacks [5], and rule-based detectors require ex-                
+                                            rized domains, preventing data exfiltration through unautho-
+       tensive human effort and difficult to be generalized. Conse-                 
+                                            rized web endpoints.                    
+       quently, input guardrails often suffer from false positives and              
+       false negatives, which negatively impact the agent’s utility Design Dimensions. Output guardrail design varies across
+       and security. False positives are caused partly by the limited two dimensions: detection goal and detection mechanism.
+       detection accuracy, but more importantly, by ambiguous defi- • Detection goal: Output guardrails detect harmful con-
+       nitions and boundaries between secure and insecure data and tent in LLM outputs [110,119], unsafe code [85,89],
+       instructions. False negatives allow attackers to bypass input and unsafe actions in tool usage [122, 132]. Further,
+       guardrails and inject malicious inputs into the target agent. output guardrails perform alignment checks to ensure
+       6054 35th USENIX Security Symposium                        USENIX Association
+
+===== PAGE 9 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+             Table 2: Defense mechanisms for AI agents organized by category, as well as the risks each defense covers.
+                                                                                    
+        Category Mechanism  Representativeworks        Coveredrisks                 
+               Inputguardrail PromptGuard2[22],PromptShield[55],DataSentinel[82], R1.HeterogeneousUntrustedInterfaces
+                            PromptArmor[123],URLallowlist[46]                       
+        Runtime Outputguardrail CodeShield [85], Firewalled Agentic Networks [1], R2.WrongInstructionFollowing
+        Protection          Task Shield [57], GuardAgent [146], Agrail [84], Align- R4.HallucinationandModelMistakes
+                            mentCheck [22], ControlValve [56], Conseca [132], Pro- R5.PrivateDataLeakage
+                            gent[122],Maris[27],       R6.Unintended/UnauthorizedActionandData
+                                                       Corruption                   
+               Information flow con- Permissive[124],MELON[160],RTBAS[158],AgentAr- R3.Unconstrained/UnsafeDataFlow
+               trolandtainttracking mor[136],PFI[60],CaMeL[29],FIDES[26],ACE[69], R5.PrivateDataLeakage
+                            PrivacyChecker[137]        R6.Unintended/UnauthorizedActionandData
+                                                       Corruption                   
+               Monitoring   AgentAuditor[83],AgentMonitor[93],SentinelAgent[51] R5.PrivateDataLeakage
+                                                       R6.Unintended/UnauthorizedActionandData
+               Human-in-the-loop Wuetal.[145]                                       
+                                                       Corruption                   
+                                                       R7.ResourceDrainandDenial-of-Service
+               Privilegeseparation AirGapAgent [11], f-secure [142], CaMeL [29], R2.WrongInstructionFollowing
+        Secure              FIDES [26], PFI [60], IsolateGPT [144], ACE [69], R3.Unconstrained/UnsafeDataFlow
+        ByDesign            IPIGuard[4],DRIFT[70]                                   
+               Formalverification Formal-llm[75],VeriSafeAgent[67],ShieldAgent[20]  
+               Identitymanagement Authenticated delegation [126], SAGA [128], Agent net- R5.PrivateDataLeakage
+        Identity            workprotocol[16]           R6.Unintended/UnconstrainedActionandData
+        andAccess                                      Corruption                   
+               Accesscontrol ControlNet [149], Honeybee [157], Bedrock [3], Authenti-
+        Management                                     R7.ResourceDrainandDenial-of-Service
+                            cateddelegation[126],SAGA[128]                          
+               Credentialmanagement Tokenvault[10]     R5.PrivateDataLeakage        
+               Modelhardening SecAlign[18],Struq [17],InstructionHierarchy [134],In- R2.WrongInstructionFollowing
+        Component           structionalAgent[143]      R4.HallucinationandModelMistakes
+        Hardening                                                                   
+               Toolhardening AnthropicConnectors[7],ETDI[33],MCPContextPro- R1.HeterogeneousUntrustedInterfaces
+                            tector[131],MCPSafetyAudit[109],MCIP[59]                
+          agent’s behavior remain within user intent [22,57], data from a predefined information flow lattice [32], propagate la-
+          privacy protection [27], domain-specific policy enforce- bels, and detect flows that violate the lattice constraints. IFC
+          ment [20,84,146],andruntime-aware contextualsecurity and taint tracking in agents address the model’s inherent un-
+          enforcement [122,132].            constrained data flow (R3), and further mitigate downstream
+         • Detection mechanism: Mechanisms of output confidentiality (R5) and integrity (R6) violations.
+          guardrails range from rule-based pattern match-                           
+                                            Representative Works. PFI [60], CaMeL [29], and
+          ing [85, 89] to model-based classifiers [22, 110, 119].                   
+                                            FIDES [26] transform tool results into symbolic variables
+          Hybrid approaches adopt a structured policy framework                     
+                                            to deterministically track data flow through agent operations.
+          assistedbymodels to process unstructureddata,enabling                     
+                                            PFI prevents untrusted external data from controlling tool
+          flexible security enforcement [20,27,84,122,132,146].                     
+                                            arguments, while CaMeL and FIDES ensure credential data,
+       Limitations and Open Challenges. Output guardrails share                     
+                                            such as secret codes, are not leaked to untrusted endpoints
+       similar limitations with input guardrails, including false posi-             
+                                            like malicious email recipients. These approaches commonly
+       tives and negatives due to unclear security criteria,and a trade-            
+                                            pair with privilege separation techniques to process input data
+       off between rule-based and model-based solutions. Compared                   
+                                            into variables with restricted privileges. Permissive informa-
+       to input guardrails, output guardrails consume more computa-                 
+                                            tion flow control [124] measures the influence of each LLM
+       tional resources and time, as they have a dependency on the                  
+                                            input on output by performing an inference multiple times
+       LLM’s output and need to process more data [138].                            
+                                            with different input combinations. Melon [160] extends this
+                                            influence measurement to control and data flows of the agent,
+       5.2.3 Information Flow Control and Taint Tracking by comparing the agent’s tool usage with and without specific
+                                            inputs, and blocking potentially manipulated tool calls.
+       Information Flow Control (IFC) [32, 92] and taint track-                     
+       ing [95] restrict the flow of information within a system. Clas- Design Dimensions. IFC and taint tracking designs vary
+       sical IFC techniques assign each piece of data a security label across security goals and mechanisms, spanning non-agentic
+       USENIX Association                             35th USENIX Security Symposium 6055
+
+===== PAGE 10 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+       LLM outputs and agent tool executions.  agent trajectories [51,83,93], and interaction-graph mon-
+         • Security Goals: Previous works provide integrity and itoring in multi-agent systems [159].
+          confidentiality protection in agents. Integrity protection • LogGranularity: Agentactivitylograngesfromcoarse
+          blocks untrusted inputs from influencing tool call deci- summaries of actions and tool calls to fine-grained traces
+          sions [60,158,160]. Confidentiality protection prevents that capture intermediate reasoning steps and parameters.
+          sensitive data from reaching untrusted sinks [26,29,69, Finer granularity improves detection power but increases
+          137].                                storage, computation, and privacy exposure [15].
+         • Mechanisms: IFC and taint tracking mechanisms in- Limitations and Open Challenges. While monitoring tech-
+          clude symbolic variable-based, multi-execution-based, niques provide a holistic view of agent execution, they suffer
+          and model-based approaches. Multi-execution [124,160] from fundamental limitations of runtime defenses, such as
+          measures the influence of an input on an output by inaccuracy issues and performance overhead. Agent behav-
+          performing the LLM inference multiple times with iors are stochastic and context-dependent, making it hard to
+          and without the input. Variable-based approaches re- distinguish benign actions from harmful ones. Static rules
+          place data with trackable variables to mitigate over- miss novel attacks, whereas adaptive models incur overhead
+          tainting while retaining deterministic information flow and remain susceptible to evasion. Moreover, long-lived ex-
+          guarantee [26, 29, 60, 69]. Model-based approach re- ecutions would further accumulate logs, for which storage
+          quest LLMs to inspect information flow given agent overhead and privacy controls remain largely unexplored.
+          traces [71,136,137,158].                                                  
+       Limitations and Open Challenges. Existing IFC and 5.2.5 Human-In-The-Loop Validation
+       taint methods incur substantial runtime overhead with multi-                 
+       execution or variable-based reasoning, limiting practicality Traditionalsecurityemploys userconsentmechanisms forapp
+       for latency-sensitive agents. They may also suffer from la- installation [36] and sensitive data access [9]. In agentic set-
+       bel creep, where conservative propagation renders agents un- tings, human-in-the-loop validation allows users to validate
+       usable unless automated and safe declassification rules are agent behavior and tool usage, providing user-customized
+       devised. Bridging these gaps requires lightweight informa- control over security decisions. Human-in-the-loop valida-
+       tion flow tracking and principled policies for relaxing security tion mitigates private data leakage (R5), unintended actions
+       labels when it is safe to do so, without compromising security. and data corruption (R6), and resource drain and denial of
+                                            service (R7). This defense is relatively unique to agents, as
+                                            agents act on behalf of users and interact with external envi-
+       5.2.4 Monitoring                                                             
+                                            ronments (e.g., files, web, third-party tools), requiring user
+       Under the dynamic and unpredictable nature of AI agents, confirmation before high-risk actions.
+       monitoring offers system-wide visibility by checking inputs, Representative Works. While limited literature has been
+       outputs, and intermediate states. This holistic view helps sur- dedicated to discussing human-in-the-loop validation for
+       facedistributedthreatswherenosingleinputoraction appears agents, contemporary coding agents such as GitHub Copi-
+       malicious in isolation but collectively constitutes a malicious lot [44], Gemini Code Assist [23], and Cursor [28] ask for
+       goal [140,152]. Monitoring can be important to observe in- user approval when writing a file or executing command-line
+       teractions across tools and services over long runs, especially commands. Agent defense systems [26, 29, 60, 144] often
+       for multi-agent systems. Monitoring mitigates private data leverage human-in-the-loop validation when agents attempt
+       leakage (R5), unintended actions and data corruption (R6), actions that violate defense policies. These implementations
+       and resource drain and denial of service (R7) by detecting demonstrate practical approaches to balancing automation
+       anomalous behaviors across long-running agent executions. with user oversight in sensitive contexts.
+       Representative Works. Previous work urged the need Design Dimensions. Human-in-the-loop has the following
+       for monitoring distributed harm, where malicious tasks are design dimensions.
+       broken down into seemingly benign subtasks and bypass • Validation scope: The scope of actions for which the
+       guardrails [140, 152]. AgentMonitor [93] detects security agent requests user approval varies. Existing coding
+       violations in Web and file access environments by scoring agents typically require approval forterminal commands,
+       behavioral risks. AgentAuditor [83] constructs feature mem- file accesses outside the current workspace, or destruc-
+       ory for unsafe agent actions to detect anomalies at run-time. tive actions like file deletion.
+       SentinelAgent [51] and Guardian [159] detect anomalies in • User Alert: The content and format of alerts presented
+       multi-agent systems through interaction graph modeling. to users differ. Effective alerts should clearly explain the
+       Design Dimensions. Monitoring design varies across detec- agent’s intended action, associated risks, and potential
+       tion goals and log granularity.         consequences to support informed decision-making.
+         • Detection goals: Monitoring systems target different • Recurrence policy: Human-in-the-loop systems can
+          threat categories, including anomaly detection over long implement mechanisms to remember and reuse previ-
+       6056 35th USENIX Security Symposium                        USENIX Association
+
+===== PAGE 11 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+          ous user decisions for similar future requests, reduc- Design Dimensions. Privilege separation designs vary by
+          ing prompt frequency while maintaining user control. separation policy and component scope.
+          Options such as "allow once," "allow never," and "al- • Privilege Separation Policy: Vertical privilege sep-
+          low always" mirror mobile permissions [36]. Recent aration implements hierarchical privileges, similar to
+          work [145] utilizes machine learning to model user pref- kernel-user separation. Notably, planner-parser separa-
+          erences of permission approvals in tool-use agents and tion [26,29,60,141,142] isolates tool call planning from
+          reduces the frequency of validation prompts by predict- tool result parsing. Horizontal privilege separation im-
+          ing user decisions.                  plements parallel sub-agents operating at disjoint ac-
+       Limitations and Open Challenges. Frequent validation cess scopes. For instance, IsolateGPT [144] create per-
+       prompts can overwhelm users and cause decision fatigue application agents that interact only with application-
+       that undermines the intended safety benefits. Current alert specific tools and resources.
+       mechanisms often assume a level of security literacy that • Scope: Privilege separation techniques vary depending
+       many users do not possess, causing them to either blindly on the specific components being separated. LLM can
+       approve risky actions or overreact to benign ones. Practical be separated into planning and parsing processes [26,29,
+       systems require principled criteria for when to defer to human 60,142], preventing tool results from directly influenc-
+       judgment,alongwithinformativeyetlightweightexplanations ing planning decisions. Memory separation [11] creates
+       that keep users engaged without overburdening them. separate memory spaces, protecting sensitive data from
+                                               lower-privilege components. External environment can
+                                               leverage existing sandboxing mechanisms, such as con-
+       5.3 Secure By Design                    tainerization techniques in computer systems [76–78]
+                                               and fine-grained access control in web services [47,125].
+       Secure-by-design defenses establish security properties at the               
+                                            Limitations and Open Challenges. Current privilege sepa-
+       architectural level, making agents intrinsically secure through              
+                                            ration research primarily addresses generic indirect prompt
+       fundamental design principles. As secure-by-design mech-                     
+                                            injection in simplified environments [30]. It often fails to ad-
+       anisms depend on a system’s architecture and agents differ                   
+                                            dress real-world environment risks that present diverse and
+       fundamentally from traditional systems, these defenses are                   
+                                            complex challenges requiring specialized separation strate-
+       naturally unique to agentic systems.                                         
+                                            gies, such as web, file systems, and databases. Privilege sep-
+                                            aration entails utility loss by splitting functionality across
+       5.3.1 Privilege Separation           isolated components. Dividing an agent into an effective set
+                                            of least-privilege components remains an open challenge. De-
+       Following the principle of least privilege, traditional security signing efficient communication across isolated components
+       enforces privilege separation by assigning different privilege to reduce utility loss while maintaining security guarantees
+       levelstodifferentsoftwarecomponents,exemplifiedbyearlier presents ongoing challenges for practical deployment.
+       automationattempts[14]. Inagents,thisconceptextendstoas-                     
+       signing privileges to different components and isolating these               
+                                            5.3.2 Provable Security with Formal Verification
+       components to minimize the overall risk to the system. Privi-                
+       lege separation mitigates wrong instruction following (R2) by Traditional security employs formal verification to provide
+       isolating untrusted data from decision-making components, theoretical proof of correctness and security [50,62]. In agen-
+       and unconstrained data flow (R3) by enforcing boundaries tic systems, formal verification approaches develop formal
+       between components with different trust levels. models ofstochastic agentbehavioranddefine verifiable prop-
+                                            erties within dynamic usage contexts.   
+       Representative Works. AirGap [11] separates the execution                    
+       of LLM by first retaining only task-relevant data in mem- Representative Works. Formal verification for agents re-
+       ory, then performing the task with this minimized memory mains a new area with very limited existing work. VeriSafe
+       to prevent exposure of sensitive data. f-secure LLM [142], Agent represents one of the few established approaches, de-
+       Camel [29], and FIDES [26] separate LLM operations into veloping formal specifications for mobile GUI agents and ver-
+       tool call planning and tool result parsing components. By ifying behavioral alignment with initial user intentions [67].
+       avoiding direct feeding of tool results into planning, these Design Dimensions. Formal verification approaches vary
+       systems prevent external data from controlling agent deci- across formalization target and security property.
+       sions. PFI [60] separates tools and environments into normal • Formalization Target: VeriSafe Agent [67] formalizes
+       and sandbox versions, switching execution privilege based user intent into a DSL over UI state transitions, verify-
+       on the level of data trust. IsolateGPT [144] implements per- ing that proposed GUI actions align with the user’s task
+       application privilege separation for mobile systems, spawning before execution. Formal-LLM [75] encodes developer-
+       dedicated agents that interact only with application-specific defined plan constraints (e.g., required tool orderings) as
+       tools and resources to prevent cross-application exploitation. pushdown automata to restrict plan generation, ensuring
+       USENIX Association                             35th USENIX Security Symposium 6057
+
+===== PAGE 12 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+          validity and executability. ShieldAgent [20] structures solution for agent access management, providing unified au-
+          external policy documents (e.g., regulations or corporate thentication and authorization across multiple agent services.
+          rules) into declarative rule circuits over action trajecto- Design Dimensions. Identity management varies by archi-
+          ries to enforce policy compliance and safety. tecture, scope, and delegation model.
+         • Security Property: Contextual security [67] ensures                      
+                                             • Architecture: Identity management can be centralized
+          agents remain aligned with user intent and system poli-                   
+                                               or decentralized. Centralized systems rely on identity
+          cies. Safety property verification [20] guarantees agent                  
+                                               providers running on OpenID Connect [37], while de-
+          actions do not violate predefined safety constraints or                   
+                                               centralized designs use distributed verification proto-
+          cause harmful outcomes. Correctness property verifica-                    
+                                               cols [86] with greater autonomy and resilience.
+          tion [75] ensures agent behavior conforms to specified                    
+                                             • Scope: Identity can be defined at user-level, agent-level,
+          functional requirements and produces expected outputs.                    
+                                               or task-level, each providing different granularity and
+       Limitations and Open Challenges. Traditional formal meth- accountability. User-level identity ties actions directly
+       ods are designed for programs written in code with structured to a human user, agent-level identity assigns distinct
+       language, while LLM-based agents operate based on prob- identities to individual agents, and task-level identity
+       abilistic models. This fundamental difference creates chal- creates short-lived identities for specific tasks or sessions
+       lenges in developing formal models that capture the stochastic to support dynamic, least-privilege operation.
+       behavior of agents while preserving meaningful security guar- • Delegation Model: Delegation governs how authority
+       antees. Moreover, security properties of agents that interact flows from users to agents. Direct delegation grants spe-
+       with various environment, such as web, file systems, or mo- cific user permissions to agents, proxy delegation uses
+       bile applications, remain underspecified. Developing formal intermediary service or tokens to let agent act on behalf
+       verification frameworks capable of addressing the full spec- of users, and temporary delegation provides time-limited
+       trum of agent security requirements largely remains an open access that automatically expires to limit risk.
+       challenge.                                                                   
+                                            Limitations and Open Challenges. Foundational questions
+                                            persist about whether agent actions should be attributed to
+                                            the human operator, the agent instance, or the task, and the
+                                            answer often varies across domains. Without standard frame-
+       5.4 Identity and Access Management                                           
+                                            works, platforms implement incompatible credential issuance,
+                                            delegation, and revocation flows that are hard to audit or fed-
+       Identity and Access Management (IAM) encompasses iden-                       
+                                            erate. Robust identity management will require interoperable
+       tity management, access control, and credential management                   
+                                            taxonomies and lifecycle tooling that preserve accountability
+       to ensure authenticated entity and authorized resource ac-                   
+                                            while supporting seamless agent collaboration.
+       cess. Traditionalsystemsemploywell-establishedIAMframe-                      
+       works such as role-based access control (RBAC) [113] and                     
+       OAuth-based delegation [37,53], operating with static user                   
+       identities and predefined permission boundaries. Agentic sys-                
+                                            5.4.2 Access Control                    
+       tems interacts withreal-worldservices on behalfofusers,thus                  
+       require agent-specific identities, delegation mechanisms, and In agentic systems, access control can be enforced over in-
+       dynamic access control policies that adapt to runtime contexts. ternal memory and external environments, such as vector
+                                            databases, file systems, and cloud drives. Paired with identity
+                                            management (§5.4.1), access control prevents unauthorized
+                                            accesses (R5-R7) by limiting an agent access to the permitted
+       5.4.1 Identity Management                                                    
+                                            resources and operations.               
+       Identity management ensures that each actor operates under Representative Works. Bedrock [3] queries databases and
+       the correct identity with user authentication and authorization. filters results based on agent access permissions, provid-
+       In agent systems, identity management enables fine-grained ing role-based access control for RAG-based agent systems.
+       control over agent behavior by defining agent identities and Honeybee [157] proposes dynamic partitioning of vector
+       access scopes. It should support delegation, auditability, and databases to balance space-time trade-offs in access control,
+       regulatory accountability, while aligning with existing stan- enabling efficient privilege enforcement for large-scale data
+       dards [37,53,133]. Identity management mitigates risks re- retrieval. ControlNet [149] leverages internal neuron activa-
+       garding illegal access (R5-R7) by ensuring proper authentica- tions to enforce access control in vector databases, providing
+       tion and authorization of agent operations. fine-grained permission management.
+       Representative Works. While there has been limitedworkin Design Dimensions. Access control designs can have differ-
+       this area, existing solutions provide foundational approaches. ent mechanisms, policies, and scope of the resource.
+       Okta [97] and Composio [24] offers a single-sign-on (SSO) • Mechanism:Accesscontrolmechanismsdeterminehow
+       6058 35th USENIX Security Symposium                        USENIX Association
+
+===== PAGE 13 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+          permissions are enforced, such as role-based access con- porary chat feature [103] that prevents chat history stor-
+          trol (RBAC),attribute-based access control (ABAC),and age and model training usage. Confidential computing
+          capability-based security systems.   techniques can be leveraged to securely manage creden-
+         • Policy: Access control policies define when access is tials within hardware-based trusted execution environ-
+          granted, ranging from static permission rules to dynamic ments [64,118].  
+          policies that adapt to changing contexts, user tasks, and • CredentialLifecycle Management: Credentialmanage-
+          environmental state.                 ment systems face choices in how to handle credential
+         • Resource Scope: Access control can target different lifecycles and access patterns. Static credential manage-
+          resource types including agent internal memory, external ment maintains persistent credentials throughout agent
+          databases, tool APIs, and file systems. sessions, providing convenience and consistent access,
+       Limitations and Open Challenges. Existing access control but increasing exposure risk over time. Dynamic creden-
+       work primarily targets retrieval-augmented LLM applications tial management uses time-limited tokens that automati-
+       withvectordatabases [3,149,157],butagenticsystems require cally expire, reducing exposure windows but requiring
+       broader coverage of diverse tools, data sources, and inter- more complexrenewalmechanisms andpotentialservice
+       agent interactions. Current deployments lack adaptive policy interruptions.  
+       frameworks that can dynamically adjust to evolving tasks and • Confidential storage: Credentials are protected through
+       trust contexts, instead relying on ad hoc, non-uniform policies various storage mechanisms, including encryption at
+       that create mismatches across agents and gaps when coordi- rest, temporary storage that persists only for active ses-
+       nating with non-agentic services [111]. Usability challenges sions [103], or hardware-based trusted execution envi-
+       further exacerbate the problem, as configuration complexity ronments [64,118].
+       leads to misconfigurations and excessive privileges even for • Lifecycle management: Credential lifecycle manage-
+       technical users.                        ment determine how credentials are maintained over
+                                               time, ranging from static credentials that persist through-
+                                               out agent sessions to dynamic time-limited tokens that
+       5.4.3 Credential Management                                                  
+                                               automatically expire, reducing exposure windows.
+       AI agents must manage diverse credential types to interact • Credential provisioning: Credential provisioning deter-
+       with external services and access user resources. These in- mines how agents obtain credentials, including single-
+       clude tool API credentials (e.g., API keys and access tokens sign-on (SSO) mechanisms [24] and authenticated dele-
+       for third-party services) and environmental credentials (e.g., gation based on OAuth 2.0 [126] for secure credential
+       one-time passwords from email, session tokens). The agent’s transfer from users to agents.
+       exposure to these sensitive credentials raises significant pri-              
+                                            Limitations and Open Challenges. Agent stacks still rely
+       vacy and security concerns [94, 129], necessitating robust                   
+                                            on ad-hoc secret handling, lacking standardized practices for
+       credential and secret management practices. Credential man-                  
+                                            credential protection. Many frameworks guide developers to
+       agement primarily mitigates private data leakage (R5) by                     
+                                            store internal credentials, such as API keys, as unencrypted
+       securely storing and handling sensitive credentials.                         
+                                            environment variables, increasing the risk of leakage. Multi-
+       Representative Works. OpenAI’s temporary chat fea- agent systems further complicate secret sharing, making it
+       ture [103] allows users to prevent chat history storage and difficult to maintain least privilege and traceability, and un-
+       model training usage, protecting agent memory credentials. derscoring the need for coordinated credential orchestration.
+       Composio [24] offers credential management using single-                     
+       sign-on(SSO)tosecurelymanageAPIkeysandaccesstokens,                          
+       mitigating tool credential leakage. Authenticated delegation 5.5 Component Hardening
+       mechanisms [126] based on OAuth 2.0 provide a secure trans-                  
+       fer of credentials from users to agents. Component hardening strengthens individual agent compo-
+                                            nents including LLMs and third-party tools against their spe-
+       Design Dimensions. Credential management approaches                          
+                                            cific vulnerabilities,recognizing that agents are only as secure
+       span different ways of storing confidential data and managing                
+                                            as their weakest component.             
+       their lifecycle.                                                             
+         • Confidential Storage: Secure storage of agent creden- Model Hardening. Model hardening mitigates model-level
+          tials can be implemented through multiple approaches risks such as wrong instruction following (R2) and halluci-
+          with different security guarantees. Encrypted storage nation (R4) by improving model robustness and reliability.
+          protects credentials at rest using encryption techniques, SecAlign [18] and StruQ [17] fine-tune models to consistently
+          preventing unauthorized access even if the storage me- follow initial instructions even when faced with conflicting di-
+          dia is compromised. Temporary storage minimizes ex- rectives, mitigating wrong instruction following. Instruction
+          posure by maintaining credentials only for the dura- hierarchy-aware model training [134,143] ensures system
+          tion of active sessions, exemplified by OpenAI’s tem- prompts maintain priority over user input and external data.
+       USENIX Association                             35th USENIX Security Symposium 6059
+
+===== PAGE 14 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+       Tool Hardening. Tool hardening mitigates heterogeneous tool access to only what is required for specific tasks.
+       untrusted interfaces (R1) by ensuring tool integrity, verifying Complete Mediation. All access to sensitive resources
+       tool descriptions, and preventing tool supply chain attacks should be checked and validated. This principle is reflected in
+       through systematic auditing. Extended Tool Definition Inter- comprehensive monitoring systems (§5.2.4) and access con-
+       face (ETDI) [33] implements cryptographically signed and trol mechanisms (§5.4.2) that verify every agent interaction
+       versioned tool control, ensuring integrity throughout the tool with protected resources.
+       lifecycle to prevent tool poisoning. Anthropic’s Connectors                  
+       Directory [7] maintains a curated repository of trusted tools                
+       with reviewed descriptions, functionality, and safety policies. 6 Conclusion 
+       MCP Context Protector [131] creates an MCP proxy that en-                    
+       forces manual review processes and applies guardrail checks This paper presents an overview of the attack and defense
+       to prevent tool poisoning attacks. MCP Safety Audit [109] landscape for AI agents, together with an in-depth analysis of
+       introduces systematic protocols to examine agent tools, iden- AI agent risks, security goals, defense dimensions, and open
+       tifying potentially exploitable behaviors from malicious logic challenges. Our SoK can serve as a guide for building se-
+       or misleading descriptions. MCIP [59] enhances MCP with cure agents for various applications and point out meaningful
+       observability and an LLM fine-tuned to detect threats in MCP directions for future research.
+       usage.                                                                       
+       LimitationsandOpenChallenges. Currentcomponenthard- Acknowledgment           
+       ening approaches focus on simplified threat scenarios that do                
+       not reflect the complexity of real-world agent systems. Model This work was supported in part by ARL Grant W911NF-23-
+       hardening techniques like instruction hierarchy fine-tuning 2-0137. We gratefully acknowledge the support of FAR AI,
+       primarily address simple scenarios involving system prompts, OpenAI, anthropic, Google, and Berkeley RDI.
+       user prompts, and tool results, failing to address sophisticated             
+       attacks such as shadowing attacks, where malicious tool re-                  
+       sults override other tool results. The role of each component Ethical Considerations
+       and appropriate threat models for comprehensive hardening                    
+       remain unclear.                      Stakeholders and Impacts. Our research impacts AI agent
+                                            developers and security researchers, AI agent users (individ-
+                                            ual and enterprise), platform providers, potential malicious
+       5.6 Defense Design Principles                                                
+                                            actors,broadersociety,the academic researchcommunity,and
+                                            the team conducting this research. We analyze these impacts
+       Effective agent security requires multiple complementary de-                 
+                                            through four ethical principles: While building the attack tax-
+       fense mechanisms working together rather than relying on                     
+                                            onomy, the team reviewed adversarial and malicious content;
+       any single approach. Three fundamental security principles                   
+                                            no harm occurred, but this was incidental rather than ensured
+       guide effective agent defense design. We note that additional                
+                                            by structured protection. We analyze these impacts through
+       principles can also be applied to agents (e.g., fail-safe defaults           
+                                            four ethical principles:                
+       and economy of mechanisms).                                                  
+                                            Beneficence. Benefits: Our systematization provides the first
+       Defense-in-Depth. Defense mechanisms complement each comprehensive framework for AI agent security, catalogs de-
+       other by operating at different stages and targeting differ- fense mechanisms and coverage gaps, offers concrete guid-
+       ent attack vectors. Input guardrails (§5.2.1) provide first- ance through case studies, and establishes common vocabu-
+       line protection by filtering malicious inputs, while output laryfortheresearchcommunity. PotentialHarms:Systematiz-
+       guardrails (§5.2.2) serve as last-line defense by sanitizing ing attack knowledge could aid malicious actors. We mitigate
+       agent outputs. Information flow control (§5.2.3) and monitor- this by focusing on defense strategies rather than detailed
+       ing (§5.2.4) provide continuous runtime protection through- attack techniques, using only publicly available information,
+       out agent execution, while access control (§5.4.2) ensures and emphasizing protective countermeasures.
+       proper authentication and authorization Secure-by-design ap-                 
+                                            Respect for Persons. We respect autonomy by using only pub-
+       proaches like privilege separation (§5.3.1) establish funda-                 
+                                            licly available information without collecting personal data
+       mental architectural protections. Component hardening (§5.5)                 
+                                            or conducting human subject experiments, refraining from
+       strengthens individual elements, and human-in-the-loop vali-                 
+                                            reproducing attacks on real systems, and emphasizing user
+       dation (§5.2.5) provides user oversight for critical decisions.              
+                                            consent and privacy protection in our recommendations. We
+       Principle of Least Privilege. Agents should operate with acknowledge that some ethical aspects, especially researcher
+       minimal necessary permissions and access rights. This prin- wellbeing when reviewing adversarial or distressing content,
+       ciple is implemented through privilege separation tech- were assessed post-facto rather than through a full a priori
+       niques (§5.3.1) that isolate agent components and restrict process; future work will run a structured pre-research ethics
+       6060 35th USENIX Security Symposium                        USENIX Association
+
+===== PAGE 15 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+       review with explicit wellbeing safeguards, such as content as it conducts no experiments, user studies, empirical evalua-
+       warnings, rotation, opt-out.         tions,software development,data collection,orcomputational
+       Justice. We promote fair security benefit distribution by mak- analysis. The systematization is based on comprehensive liter-
+       ing our systematization publicly available regardless of or- ature review of academic papers, blog posts, and news reports
+       ganizational resources, providing guidance for diverse agent about AI agent security, with all sources cited in our bibliog-
+       categories. We also highlight considerations for vulnerable raphy being publicly accessible through standard academic
+       populations and advocate for standardized security practices. channels and web search. Ourtaxonomies,design dimensions,
+       Respect for Law and Public Interest. Our research supports and security frameworks are described in detail within the
+       legal frameworks by analyzing real-world incidents and com- paper text and figures, requiring no additional computational
+       pliance implications, providing technical foundations for pol- artifacts to evaluate or reproduce this analytical contribution.
+       icy development, emphasizing responsible disclosure prac- Reproducibility. The systematization presented in this pa-
+       tices, and supporting industry standards development. per can be independently validated by reviewing the same
+                                            publicly available literature sources cited in our bibliography,
+       PotentialHarms andMitigations. We address potentialmis-                      
+                                            following our described categorization methodology for at-
+       use by focusing on defense mechanisms over attack method-                    
+                                            tacks, defenses, and case studies, and applying our analytical
+       ologies, providing detailed protective guidance, emphasizing                 
+                                            frameworks to the cited examples. All information necessary
+       defense-in-depth strategies, and including calls-to-action for               
+                                            to evaluate our contribution is contained within the paper
+       defensive technology development. Systematizing agent at- itself and its publicly accessible references.
+       tack knowledge may lower the difficulty for adversaries, sur-                
+       face defense gaps in deployed systems, or create false confi-                
+                                            References                              
+       dence that existing defenses are comprehensive. Aggregating                  
+       incidents can re-amplify sensitive events and increase privacy               
+                                             [1] S. Abdelnabi, A. Gomaa, E. Bagdasarian, P. O. Kristensson,
+       risk by connecting sources. To mitigate these harms, we inten-               
+                                               and R. Shokri. Firewalls to secure dynamic llm agentic net-
+       tionally avoided non-public vulnerabilities, did not reproduce               
+                                               works. arXiv preprint arXiv:2502.01822, 2025.
+       personally identifiable information, and paired attack orga-                 
+       nization with actionable defensive guidance. While public [2] J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya,
+       availabilitydoes notguarantee harmlessness,we reducedrisks F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman,
+                                               S. Anadkat, et al. Gpt-4 technical report. arXiv preprint
+       by relying on vetted sources such as peer-reviewed venues,                   
+                                               arXiv:2303.08774, 2023.              
+       reputable vendor advisories, and publicly verified CVEs.                     
+       Ethical Decision. This research was ethically justified be- [3] Amazon. Access control for vector stores using metadata
+       cause: (1) rapid AI agent deployment without comprehensive filteringwithamazonbedrockknowledgebases,2024. https:
+                                               //aws.amazon.com/blogs/machine-learning/access
+       security understanding poses significant risks; (2) existing                 
+                                               -control-for-vector-stores-using-metadata-fil
+       research is fragmented; (3) defensive benefits substantially                 
+                                               tering-with-knowledge-bases-for-amazon-bedrock
+       outweigh systematization risks; and (4) our work fills critical              
+                                               /.                                   
+       security knowledge gaps. Publication is justified because de-                
+       fensive benefits outweigh misuse risks, and broad availability [4] H. An, J. Zhang, T. Du, C. Zhou, Q. Li, T. Lin, and S. Ji. Ipi-
+       ensures access to comprehensive security guidance. guard: A novel tool dependency graph-based defense against
+                                               indirect prompt injection in llm agents. In EMNLP, 2025.
+       Limitations and Assumptions. We assume the security com-                     
+       munity will use this work primarily for defense and that com- [5] M. Andriushchenko, F. Croce, and N. Flammarion. Jailbreak-
+       prehensive guidance will improve deployment security. We ing leading safety-aligned llms with simple adaptive attacks.
+       acknowledge we cannot prevent all misuse, technology evolu- In ICLR, 2025.   
+       tion may outpace implementations, and future research may [6] Anthropic. Introducing the model context protocol, 2024.
+       involve more invasive activities. We commit to monitoring https://www.anthropic.com/news/model-context-p
+       research impact and engaging with the community to address rotocol.          
+       unforeseen ethical implications.                                             
+                                             [7] Anthropic. Anthropic connectors directory faq, 2025. https:
+                                               //support.anthropic.com/en/articles/11596036-a
+                                               nthropic-connectors-directory-faq.   
+       Open Science                                                                 
+                                             [8] Anthropic. Model context protocol servers, 2025. https:
+       This paper presents a systematization of knowledge (SoK) on //github.com/modelcontextprotocol/servers.
+       AI agent security based entirely on literature review and anal- [9] Apple. Requesting access to protected resources, 2025. http
+       ysis of publicly available information. As such,this work does s://developer.apple.com/documentation/uikit/re
+       not generate research artifacts requiring sharing or evaluation. questing-access-to-protected-resources.
+       Artifact Categories and Availability. This work does not [10] auth0. Calling apis with token vault, 2025. https://auth0.
+       involve experimental data, source code, scripts, or datasets, com/ai/docs/intro/token-vault.
+       USENIX Association                             35th USENIX Security Symposium 6061
+
+===== PAGE 16 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+        [11] E. Bagdasarian, R. Yi, S. Ghalebikesabi, P. Kairouz, [28] Cursor. Cursor - the ai-first code editor, 2025. https://www.
+           M. Gruteser, S. Oh, B. Balle, and D. Ramage. Airgapagent: cursor.com/.   
+           Protecting privacy-conscious conversational agents. In CCS,              
+                                            [29] E. Debenedetti, I. Shumailov, T. Fan, J. Hayes, N. Car-
+           2024.                                                                    
+                                               lini, D. Fabian, C. Kern, C. Shi, A. Terzis, and F. Tramèr.
+        [12] L. Beurer-Kellner, B. B. A.-M. Cre¸tu, E. Debenedetti, D. Do- Defeating prompt injections by design. arXiv preprint
+           bos, D. Fabian, M. Fischer, D. Froelicher, K. Grosse, D. Na- arXiv:2503.18813, 2025.
+           eff, E. Ozoani, et al. Design patterns for securing llm agents           
+                                            [30] E. Debenedetti, J. Zhang, M. Balunovic, L. Beurer-Kellner,
+           against prompt injections. arXiv preprint arXiv:2506.08837,              
+                                               M. Fischer, and F. Tramèr. Agentdojo: A dynamic environ-
+           2025.                                                                    
+                                               ment to evaluate prompt injection attacks and defenses for
+        [13] Brave. Agentic browser security: Indirect prompt injection in llm agents. In NeurIPS, 2024.
+           perplexity comet, 2025. https://brave.com/blog/comet                     
+                                            [31] Z. Deng, Y. Guo, C. Han, W. Ma, J. Xiong, S. Wen, and
+          -prompt-injection/.                                                       
+                                               Y. Xiang. Ai agents under threat: A survey of key security
+        [14] D. Brumley and D. Song. Privtrans: Automatically partition- challenges and future pathways. ACM Computing Surveys,
+           ing programs for privilege separation. In USENIX Security, 57(7):1–36, 2025.
+           2004.                                                                    
+                                            [32] D. E. Denning. A lattice model of secure information flow.
+        [15] A. Chan, C. Ezell, M. Kaufmann, K. Wei, L. Hammond, Communications of the ACM, 19(5):236–243, 1976.
+           H. Bradley, E. Bluemke, N. Rajkumar, D. Krueger, N. Kolt,                
+                                            [33] E. Documentation. Enhanced tool definition interface (etdi):
+           et al. Visibility into ai agents. In FAccT, 2024.                        
+                                               A security fortification for the model context protocol, 2025.
+        [16] G. Chang, E. Lin, C. Yuan, R. Cai, B. Chen, X. Xie, and https://vineethsai.github.io/python-sdk/etdi-c
+           Y. Zhang. Agent network protocol technical white paper. oncepts/#introduction-the-imperative-for-secur
+           arXiv preprint arXiv:2508.00007, 2025. e-mcp.                            
+        [17] S. Chen, J. Piet, C. Sitawarin, and D. Wagner. {StruQ}: De-            
+                                            [34] S. Dong, S. Xu, P. He, Y. Li, J. Tang, T. Liu, H. Liu, and
+           fending against prompt injection with structured queries. In             
+                                               Z. Xiang. A practical memory injection attack against llm
+           USENIX Security Symposium, 2025.                                         
+                                               agents. arXiv preprint arXiv:2503.03704, 2025.
+        [18] S. Chen, A. Zharmagambetov, S. Mahloujifar, K. Chaudhuri,              
+                                            [35] Z.Durante,Q.Huang,N.Wake,R.Gong,J.S.Park,B.Sarkar,
+           D. Wagner, and C. Guo. Secalign: Defending against prompt                
+                                               R. Taori, Y. Noda, D. Terzopoulos, Y. Choi, et al. Agent ai:
+           injection with preference optimization. In CCS, 2025.                    
+                                               Surveying the horizons of multimodal interaction. arXiv
+        [19] X. Chen, Y. Nie, W. Guo, and X. Zhang. When llm meets preprint arXiv:2401.03568, 2024.
+           drl: Advancing jailbreaking efficiency via drl-guided search.            
+                                            [36] A. P. Felt,E. Ha,S. Egelman,A. Haney,E. Chin,and D. Wag-
+           NeurIPS, 2024.                                                           
+                                               ner. Android permissions: User attention, comprehension,
+        [20] Z. Chen, M. Kang, and B. Li. Shieldagent: Shielding agents and behavior. In SOUPS, 2012.
+           via verifiable safety policy reasoning. In ICML, 2025.                   
+                                            [37] O. Foundation. Openid connect core 1.0 incorporating errata
+        [21] Z. Chen,Z. Xiang,C. Xiao,D. Song,and B. Li. Agentpoison: set 1, 2014. https://openid.net/specs/openid-conne
+           Red-teaming llm agents via poisoning memory or knowledge ct-core-1_0.html.
+           bases. NeurIPS, 2024.                                                    
+                                            [38] M. Fredrikson, S. Jha, and T. Ristenpart. Model inversion
+        [22] S. Chennabasappa, C. Nikolaidis, D. Song, D. Molnar,                   
+                                               attacks that exploit confidence information and basic counter-
+           S. Ding, S. Wan, S. Whitman, L. Deason, N. Doucette,                     
+                                               measures. In CCS, 2015.              
+           A. Montilla, et al. Llamafirewall: An open source guardrail              
+                                            [39] X. Fu, S. Li, Z. Wang, Y. Liu, R. K. Gupta, T. Berg-
+           system for building secure ai agents. arXiv preprint                     
+                                               Kirkpatrick, and E. Fernandes. Imprompter: Tricking
+           arXiv:2505.03574, 2025.                                                  
+                                               llm agents into improper tool use. arXiv preprint
+        [23] G. Cloud. Gemini code assist, 2025. https://cloud.goog                 
+                                               arXiv:2410.14923, 2024.              
+           le.com/products/gemini/code-assist.                                      
+                                            [40] X.Fu,Z.Wang,S.Li,R.K.Gupta,N.Mireshghallah,T.Berg-
+        [24] Composio. Welcome to composio, 2025. https://docs.c                    
+                                               Kirkpatrick, and E. Fernandes. Misusing tools in large
+           omposio.dev/docs/welcome.                                                
+                                               language models with visual adversarial examples. arXiv
+        [25] T. M. Corporation. Atlas matrix, 2025. https://atlas.mi preprint arXiv:2310.03185, 2023.
+           tre.org/matrices/ATLAS.                                                  
+                                            [41] Gemini. Gemini canvas, 2025. https://gemini.google/
+        [26] M. Costa, B. Köpf, A. Kolluri, A. Paverd, M. Russinovich, overview/canvas/.
+           A.Salem,S.Tople,L.Wutschitz,andS.Zanella-Béguelin. Se-                   
+                                            [42] Gemini. Introducing nano banana pro, 2025. https://blog
+           curingaiagentswithinformation-flowcontrol. arXivpreprint                 
+                                               .google/technology/ai/nano-banana-pro/.
+           arXiv:2505.23643, 2025.                                                  
+                                            [43] GeminiTeam. Gemini: a family of highly capable multimodal
+        [27] J. Cui, Z. Li, L. Xing, and X. Liao. Safeguard-by-                     
+                                               models. arXiv preprint arXiv:2312.11805, 2023.
+           development: A privacy-enhanced development paradigm                     
+           for multi-agent collaboration systems. arXiv preprint [44] GitHub. Github copilot, 2025. https://github.com/fea
+           arXiv:2505.04799, 2025.             tures/copilot.                       
+       6062 35th USENIX Security Symposium                        USENIX Association
+
+===== PAGE 17 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+        [45] Google. Google safe browsing, 2025. https://safebrow [62] G. Klein, K. Elphinstone, G. Heiser, J. Andronick, D. Cock,
+           sing.google.com/.                   P. Derrin, D. Elkaduwe, K. Engelhardt, R. Kolanski, M. Nor-
+                                               rish, et al. sel4: Formal verification of an os kernel. In SOSP,
+        [46] Google. Mitigating prompt injection attacks with a layered             
+                                               2009.                                
+           defense strategy, 2025. https://security.googleblog.                     
+           com/2025/06/mitigating-prompt-injection-attac [63] LangChain. Chat history, 2025. https://python.langcha
+           ks.html.                            in.com/docs/concepts/chat_history/.  
+                                            [64] D. Lee,D. Kohlbrenner,S. Shinde,K. Asanovic´,and D. Song.
+        [47] Google. Using oauth 2.0 to access google apis, 2025. https:            
+                                               Keystone: An open framework for architecting trusted execu-
+           //developers.google.com/identity/protocols/oau                           
+                                               tion environments. In EuroSys, 2020. 
+           th2.                                                                     
+                                            [65] E. Lee, D. Kim, W. Kim, and I. Yun. Takedown: How
+        [48] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz,              
+                                               it’s done in modern coding agent exploits. arXiv preprint
+           and M. Fritz. Not what you’ve signed up for: Compromising                
+                                               arXiv:2509.24240, 2025.              
+           real-world llm-integrated applications with indirect prompt              
+           injection. In AISec Workshop, 2023. [66] G. Lee, V. Hartmann, J. Park, D. Papailiopoulos, and K. Lee.
+                                               Prompted llms as chatbot modules for long open-domain
+        [49] K. Grosse, L. Bieringer, T. R. Besold, and A. M. Alahi. To-            
+                                               conversation. In ACL, 2023.          
+           wards more practical threat models in artificial intelligence            
+                                            [67] J. Lee, D. Lee, C. Choi, Y. Im, J. Wi, K. Heo, S. Oh, S. Lee,
+           security. In 33rd USENIX Security Symposium (USENIX                      
+                                               and I. Shin. Safeguarding mobile gui agent via logic-based
+           Security 24), pages 4891–4908, 2024.                                     
+                                               action verification. arXiv preprint arXiv:2503.18492, 2025.
+        [50] C. Hawblitzel, J. Howell, J. R. Lorch, A. Narayan, B. Parno,           
+                                            [68] P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin,
+           D. Zhang, and B. Zill. Ironclad apps:{End-to-End} security               
+                                               N. Goyal, H. Küttler, M. Lewis, W.-t. Yih, T. Rocktäschel,
+           via automated {Full-System} verification. In OSDI, 2014.                 
+                                               et al. Retrieval-augmented generation for knowledge-
+        [51] X. He, D. Wu, Y. Zhai, and K. Sun. Sentinelagent: Graph- intensive nlp tasks. NeurIPS, 2020.
+           based anomaly detection in multi-agent systems. arXiv [69] E. Li, T. Mallick, E. Rose, W. Robertson, A. Oprea, and
+           preprint arXiv:2505.24201, 2025.    C. Nita-Rotaru. Ace: A security architecture for llm-
+        [52] X. Hou, Y. Zhao, S. Wang, and H. Wang. Model context pro- integrated app systems. In NDSS, 2026.
+           tocol (mcp): Landscape, security threats, and future research [70] H. Li, X. Liu, H.-C. Chiu, D. Li, N. Zhang, and C. Xiao.
+           directions. arXiv preprint arXiv:2503.23278, 2025. Drift: Dynamic rule-based defense with injection isolation
+                                               for securing llm agents. arXiv preprint arXiv:2506.12104,
+        [53] IETF. The oauth 2.0 authorization framework, 2012. https:              
+                                               2025.                                
+           //www.rfc-editor.org/rfc/rfc6749.html.                                   
+                                            [71] P.Li,X.Zou,Z.Wu,R.Li,S.Xing,H.Zheng,Z.Hu,Y.Wang,
+        [54] Invariantlabs. Github mcp exploited: Accessing private repos-          
+                                               H.Li,Q.Yuan,etal. Safeflow:Aprincipledprotocolfortrust-
+           itories via mcp, 2025. https://invariantlabs.ai/blog/                    
+                                               worthy and transactional autonomous agent systems. arXiv
+           mcp-github-vulnerability.                                                
+                                               preprint arXiv:2506.07564, 2025.     
+        [55] D. Jacob, H. Alzahrani, Z. Hu, B. Alomair, and D. Wagner.              
+                                            [72] X. Li. A review of prominent paradigms for LLM-based
+           Promptshield: Deployable detection for prompt injection at-              
+                                               agents: Tool use, planning (including RAG), and feedback
+           tacks. In CODASPY, 2024.                                                 
+                                               learning. In O. Rambow, L. Wanner, M. Apidianaki, H. Al-
+        [56] R. Jha, H. Triedman, J. Wagle, and V. Shmatikov. Breaking Khalifa, B. D. Eugenio, and S. Schockaert, editors, Proceed-
+           and fixing defenses against control-flow hijacking in multi- ings of the 31st International Conference on Computational
+           agent systems. arXiv preprint arXiv:2510.17276, 2025. Linguistics, pages 9760–9779, Abu Dhabi, UAE, Jan. 2025.
+                                               Association for Computational Linguistics.
+        [57] F. Jia, T. Wu, X. Qin, and A. Squicciarini. The task shield:           
+                                            [73] Y.Li,H.Wen,W.Wang,X.Li,Y.Yuan,G.Liu,J.Liu,W.Xu,
+           Enforcing task alignment to defend against indirect prompt               
+                                               X. Wang, Y. Sun, et al. Personal llm agents: Insights and
+           injection in LLM agents. In W. Che, J. Nabende, E. Shutova,              
+                                               survey about the capability, efficiency and security. arXiv
+           and M. T. Pilehvar, editors, ACL, 2025.                                  
+                                               preprint arXiv:2401.05459, 2024.     
+        [58] Y. Jia, Z. Shao, Y. Liu, J. Jia, D. Song, and N. Z. Gong. A            
+                                            [74] Z. Li, J. Cui, X. Liao, and L. Xing. Les dissonances: Cross-
+           criticalevaluationofdefensesagainstpromptinjectionattacks.               
+                                               tool harvesting and polluting in multi-tool empowered llm
+           arXiv preprint arXiv:2505.18333, 2025.                                   
+                                               agents. arXiv preprint arXiv:2504.03111, 2025.
+        [59] H. Jing, H. Li, W. Hu, Q. Hu, X. Heli, T. Chu, P. Hu, and              
+                                            [75] Z. Li, W. Hua, H. Wang, H. Zhu, and Y. Zhang. Formal-llm:
+           Y. Song. Mcip: Protecting mcp safety via model contextual                
+                                               Integrating formal language and natural language for control-
+           integrity protocol. In EMNLP, 2025.                                      
+                                               lable llm-based agents. arXiv preprint arXiv:2402.00798,
+        [60] J. Kim, W. Choi, and B. Lee. Prompt flow integrity to 2024.            
+           prevent privilege escalation in llm agents. arXiv preprint [76] Linux. cgroups(7), 2024. https://man7.org/linux/man
+           arXiv:2503.15547, 2025.             -pages/man7/cgroups.7.html.          
+        [61] A. D. Kit. Workflow agent, 2025. https://google.githu [77] Linux. namespaces(7), 2024. https://man7.org/linux/m
+           b.io/adk-docs/agents/workflow-agents/. an-pages/man7/namespaces.7.html.  
+       USENIX Association                             35th USENIX Security Symposium 6063
+
+===== PAGE 18 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+        [78] Linux. seccomp(2), 2024. https://man7.org/linux/man [96] T. of Bits. Jumping the line: How mcp servers can attack you
+          -pages/man2/seccomp.2.html.          before you ever use them, 2025. https://blog.trailofbi
+                                               ts.com/2025/04/21/jumping-the-line-how-mcp-ser
+        [79] X. Liu, Z. Yu, Y. Zhang, N. Zhang, and C. Xiao. Automatic              
+                                               vers-can-attack-you-before-you-ever-use-them/.
+           and universal prompt injection attacks against large language            
+           models. arXiv preprint arXiv:2403.04957, 2024. [97] Okta. Okta documentation, 2025. https://help.okta.co
+                                               m/en-us/content/index.htm.           
+        [80] Y.Liu,G.Deng,Y.Li,K.Wang,Z.Wang,X.Wang,T.Zhang,                        
+           Y. Liu, H. Wang, Y. Zheng, et al. Prompt injection at- [98] OpenAI. March 20 chatgpt outage: Here’s what happened,
+           tack against llm-integrated applications. arXiv preprint 2023. https://openai.com/index/march-20-chatgpt
+           arXiv:2306.05499, 2023.             -outage/.                            
+        [81] Y. Liu, Y. Jia, R. Geng, J. Jia, and N. Z. Gong. Formalizing [99] OpenAI. ChatGPT Atlas: The browser with ChatGPT built
+           and benchmarking prompt injection attacks and defenses. In in, 2025. https://chatgpt.com/atlas/.
+           USENIX Security, 2024.           [100] OpenAI. Chatgpt shared links faq, 2025. https://help.o
+                                               penai.com/en/articles/7925741-chatgpt-shared-l
+        [82] Y. Liu, Y. Jia, J. Jia, D. Song, and N. Z. Gong. Datasentinel:         
+           A game-theoretic detection of prompt injection attacks. In               
+                                               inks-faq.                            
+           S&P, 2025.                       [101] OpenAI. Connectors in chatgpt, 2025. https://chatgpt.
+                                               com/features/connectors/.            
+        [83] H. Luo, S. Dai, C. Ni, X. Li, G. Zhang, K. Wang, T. Liu, and           
+           H. Salam. Agentauditor: Human-level safety and security [102] OpenAI. Memoryandnewcontrolsforchatgpt,2025. https:
+           evaluation for llm agents. arXiv preprint arXiv:2506.00641, //openai.com/index/memory-and-new-controls-for
+           2025.                               -chatgpt/.                           
+        [84] W. Luo, S. Dai, X. Liu, S. Banerjee, H. Sun, M. Chen, and [103] OpenAI. Temporary chat faq, 2025. https://help.opena
+           C. Xiao. Agrail: A lifelong agent guardrail with effective and i.com/en/articles/8914046-temporary-chat-faq.
+           adaptive safety detection. In ACL, 2025.                                 
+                                            [104] OWASP. Owasp top 10 for llm applications 2025, 2025.
+        [85] meta llama. Codeshield, 2025. https://github.com/met https://genai.owasp.org/resource/owasp-top-1
+           a-llama/PurpleLlama/tree/main/CodeShield. 0-for-llm-applications-2025/.  
+        [86] Microsoft. Introduction to microsoft entra verified id, 2025. [105] S. G. Patil, T. Zhang, X. Wang, and J. E. Gonzalez. Gorilla:
+           https://learn.microsoft.com/en-us/entra/verifi Large language modelconnectedwithmassive apis. NeurIPS,
+           ed-id/decentralized-identifier-overview. 2024.                           
+        [87] MITRE. Cve-2025-32711, 2025. https://www.cve.org/ [106] A. S. Patlan, P. Sheng, S. A. Hebbar, P. Mittal, and
+           CVERecord?id=CVE-2025-32711.        P. Viswanath. Real ai agents with fake memories: Fatal con-
+                                               text manipulation attacks on web3 agents. arXiv preprint
+        [88] MITRE. Cve-2025-54795, 2025. https://nvd.nist.gov                      
+                                               arXiv:2503.16248, 2025.              
+           /vuln/detail/CVE-2025-54795.                                             
+                                            [107] F. Perez and I. Ribeiro. Ignore previous prompt: Attack tech-
+        [89] A. Moffat. Heimdallm, 2023. https://heimdallm.read                     
+                                               niquesforlanguagemodels. InNeurIPSMLSafetyWorkshop,
+           thedocs.io/en/main/.                                                     
+                                               2022.                                
+        [90] Mozilla. Meta: Help users stop accidentally sharing private ai         
+                                            [108] Perplexity. Comet browser: Browse at the speed of thought,
+           chats, 2025. https://www.mozillafoundation.org/en 2025. https://www.perplexity.ai/comet.
+           /campaigns/meta-help-users-stop-accidentally-s                           
+           haring-private-ai-conversations/. [109] B. Radosevich and J. Halloran. Mcp safety audit: Llms
+                                               with the model context protocol allow major security exploits.
+        [91] T. Mu, A. Helyar, J. Heidecke, J. Achiam, A. Vallone, arXiv preprint arXiv:2504.03767, 2025.
+           I. Kivlichan, M. Lin, A. Beutel, J. Schulman, and L. Weng.               
+                                            [110] T. Rebedea, R. Dinu, M. N. Sreedhar, C. Parisien, and J. Co-
+           Rule based rewards for language model safety. In NeurIPS,                
+                                               hen. Nemo guardrails: A toolkit for controllable and safe llm
+           2024.                                                                    
+                                               applications with programmable rails. In EMNLP, 2023.
+        [92] A. C. Myers. Jflow: Practical mostly-static information flow           
+                                            [111] E. T. Red. Cross-agent privilege escalation: When agents free
+           control. In POPL, 1999.                                                  
+                                               each other, 2025. https://embracethered.com/blog/p
+        [93] S. Naihin, D. Atkinson, M. Green, M. Hamadi, C. Swift, osts/2025/cross-agent-privilege-escalation-age
+           D. Schonholtz, A. T. Kalai, and D. Bau. Testing language nts-that-free-each-other/.
+           model agents safely in the wild. In SoLaR, 2023.                         
+                                            [112] E. T. Red. Github copilot chat: From prompt injection to data
+        [94] B.News. Chatgptbannedinitalyoverprivacyconcerns,2023. exfiltration, 2025. https://embracethered.com/blog/p
+           https://www.bbc.co.uk/news/technology-65139406. osts/2024/github-copilot-chat-prompt-injection
+                                               -data-exfiltration/.                 
+        [95] J. Newsome and D. X. Song. Dynamic taint analysis for auto-            
+           matic detection, analysis, and signaturegeneration of exploits [113] R. S. Sandhu. Role-based access control. In Advances in
+           on commodity software. In NDSS, 2005. computers, volume 46, pages 237–286. Elsevier, 1998.
+       6064 35th USENIX Security Symposium                        USENIX Association
+
+===== PAGE 19 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+       [114] R. Sapkota, K. I. Roumeliotis, and M. Karkee. Ai agents [130] H.Touvron,T.Lavril,G.Izacard,X.Martinet,M.-A.Lachaux,
+           vs. agentic ai: A conceptual taxonomy, applications and chal- T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al.
+           lenges. arXiv preprint arXiv:2505.10468, 2025. Llama:Openandefficientfoundationlanguagemodels. arXiv
+                                               preprint arXiv:2302.13971, 2023.     
+       [115] G. M. Sasi Levi. How an ai agent vulnerability in langsmith            
+           couldleadtostolenapikeysandhijackedllmresponses,2025. [131] trailofbits. mcp-context-protector, 2025. https://github
+           https://noma.security/blog/how-an-ai-agent-vul .com/trailofbits/mcp-context-protector.
+           nerability-in-langsmith-could-lead-to-stolen-a                           
+           pi-keys-and-hijacked-llm-responses/. [132] L. Tsai and E. Bagdasarian. Contextual agent security: A
+                                               policy for every purpose. In HotOS, 2025.
+       [116] T. Schick, J. Dwivedi-Yu, R. Dessi, R. Raileanu, M. Lomeli,            
+           E. Hambro, L. Zettlemoyer, N. Cancedda, and T. Scialom. [133] W3C. Decentralized identifiers (dids) v1.0, 2025. https:
+           Toolformer: Language models can teach themselves to use //www.w3.org/TR/did-1.0/.
+           tools. NeurIPS, 2023.                                                    
+                                            [134] E. Wallace, K. Xiao, R. Leike, L. Weng, J. Heidecke, and
+       [117] A. security. Breaking down ‘echoleak’, the first zero-click A. Beutel. The instruction hierarchy: Training llms to priori-
+           ai vulnerability enabling data exfiltration from microsoft 365 tize privileged instructions. arXiv preprint arXiv:2404.13208,
+           copilot, 2025. https://www.aim.security/lp/aim-lab 2024.                 
+           s-echoleak-blogpost.                                                     
+                                            [135] L. Wang, C. Ma, X. Feng, Z. Zhang, H. Yang, J. Zhang,
+       [118] A. Sev-Snp. Strengthening vm isolation with integrity protec-          
+                                               Z. Chen, J. Tang, X. Chen, Y. Lin, et al. A survey on large
+           tion and more. White Paper, January, 2020. language model based autonomous agents. Frontiers of Com-
+       [119] M. Sharma, M. Tong, J. Mu, J. Wei, J. Kruthoff, S. Good- puter Science, 18(6):186345, 2024.
+           friend, E. Ong, A. Peng, R. Agarwal, C. Anil, et al. Con-                
+                                            [136] P. Wang, Y. Liu, Y. Lu, Y. Cai, H. Chen, Q. Yang, J. Zhang,
+           stitutional classifiers: Defending against universal jailbreaks          
+                                               J.Hong,andY.Wu. Agentarmor:Enforcingprogramanalysis
+           across thousands of hours of red teaming. arXiv preprint                 
+                                               on agent runtime trace to defend against prompt injection.
+           arXiv:2501.18837, 2025.                                                  
+                                               arXiv preprint arXiv:2508.01249, 2025.
+       [120] X. Shen, Y. Qu, M. Backes, and Y. Zhang. Prompt stealing at-           
+                                            [137] S. Wang, F. Yu, X. Liu, X. Qin, J. Zhang, Q. Lin, D. Zhang,
+           tacksagainst{Text-to-Image}generationmodels. InUSENIX                    
+                                               and S. Rajmohan. Privacy in action: Towards realistic privacy
+           Security, 2024.                                                          
+                                               mitigation and evaluation for llm-powered agents. arXiv
+       [121] J. Shi, Z. Yuan, G. Tie, P. Zhou, N. Z. Gong, and L. Sun.              
+                                               preprint arXiv:2509.17488, 2025.     
+           Prompt injection attack to tool selection in llm agents. arXiv           
+           preprint arXiv:2504.19793, 2025. [138] X. Wang, Z. Ji, W. Wang, Z. Li, D. Wu, and S. Wang. Sok:
+                                               Evaluating jailbreak guardrails for large language models. In
+       [122] T. Shi, J. He, Z. Wang, L. Wu, H. Li, W. Guo, and D. Song.             
+                                               IEEE S&P, 2026.                      
+           Progent: Programmable privilege control for llm agents.                  
+           arXiv preprint arXiv:2504.11703, 2025. [139] J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi,
+       [123] T. Shi, K. Zhu, Z. Wang, Y. Jia, W. Cai, W. Liang, H. Wang, Q. V. Le, D. Zhou, et al. Chain-of-thought prompting elicits
+           H. Alzahrani, J. Lu, K. Kawaguchi, et al. Promptarmor: Sim- reasoning in large language models. In NeurIPS, 2022.
+           ple yet effective prompt injection defenses. arXiv preprint              
+                                            [140] J. Wen, V. Hebbar, C. Larson, A. Bhatt, A. Radhakrishnan,
+           arXiv:2507.15219, 2025.                                                  
+                                               M. Sharma,H. Sleight,S. Feng,H. He,E. Perez,B. Shlegeris,
+       [124] S. A. Siddiqui, R. Gaonkar, B. Köpf, D. Krueger, A. Paverd, and A. Khan. Adaptive deployment of untrusted LLMs re-
+           A. Salem, S. Tople, L. Wutschitz, M. Xia, and S. Zanella- duces distributed threats. In ICLR, 2025.
+           Béguelin. Permissive information-flow analysis for large                 
+                                            [141] S. Willison. The dual llm pattern for building ai assistants
+           language models. arXiv preprint arXiv:2410.03055, 2024.                  
+                                               that can resist prompt injection, 2023. https://simonwil
+       [125] Slack. Installing with oauth, 2025. https://api.slack.co lison.net/2023/Apr/25/dual-llm-pattern/.
+           m/authentication/oauth-v2 (accessed 14, April, 2025).                    
+                                            [142] F. Wu, E. Cecchetti, and C. Xiao. System-level defense
+       [126] T. South, S. Marro, T. Hardjono, R. Mahari, C. D. Whitney,             
+                                               againstindirectpromptinjectionattacks: Aninformationflow
+           A. Chan, and A. Pentland. Position: AI agents need authenti-             
+                                               control perspective. arXiv preprint arXiv:2409.19091, 2024.
+           cated delegation. In ICML, 2025.                                         
+                                            [143] T. Wu, S. Zhang, K. Song, S. Xu, S. Zhao, R. Agrawal, S. R.
+       [127] J. Spracklen, R. Wijewickrama, A. N. Sakib, A. Maiti, and              
+                                               Indurthi, C. Xiang, P. Mittal, and W. Zhou. Instructional
+           B. Viswanath. We have a package for you! a comprehen-                    
+                                               segment embedding: Improving llm safety with instruction
+           sive analysis of package hallucinations by code generating               
+                                               hierarchy. In ICLR, 2024.            
+           {LLMs}. In USENIX Security, 2025.                                        
+       [128] G. Syros, A. Suri, J. Ginesin, C. Nita-Rotaru, and A. Oprea. [144] Y. Wu, F. Roesner, T. Kohno, N. Zhang, and U. Iqbal. Iso-
+           Saga:Asecurityarchitectureforgoverningaiagenticsystems. lateGPT:AnExecutionIsolationArchitectureforLLM-Based
+           In NDSS, 2026.                      Systems. In NDSS, 2025.              
+       [129] N. Y. Times. South korea bans downloads of deepseek, 2025. [145] Y.Wu,K.Yang,F.Roesner,T.Kohno,N.Zhang,andU.Iqbal.
+           https://www.nytimes.com/2025/02/17/business/so Towards automating data access permissions in ai agents.
+           uth-korea-deepseek-china-ai.html.   arXiv preprint arXiv:2511.17959, 2025.
+       USENIX Association                             35th USENIX Security Symposium 6065
+
+===== PAGE 20 / 20 =====
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+                                                                                    
+       [146] Z. Xiang, L. Zheng, Y. Li, J. Hong, Q. Li, H. Xie, J. Zhang, A Appendix
+           Z. Xiong, C. Xie, C. Yang, et al. Guardagent: Safeguard llm              
+           agents by a guard agent via knowledge-enabled reasoning. Connection with MITRE ATLAS. We extract the agent-
+           arXiv preprint arXiv:2406.09187, 2024. relevant categories in MITRE ATLAS threat matrix [25] and
+       [147] H. Yang, S. Yue, and Y. He. Auto-gpt for online decision map them to the attack vectors and risk taxonomy used in
+           making: Benchmarks and additional opinions. arXiv preprint this paper. Model poisoning (V5) includes Poison Training
+           arXiv:2306.02224, 2023.          Data, Publish Poisoned Datasets, and Publish Poisoned Mod-
+       [148] Y. Yang, C. Li, Q. Li, O. Ma, H. Wang, Z. Wang, Y. Gao, els. Memory poisoning (V6) covers RAG Poisoning, False
+           W. Chen, and S. Ji. {PRSA}: Prompt stealing attacks against RAG Entry Injection, and AI Agent Context Poisoning. Di-
+           {Real-World} prompt services. In USENIX Security, 2025. rect prompt injection (V4) corresponds to LLM Prompt In-
+       [149] H. Yao, H. Shi, Y. Chen, Y. Jiang, C. Wang, and Z. Qin. Con- jection. Indirect prompt injection (V1) includes Retrieval
+           trolnet: A firewall for rag-based llm system. arXiv preprint Content Crafting, Drive-by Compromise, and Prompt Infil-
+           arXiv:2504.09593, 2025.          tration via Public-Facing Applications. Wrong instruction
+       [150] S. Yao,J. Zhao,D. Yu,N. Du,I. Shafran,K. Narasimhan,and following (R2) maps to AI Agent Tool Invocation. Private
+           Y. Cao. React: Synergizing reasoning and acting in language data leakage (R5) includes Credentials from AI Agent Config-
+           models. In ICLR, 2023.           uration, OS Credential Dumping, RAG Credential Harvesting,
+       [151] M. Yu, F. Meng, X. Zhou, S. Wang, J. Mao, L. Pang, T. Chen, Unsecured Credentials, and LLM Response Rendering. Un-
+           K. Wang, X. Li, Y. Zhang, et al. A survey on trustworthy intended actions and data corruption (R6) cover Modify AI
+           llm agents: Threats and countermeasures. arXiv preprint                  
+                                            Agent Configuration, LLM Trusted Output Components Ma-
+           arXiv:2503.09648, 2025.                                                  
+                                            nipulation, and External Harms. Resource drain and denial-of-
+       [152] C. Yueh-Han, N. Joshi, Y. Chen, H. He, and R. Angell. Moni- service (R7) correspond to Denial of AI Service and External
+           toring llm agents for sequentially contextual harm. In ICLR              
+                                            Harms.                                  
+           2025 Workshop on Building Trust in Language Models and                   
+           Applications, 2025.                                                      
+       [153] Q. Zhan, Z. Liang, Z. Ying, and D. Kang. InjecAgent: Bench-            
+           marking indirect prompt injections in tool-integrated large              
+           language model agents. In ACL, 2024.                                     
+       [154] C. Zhang, M. Jin, Q. Yu, C. Liu, H. Xue, and X. Jin. Goal-             
+           guided generative prompt injection attack on large language              
+           models. In ICDM, 2024.                                                   
+       [155] H. Zhang, J. Huang, K. Mei, Y. Yao, Z. Wang, C. Zhan,                  
+           H.Wang,andY.Zhang. Agentsecuritybench(ASB):Formal-                       
+           izing and benchmarking attacks and defenses in LLM-based                 
+           agents. In ICLR, 2025.                                                   
+       [156] K. Zhang, Z. Su, P.-Y. Chen, E. Bertino, X. Zhang, and N. Li.          
+           Llm agents should employ security principles. arXiv preprint             
+           arXiv:2505.24019, 2025.                                                  
+       [157] H. Zhong, M. Lentz, N. Narodytska, A. Szekeres, and                    
+           K. Rong. Honeybee: Efficient role-based access control for               
+           vector databases via dynamic partitioning. arXiv preprint                
+           arXiv:2505.01538, 2025.                                                  
+       [158] P. Y. Zhong, S. Chen, R. Wang, M. McCall, B. L. Titzer,                
+           H. Miller, and P. B. Gibbons. Rtbas: Defending llm agents                
+           against prompt injection and privacy leakage. arXiv preprint             
+           arXiv:2502.08966, 2025.                                                  
+       [159] J. Zhou, L. Wang, and X. Yang. Guardian: Safeguarding                  
+           llm multi-agent collaborations with temporal graph modeling.             
+           arXiv preprint arXiv:2505.19234, 2025.                                   
+       [160] K.Zhu,X.Yang,J.Wang,W.Guo,andW.Y.Wang. MELON:                          
+           Indirect prompt injection defense via masked re-execution                
+           and tool comparison. In ICML, 2025.                                      
+       [161] Zod. Zod: Intro, 2025. https://zod.dev/.                               
+       [162] W. Zou, R. Geng, B. Wang, and J. Jia. Poisonedrag: Knowl-              
+           edge corruption attacks to retrieval-augmented generation of             
+           large language models. USENIX Security, 2025.                            
+       6066 35th USENIX Security Symposium                        USENIX Association

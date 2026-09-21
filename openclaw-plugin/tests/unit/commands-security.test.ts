@@ -99,6 +99,7 @@ describe("AgentSentry command safety", () => {
   it.each([
     ["semantic.mode", "unrestricted", "risk-tiered", "off, risk-tiered, full"],
     ["enforcement.mode", "permissive", "observe", "observe, approval, block"],
+    ["intervention.mode", "threshold-only", "risk-based", "risk-based, evidence-gated"],
     ["runtimeIsolation.unavailableAction", "continue", "require_approval", "require_approval, block"],
     ["notifications.minSeverity", "info", "danger", "warning, danger"],
   ])("rejects invalid enum value for %s without mutating or persisting", (key, invalidValue, originalValue, allowedValues) => {
@@ -122,6 +123,7 @@ describe("AgentSentry command safety", () => {
   it.each([
     ["semantic.mode", "full"],
     ["enforcement.mode", "approval"],
+    ["intervention.mode", "evidence-gated"],
     ["runtimeIsolation.unavailableAction", "block"],
     ["notifications.minSeverity", "warning"],
   ])("accepts allowed enum value for %s", (key, allowedValue) => {

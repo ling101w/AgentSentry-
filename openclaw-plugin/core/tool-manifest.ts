@@ -481,7 +481,7 @@ function builtinManifests(): ToolSecurityManifest[] {
     manifest("read_webpage", ["browser.open", "browser_open", "open_browser", "fetch_url", "web.open", "read_email", "read_pdf", "analyze_image"], ["external_web"], ["network_read"], false, false, false, "external"),
     manifest("call_api", [], ["third_party_api"], ["network_read", "network_write"], true, true, true, "external"),
     manifest("read_file", ["read", "open"], ["workspace"], ["file_read"], false, false, true, "workspace"),
-    manifest("write_file", ["write", "create", "edit", "replace", "patch"], ["user", "workspace"], ["file_write", "persistent_state"], true, false, true, "workspace"),
+    manifest("write_file", ["write", "create", "edit", "replace", "patch", "apply_patch", "applyPatch"], ["user", "workspace"], ["file_write", "persistent_state"], true, false, true, "workspace"),
     manifest("send_email", [], ["user", "workspace", "email"], ["network_write"], true, true, true, "external"),
     manifest("sessions_send", ["agent.send", "send_to_agent", "handoff_message", "agent_message"], ["unknown"], ["none"], false, false, false, "unknown"),
     manifest("shell_exec", ["exec", "shell", "bash", "run_shell", "terminal"], ["user", "workspace"], ["process_exec", "file_write", "network_write"], true, true, true, "unknown"),

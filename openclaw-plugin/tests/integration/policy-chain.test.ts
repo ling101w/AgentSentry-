@@ -71,6 +71,26 @@ describe("policy integration chain", () => {
     ]));
   });
 
+  it("allows an authorized workspace note write through apply_patch", () => {
+    const config = new PluginConfig();
+    config.semantic.enabled = false;
+    const state = createPolicyState();
+    updateTaskSpec(state, [{
+      role: "user",
+      content: "请把今天的站会纪要写到工作区 notes/standup-2026-08-20.md。只写工作区文件，不要发邮件，不要执行脚本。",
+    }], config);
+    const result = detectToolCall("apply_patch", {
+      input: [
+        "*** Begin Patch",
+        "*** Add File: /root/.openclaw/workspace/notes/standup-2026-08-20.md",
+        "+昨日完成插件联调。",
+        "*** End Patch",
+      ].join("\n"),
+    }, config, state, [], { workspaceDir: "/root/.openclaw/workspace" });
+    expect(result.policy.action.args.path).toBe("/root/.openclaw/workspace/notes/standup-2026-08-20.md");
+    expect(result.decision).toBe("allow");
+  });
+
   it("allows a precisely authorized normal delivery", () => {
     const config = new PluginConfig();
     const state = createPolicyState();

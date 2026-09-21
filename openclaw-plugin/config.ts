@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 
 export type EnforcementMode = "observe" | "approval" | "block";
+export type InterventionMode = "risk-based" | "evidence-gated";
 export type NotificationSeverity = "warning" | "danger";
 export type SemanticJudgeMode = "off" | "risk-tiered" | "full";
 export type RuntimeIsolationUnavailableAction = "require_approval" | "block";
@@ -20,6 +21,10 @@ export type AgentIdentityConfig = {
 
 export interface SecurityProfileDefinition {
   profile: SecurityProfileName;
+  intervention: {
+    mode: InterventionMode;
+    preserveSafetyBoundaries: boolean;
+  };
   enforcement: {
     mode: EnforcementMode;
   };
@@ -87,6 +92,10 @@ export interface SecurityProfileDefinition {
 
 export class PluginConfig {
   profile: SecurityProfileName;
+  intervention: {
+    mode: InterventionMode;
+    preserveSafetyBoundaries: boolean;
+  };
   dashboard: {
     enabled: boolean;
     host: string;
@@ -111,8 +120,19 @@ export class PluginConfig {
     askThreshold: number;
     denyThreshold: number;
   };
+  graphLearning: {
+    enabled: boolean;
+    pythonPath: string;
+    scriptPath: string;
+    checkpointPath: string;
+    projectRoot: string;
+    threshold: number;
+    oodThreshold: number;
+    timeoutMs: number;
+  };
   semantic: {
     enabled: boolean;
+    cacheEnabled: boolean;
     mode: SemanticJudgeMode;
     judgeToolCalls: boolean;
     judgeMessages: boolean;
@@ -198,6 +218,10 @@ export class PluginConfig {
 
   constructor() {
     this.profile = "observe";
+    this.intervention = {
+      mode: "risk-based",
+      preserveSafetyBoundaries: true,
+    };
     this.dashboard = {
       enabled: true,
       host: "127.0.0.1",
@@ -222,8 +246,19 @@ export class PluginConfig {
       askThreshold: 40,
       denyThreshold: 70,
     };
+    this.graphLearning = {
+      enabled: false,
+      pythonPath: "python3",
+      scriptPath: "",
+      checkpointPath: "",
+      projectRoot: "",
+      threshold: 0.6,
+      oodThreshold: 0.7094,
+      timeoutMs: 50,
+    };
     this.semantic = {
       enabled: false,
+      cacheEnabled: true,
       mode: "risk-tiered",
       judgeToolCalls: true,
       judgeMessages: false,
@@ -317,6 +352,18 @@ export class PluginConfig {
     const profile = readString(obj.profile, config.profile);
     if (isSecurityProfileName(profile)) applySecurityProfile(config, profile);
 
+    const intervention = objectAt(obj, "intervention");
+    if (intervention) {
+      const mode = readString(intervention.mode, config.intervention.mode);
+      if (isInterventionMode(mode)) {
+        config.intervention.mode = mode;
+      }
+      config.intervention.preserveSafetyBoundaries = readBoolean(
+        intervention.preserveSafetyBoundaries,
+        config.intervention.preserveSafetyBoundaries,
+      );
+    }
+
     const dashboard = objectAt(obj, "dashboard");
     if (dashboard) {
       config.dashboard.enabled = readBoolean(dashboard.enabled, config.dashboard.enabled);
@@ -352,9 +399,22 @@ export class PluginConfig {
       }
     }
 
+    const graphLearning = objectAt(obj, "graphLearning");
+    if (graphLearning) {
+      config.graphLearning.enabled = readBoolean(graphLearning.enabled, config.graphLearning.enabled);
+      config.graphLearning.pythonPath = readString(graphLearning.pythonPath, config.graphLearning.pythonPath);
+      config.graphLearning.scriptPath = readString(graphLearning.scriptPath, config.graphLearning.scriptPath);
+      config.graphLearning.checkpointPath = readString(graphLearning.checkpointPath, config.graphLearning.checkpointPath);
+      config.graphLearning.projectRoot = readString(graphLearning.projectRoot, config.graphLearning.projectRoot);
+      config.graphLearning.threshold = clampNumber(readNumber(graphLearning.threshold, config.graphLearning.threshold), 0, 1);
+      config.graphLearning.oodThreshold = clampNumber(readNumber(graphLearning.oodThreshold, config.graphLearning.oodThreshold), 0, 100);
+      config.graphLearning.timeoutMs = clampInt(readPositiveInt(graphLearning.timeoutMs, config.graphLearning.timeoutMs), 5, 2000);
+    }
+
     const semantic = objectAt(obj, "semantic");
     if (semantic) {
       config.semantic.enabled = readBoolean(semantic.enabled, config.semantic.enabled);
+      config.semantic.cacheEnabled = readBoolean(semantic.cacheEnabled, config.semantic.cacheEnabled);
       const mode = readString(semantic.mode, config.semantic.mode);
       if (mode === "off" || mode === "risk-tiered" || mode === "full") {
         config.semantic.mode = mode;
@@ -520,6 +580,7 @@ export function applySecurityProfile(config: PluginConfig, profile: SecurityProf
   const definition = loadSecurityProfileDefinition(profile);
 
   config.profile = definition.profile;
+  config.intervention = { ...definition.intervention };
   config.enforcement.mode = definition.enforcement.mode;
   config.semantic.enabled = definition.semantic.enabled;
   config.semantic.mode = definition.semantic.mode;
@@ -592,6 +653,7 @@ function parseSecurityProfileDefinition(value: unknown, expectedProfile: Securit
   const root = requireProfileObject(value, "profile");
   assertOnlyProfileKeys(root, "profile", [
     "profile",
+    "intervention",
     "enforcement",
     "semantic",
     "policy",
@@ -606,6 +668,7 @@ function parseSecurityProfileDefinition(value: unknown, expectedProfile: Securit
     "multiAgentSecurity",
   ], [
     "profile",
+    "intervention",
     "enforcement",
     "semantic",
     "policy",
@@ -619,6 +682,8 @@ function parseSecurityProfileDefinition(value: unknown, expectedProfile: Securit
     throw new Error(`profile.profile must be "${expectedProfile}", received "${declaredProfile}"`);
   }
 
+  const intervention = requireProfileObject(root.intervention, "profile.intervention");
+  assertOnlyProfileKeys(intervention, "profile.intervention", ["mode", "preserveSafetyBoundaries"]);
   const enforcement = requireProfileObject(root.enforcement, "profile.enforcement");
   assertOnlyProfileKeys(enforcement, "profile.enforcement", ["mode"]);
   const semantic = requireProfileObject(root.semantic, "profile.semantic");
@@ -681,6 +746,13 @@ function parseSecurityProfileDefinition(value: unknown, expectedProfile: Securit
 
   return {
     profile: declaredProfile,
+    intervention: {
+      mode: requireProfileEnum(intervention.mode, "profile.intervention.mode", ["risk-based", "evidence-gated"]),
+      preserveSafetyBoundaries: requireProfileBoolean(
+        intervention.preserveSafetyBoundaries,
+        "profile.intervention.preserveSafetyBoundaries",
+      ),
+    },
     enforcement: {
       mode: requireProfileEnum(enforcement.mode, "profile.enforcement.mode", ["observe", "approval", "block"]),
     },
@@ -782,6 +854,10 @@ export function isSecurityProfileName(value: string): value is SecurityProfileNa
   return value === "observe" || value === "balanced" || value === "competition" || value === "high-security";
 }
 
+export function isInterventionMode(value: string): value is InterventionMode {
+  return value === "risk-based" || value === "evidence-gated";
+}
+
 function profileLoadError(profile: SecurityProfileName, profileUrl: URL, reason: string, cause: unknown): Error {
   const detail = cause instanceof Error ? cause.message : String(cause);
   return new Error(`AgentSentry security profile "${profile}" at ${profileUrl.pathname} ${reason}: ${detail}`, { cause });
@@ -850,6 +926,14 @@ function readString(value: unknown, defaultValue: string): string {
 
 function readPositiveInt(value: unknown, defaultValue: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : defaultValue;
+}
+
+function readNumber(value: unknown, defaultValue: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : defaultValue;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function readNonNegativeInt(value: unknown, defaultValue: number): number {

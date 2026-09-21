@@ -184,6 +184,7 @@ describe("runtime config persistence", () => {
     const config = configAt();
     const secret = "runtime-secret-value-that-must-not-be-written";
     config.enforcement.mode = "block";
+    config.intervention.mode = "evidence-gated";
     config.policy.allowlistedApiHosts = ["api.example.test"];
     process.env[config.semantic.apiKeyEnv] = secret;
     (config as unknown as Record<string, unknown>).token = secret;
@@ -199,6 +200,7 @@ describe("runtime config persistence", () => {
     expect(saved).not.toHaveProperty("semantic.apiKey");
     expect(saved).toHaveProperty("semantic.apiKeyEnv", config.semantic.apiKeyEnv);
     expect(saved).toHaveProperty("enforcement.mode", "block");
+    expect(saved).toHaveProperty("intervention.mode", "evidence-gated");
     expect(saved).toHaveProperty("policy.allowlistedApiHosts", ["api.example.test"]);
   });
 

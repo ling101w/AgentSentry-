@@ -36,6 +36,7 @@ export type DetectionResult = {
 export type DetectionContext = {
   toolCallId?: string;
   workspaceDir?: string;
+  onPerformance?: (stage: "semantic_action_graph", durationMs: number) => void;
 };
 
 type BoundaryNormalization = {
@@ -116,6 +117,7 @@ export function detectToolCall(
       toolCallId: context.toolCallId,
       workspaceDir,
       semanticGraph: semanticAction.graph,
+      onPerformance: context.onPerformance,
     });
     return { decision: policy.decision, risk_score: policy.risk_score, findings: policy.findings, summary: "detection disabled; policy only", policy };
   }
@@ -218,6 +220,7 @@ export function detectToolCall(
     semanticGraph: semanticAction.graph,
     provenanceLinks: exposure.links,
     provenanceAdditions: exposure.additions,
+    onPerformance: context.onPerformance,
   });
   return {
     decision: policy.decision,

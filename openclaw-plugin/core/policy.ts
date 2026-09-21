@@ -22,6 +22,7 @@ import {
   sourceForToolResult,
   type ActionAssessment,
 } from "./policy/action-assessment.ts";
+import { applyInterventionGate, type InterventionGateResult } from "./policy/intervention-gate.ts";
 import { evaluateAbacDataFlow, type DataFlowTaintFlow } from "./policy/abac.ts";
 import { behaviorAnomalyFindingsFor, updateBehaviorProfile, type BehaviorProfile } from "./policy/behavior-baseline.ts";
 import { containsAny, flattenText as flattenValueText, hostFromUrl, isLabeledValue, readFirstString, unique } from "./policy/value-utils.ts";
@@ -30,6 +31,7 @@ import { targetAllowed } from "./security/url.ts";
 import { canonicalizePath, matchAllowedWritePath, matchWorkspaceReadPath } from "./path-security.ts";
 import { isAbsolute, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import {
   activateSemanticIntent,
   beginSemanticAction,
@@ -178,6 +180,7 @@ export type PolicyDecision = {
   findings: DetectionFinding[];
   action_graph_node_id: string;
   deterministic_disposition: "allow" | "deny" | "ambiguous";
+  intervention?: InterventionGateResult;
   effects?: PolicyEffects;
 };
 
@@ -222,6 +225,7 @@ export type PolicyDecisionContext = {
   semanticGraph?: SemanticGraph;
   provenanceLinks?: SemanticProvenanceLink[];
   provenanceAdditions?: DataProvenance[];
+  onPerformance?: (stage: "semantic_action_graph", durationMs: number) => void;
 };
 
 const TOOL_ALIASES: Array<[RegExp, string]> = [
@@ -556,6 +560,7 @@ function evaluateMutable(
     ? { action: "allow", authorized: true, reason: "manifest_bound_read" }
     : extractedAuthorization;
   let actionGraphNodeId = "";
+  const actionGraphStartedAt = performance.now();
   try {
     const graphAttempt = beginSemanticAction(state.semanticActionGraph, {
       toolCallId: context.toolCallId,
@@ -608,6 +613,12 @@ function evaluateMutable(
       tool: action.tool,
     }));
     violations.push("semantic action graph evaluation failed");
+  } finally {
+    try {
+      context.onPerformance?.("semantic_action_graph", performance.now() - actionGraphStartedAt);
+    } catch {
+      // Observability must never affect enforcement.
+    }
   }
   if (!capabilityAuthorization.authorized && !allowsImplicitLowRiskRead(action, assessment, capabilityAuthorization.reason)) {
     const verdict = capabilityAuthorization.action === "deny" ? "block" : "require_approval";
@@ -756,7 +767,14 @@ function evaluateMutable(
       denyThreshold: config.detection.denyThreshold,
     })
     : "allow";
-  const decision = mergeDecision(deterministicDecision, additionalDecision);
+  const rawDecision = mergeDecision(deterministicDecision, additionalDecision);
+  const intervention = applyInterventionGate({
+    mode: config.intervention.mode,
+    rawDecision,
+    findings,
+    preserveSafetyBoundaries: config.intervention.preserveSafetyBoundaries,
+  });
+  const decision = intervention.decision;
   if (actionGraphNodeId) setSemanticActionDecision(state.semanticActionGraph, actionGraphNodeId, decision);
 
   return {
@@ -772,11 +790,18 @@ function evaluateMutable(
     task_spec: taskSpec,
     findings: dedupeFindings(findings),
     action_graph_node_id: actionGraphNodeId,
-    deterministic_disposition: deterministicBlock
-      ? "deny"
-      : findings.some((item) => item.verdict !== "pass") || decision !== "allow"
-        ? "ambiguous"
-        : "allow",
+    deterministic_disposition: config.intervention.mode === "evidence-gated"
+      ? decision === "deny"
+        ? "deny"
+        : decision === "ask"
+          ? "ambiguous"
+          : "allow"
+      : deterministicBlock
+        ? "deny"
+        : findings.some((item) => item.verdict !== "pass") || decision !== "allow"
+          ? "ambiguous"
+          : "allow",
+    intervention,
   };
 }
 
@@ -1447,7 +1472,7 @@ function deterministicViolations(
 
   if (action.tool === "write_file") {
     const requestedPath = readFirstString(action.args, ["path", "file", "filename", "target"]);
-    const content = readFirstString(action.args, ["content", "body", "text", "patch"]);
+    const content = readFirstString(action.args, ["content", "body", "text", "patch", "input"]);
     let effectivePath = requestedPath;
     if (!requestedPath.trim()) violations.push("missing write path");
     if (config.policy.restrictWritesToAllowedRoots) {
@@ -2478,6 +2503,19 @@ function normalizeArgs(tool: string, params: Record<string, unknown>): Record<st
   if (tool === "read_file" || tool === "write_file") {
     promote(args, "path", ["file", "filename", "target"]);
   }
+  if (tool === "write_file") {
+    const patch = readFirstString(args, ["input", "patch", "diff"]);
+    if (patch) {
+      if (!readFirstString(args, ["path"])) {
+        const path = extractApplyPatchPath(patch);
+        if (path) args.path = path;
+      }
+      if (!readFirstString(args, ["content", "body", "text"])) {
+        const content = extractApplyPatchContent(patch);
+        if (content) args.content = content;
+      }
+    }
+  }
   if (tool === "send_email") {
     promote(args, "recipient", ["recipients", "to", "target", "email"]);
     promote(args, "body", ["content", "message", "text"]);
@@ -2583,6 +2621,19 @@ function readStringValues(args: Record<string, unknown>, keys: string[]): string
     }
   }
   return [];
+}
+
+function extractApplyPatchPath(patch: string): string {
+  const match = String(patch || "").match(/\*\*\*\s+(?:Add File|Update File|Delete File):\s+(\S+)/i);
+  return match?.[1]?.trim() || "";
+}
+
+function extractApplyPatchContent(patch: string): string {
+  return String(patch || "")
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .map((line) => line.slice(1))
+    .join("\n");
 }
 
 function promote(args: Record<string, unknown>, target: string, sources: string[]): void {

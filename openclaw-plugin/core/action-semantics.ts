@@ -1,6 +1,7 @@
 import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { clampText, safeStringify } from "./redact.ts";
+import { isTrustedWorkspaceContextRead } from "./workspace-context.ts";
 
 type SemanticFact = {
   path: string;
@@ -93,7 +94,8 @@ export function semanticActionFindings(
   const hasPrivilegedEffect = graph.privilegedEffects.length > 0;
   const isMemoryTool = /memory|remember|webhook|wake/i.test(toolName);
   const readOnlySkillDocLookup = isReadOnlyInstalledSkillDocLookup(toolName, params);
-  const hasExplicitPersistence = graph.persistenceTargets.length > 0 && !readOnlySkillDocLookup;
+  const readOnlyWorkspaceContext = isReadOnlyWorkspaceContextLookup(toolName, params);
+  const hasExplicitPersistence = graph.persistenceTargets.length > 0 && !readOnlySkillDocLookup && !readOnlyWorkspaceContext;
   const hasPersistence = hasExplicitPersistence || isMemoryTool;
   const declaredBenign = graph.benignClaims.length > 0;
   let risk = 0;
@@ -152,6 +154,22 @@ export function semanticActionFindings(
   }
 
   return { findings: dedupeFindings(findings), risk: Math.min(risk, 150), graph };
+}
+
+function isReadOnlyWorkspaceContextLookup(toolName: string, params: Record<string, unknown>): boolean {
+  const path = firstPathLike(params);
+  return Boolean(path) && isTrustedWorkspaceContextRead(toolName, path);
+}
+
+function firstPathLike(params: Record<string, unknown>): string {
+  for (const key of ["path", "file", "filename", "target"]) {
+    const value = params[key];
+    if (typeof value === "string" && value.trim()) return value;
+    if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as { value?: unknown }).value === "string") {
+      return String((value as { value: string }).value);
+    }
+  }
+  return "";
 }
 
 function isReadOnlyInstalledSkillDocLookup(toolName: string, params: Record<string, unknown>): boolean {

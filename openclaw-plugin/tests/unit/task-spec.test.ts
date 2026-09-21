@@ -83,6 +83,21 @@ describe("TaskSpec V2 explicit capability extraction", () => {
     expect(spec.denied_tools).toContain("send_email");
   });
 
+  it("authorizes Chinese workspace note writes from 写到 phrasing", () => {
+    const spec = deriveTaskSpecV2("请把今天的站会纪要写到工作区 notes/standup-2026-08-20.md。纪要写三句。只写工作区文件，不要发邮件，不要执行脚本。", []);
+    expect(spec.allowed_tools).toContain("write_file");
+    expect(spec.denied_tools).toContain("send_email");
+    expect(spec.denied_tools).toContain("shell_exec");
+    expect(authorizeCapability(spec, {
+      tool: "write_file",
+      args: { path: "notes/standup-2026-08-20.md", content: "ok" },
+    }).action).toBe("allow");
+    expect(authorizeCapability(spec, {
+      tool: "write_file",
+      args: { path: "/root/.openclaw/workspace/notes/standup-2026-08-20.md", content: "ok" },
+    }).action).toBe("allow");
+  });
+
   it("does not grant side effects for a vague task", () => {
     const spec = deriveTaskSpecV2("帮我处理一下", []);
     expect(spec.capabilities).toHaveLength(0);
@@ -106,6 +121,8 @@ describe("TaskSpec V2 explicit capability extraction", () => {
 
     const prefixSpec = structuredClone(readSpec);
     prefixSpec.capabilities[0].targets = ["prefix:https://api.example.com/reports"];
+    // (P0-1) 扩展授权语义时必须同步更新子句绑定，否则绑定检查会拒绝。
+    prefixSpec.capabilities[0].bound = { urls: ["prefix:https://api.example.com/reports"] };
     expect(authorizeCapability(prefixSpec, {
       tool: "call_api",
       args: { url: "https://api.example.com/reports/2026", method: "GET" },
@@ -139,6 +156,10 @@ describe("TaskSpec V2 explicit capability extraction", () => {
     const write = deriveTaskSpecV2("保存到 notes/report.md。", []);
     expect(authorizeCapability(write, { tool: "write_file", args: { path: "notes/report.md", content: "ok" } }).action).toBe("allow");
     expect(authorizeCapability(write, { tool: "write_file", args: { path: "notes/other.md", content: "ok" } }).reason).toBe("path_outside_authorization");
+    expect(authorizeCapability(write, {
+      tool: "write_file",
+      args: { path: "/root/.openclaw/workspace/notes/report.md", content: "ok" },
+    }).action).toBe("allow");
 
     const email = deriveTaskSpecV2("把 report.md 发给 teacher@example.edu。", []);
     expect(authorizeCapability(email, {
@@ -377,6 +398,8 @@ describe("TaskSpec V2 explicit capability extraction", () => {
     expect(capability).toBeDefined();
     capability!.targets = ["notes/*"];
     capability!.constraints.allowedPaths = ["notes/*"];
+    // (P0-1) wildcard 扩展必须同步更新子句绑定，绑定与目标集合不一致时拒绝。
+    capability!.bound = { paths: ["notes/*"] };
 
     expect(authorizeCapability(spec, {
       tool: "write_file",
@@ -386,6 +409,15 @@ describe("TaskSpec V2 explicit capability extraction", () => {
       tool: "write_file",
       args: { path: "notes/../.env", content: "secret" },
     }).reason).toBe("path_outside_authorization");
+    // (P0-1) 仅扩宽 targets/constraints 而不同步子句绑定的尝试必须被绑定检查拦截：
+    // per-tool 检查（allowedPaths）通过后，绑定检查仍拒绝 bound 之外的路径。
+    const smuggled = structuredClone(spec);
+    smuggled.capabilities[0].targets = ["notes/*", "secret/*"];
+    smuggled.capabilities[0].constraints.allowedPaths = ["notes/*", "secret/*"];
+    expect(authorizeCapability(smuggled, {
+      tool: "write_file",
+      args: { path: "secret/key", content: "x" },
+    }).reason).toBe("arguments_outside_clause_binding");
   });
 
   it("keeps session authorization across chatter and merges continuations", () => {
@@ -413,9 +445,18 @@ describe("TaskSpec V2 explicit capability extraction", () => {
 
   it("extracts operational templates without authorizing dangerous follow-up commands", () => {
     const spec = deriveTaskSpecV2("帮我配置服务器日常巡检，检查主机标识和 SSH 授权状态。", []);
+    // (P0-3) 关键词推断出的敏感目标不再是静默授权，而是待审批请求：
+    // read ~/.ssh/authorized_keys 需要用户显式批准（ask），而不是 allow。
+    expect(spec.pending_capability_requests?.some((request) =>
+      request.reason === "keyword_inferred_ssh_key_read")).toBe(true);
     expect(authorizeCapability(spec, {
       tool: "read_file",
       args: { path: "/home/ubuntu/.ssh/authorized_keys" },
+    })).toMatchObject({ action: "ask", reason: "pending_capability_request:keyword_inferred_ssh_key_read" });
+    // 巡检类低风险只读命令仍然可用（系统巡检是真实授权意图）。
+    expect(authorizeCapability(spec, {
+      tool: "shell_exec",
+      args: { command: "uname -a && uptime" },
     }).action).toBe("allow");
     expect(authorizeCapability(spec, {
       tool: "shell_exec",

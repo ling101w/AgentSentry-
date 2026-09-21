@@ -95,6 +95,26 @@ const SENSITIVE_FILE_NAMES = [
   "user.md",
 ];
 
+const WORKSPACE_CONTEXT_ALLOWLIST = new Set([
+  "agents.md",
+  "soul.md",
+  "user.md",
+  "identity.md",
+  "heartbeat.md",
+  "tools.md",
+  "memory.md",
+  "bootstrap.md",
+  "openclaw.json",
+  "openclaw-workspace-state.json",
+]);
+
+function isAllowlistedWorkspaceContext(relPath: string): boolean {
+  const path = String(relPath || "").replace(/\\/g, "/");
+  const base = (path.split("/").pop() || "").toLowerCase();
+  if (WORKSPACE_CONTEXT_ALLOWLIST.has(base) && !path.includes("/")) return true;
+  return /^memory\/\d{4}-\d{2}-\d{2}[^/]*\.md$/i.test(path);
+}
+
 const GENERATED_SOURCE_PATH_PATTERNS = [
   /(^|\/)public\/js\/vs\//i,
   /(^|\/)static\/.*\/public\/js\/vs\//i,
@@ -262,7 +282,7 @@ function scanDeterministicFile(relPath: string, content: string, config: PluginC
   if (config.provenanceScan.scanSkills && isSkillFile(relPath)) findings.push(...scanSkillContent(relPath, content, config));
   if (config.provenanceScan.scanConfig && isConfigFile(relPath)) findings.push(...scanConfigContent(relPath, content, config));
   if (config.provenanceScan.scanSensitiveFiles) findings.push(...scanSensitiveFile(relPath, content, config));
-  findings.push(...scanTrustSurface(relPath, content, config));
+  if (!isAllowlistedWorkspaceContext(relPath)) findings.push(...scanTrustSurface(relPath, content, config));
   return findings;
 }
 
@@ -352,9 +372,13 @@ function scanSensitiveFile(relPath: string, content: string, config: PluginConfi
   const findings: DetectionFinding[] = [];
   const name = basename(relPath).toLowerCase();
   const lowerPath = relPath.toLowerCase();
+  const allowlisted = isAllowlistedWorkspaceContext(relPath);
   const sensitiveByName =
-    SENSITIVE_FILE_NAMES.includes(name)
-    || config.policy.sensitiveAssets.some((asset) => matchesSensitiveAssetPath(lowerPath, asset));
+    !allowlisted
+    && (
+      SENSITIVE_FILE_NAMES.includes(name)
+      || config.policy.sensitiveAssets.some((asset) => matchesSensitiveAssetPath(lowerPath, asset))
+    );
 
   if (sensitiveByName) {
     findings.push(finding("Context Provenance", "heuristic", "require_approval", "workspace contains sensitive asset file", 30, {

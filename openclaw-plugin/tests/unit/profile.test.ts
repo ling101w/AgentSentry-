@@ -6,6 +6,7 @@ describe("security profiles", () => {
     const defaults = new PluginConfig();
     expect(defaults.profile).toBe("observe");
     expect(defaults.enforcement.mode).toBe("observe");
+    expect(defaults.intervention).toEqual({ mode: "risk-based", preserveSafetyBoundaries: true });
 
     applySecurityProfile(defaults, "competition");
     expect(defaults).toMatchObject({

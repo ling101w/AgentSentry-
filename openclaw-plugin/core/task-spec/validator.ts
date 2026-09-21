@@ -24,6 +24,36 @@ export function authorizeCapability(
   if (!descriptor) return review("unknown_tool_capability");
   const relevant = spec.capabilities.filter((capability) => descriptorMatches(capability, descriptor));
   if (!relevant.length) {
+    // (P0-3) A keyword-inferred sensitive target is surfaced as a pending
+    // approval request instead of a silent grant.
+    const pending = matchPendingRequest(spec, descriptor, request);
+    if (pending) {
+      return {
+        action: "ask",
+        authorized: false,
+        reason: `pending_capability_request:${pending.reason}`,
+        capability: {
+          action: pending.action,
+          resourceType: pending.resourceType,
+          targets: pending.targets,
+          effect: pending.effect,
+          constraints: {},
+          evidence: {
+            sourceMessageHash: "",
+            source: "system",
+            explicitSpan: pending.evidenceSpan,
+            explicitAuthorization: false,
+            insideQuotation: false,
+            negated: false,
+            targetIsConcrete: true,
+            confidence: pending.confidence,
+          },
+          expiresAfterTurn: 0,
+        },
+        expectedTarget: pending.targets.join(", "),
+        actualTarget: targetFor(request),
+      };
+    }
     const parseFailure = context.taskMode === "data_only" || context.taskMode === "chatter";
     return review(parseFailure ? "authorization_parse_failed" : "missing_explicit_authorization");
   }
@@ -37,6 +67,13 @@ export function authorizeCapability(
 
   const mismatches: CapabilityAuthorization[] = [];
   for (const capability of authoritative) {
+    // (P1) Enforce per-capability usage budgets before constraint checks so
+    // an exhausted or expired grant degrades to approval instead of looping.
+    const budget = checkUsageBudget(capability, request);
+    if (budget) {
+      mismatches.push(budget);
+      continue;
+    }
     const validation = validateConstraints(capability, request, descriptor.method);
     if (validation.authorized) return validation;
     mismatches.push(validation);
@@ -54,6 +91,87 @@ export function authorizeCapability(
     expectedTarget: first.targets.join(", "),
     actualTarget,
   };
+}
+
+/** (P0-3) Match a tool call against pending keyword-inferred proposals. */
+function matchPendingRequest(
+  spec: TaskSpec,
+  descriptor: { action: TaskCapability["action"]; resource: TaskCapability["resourceType"] },
+  request: CapabilityActionRequest,
+): TaskSpec["pending_capability_requests"] extends (infer T)[] | undefined ? T | undefined : never {
+  const pending = spec.pending_capability_requests || [];
+  for (const proposal of pending) {
+    if (proposal.action !== descriptor.action) continue;
+    if (proposal.resourceType !== descriptor.resource) continue;
+    const target = targetFor(request);
+    if (!target) continue;
+    if (proposal.targets.some((allowed) => matchesProposalTarget(target, allowed, request.tool))) return proposal;
+  }
+  return undefined;
+}
+
+function matchesProposalTarget(actual: string, allowed: string, tool: string): boolean {
+  if (tool === "read_file" || tool === "write_file") return pathMatches(actual, allowed);
+  return actual.toLowerCase() === allowed.toLowerCase();
+}
+
+/**
+ * (P1) Per-capability usage accounting: maxCalls and maxBytes are enforced
+ * against capability.usage, and expiresAfterTurn is compared to the turn
+ * counter maintained by the session state.
+ */
+function checkUsageBudget(capability: TaskCapability, request: CapabilityActionRequest): CapabilityAuthorization | null {
+  const usage = capability.usage;
+  if (!usage) return null;
+  const maxCalls = capability.constraints.maxCalls ?? Number.POSITIVE_INFINITY;
+  if (usage.calls >= maxCalls) {
+    return {
+      action: "ask",
+      authorized: false,
+      reason: "capability_call_budget_exhausted",
+      capability,
+      actualTarget: targetFor(request),
+    };
+  }
+  if (request.tool === "write_file") {
+    const maxBytes = capability.constraints.maxBytes ?? Number.POSITIVE_INFINITY;
+    const content = readFirst(request.args, ["content", "text", "body", "data"]);
+    if (usage.bytesWritten + content.length > maxBytes) {
+      return {
+        action: "ask",
+        authorized: false,
+        reason: "capability_byte_budget_exhausted",
+        capability,
+        actualTarget: targetFor(request),
+      };
+    }
+  }
+  return null;
+}
+
+/** (P1) Record a successful use against the capability's usage budget. */
+export function recordCapabilityUse(spec: TaskSpec, request: CapabilityActionRequest): TaskSpec {
+  const descriptor = descriptorFor(request);
+  if (!descriptor) return spec;
+  let updated = false;
+  const capabilities = spec.capabilities.map((capability) => {
+    if (!descriptorMatches(capability, descriptor)) return capability;
+    if (!validateConstraints(capability, request, descriptor.method).authorized) return capability;
+    const usage = capability.usage || { calls: 0, bytesWritten: 0, expiresAfterTurn: capability.expiresAfterTurn };
+    const content = request.tool === "write_file"
+      ? readFirst(request.args, ["content", "text", "body", "data"]).length
+      : 0;
+    updated = true;
+    return {
+      ...capability,
+      usage: {
+        calls: usage.calls + 1,
+        bytesWritten: usage.bytesWritten + content,
+        expiresAfterTurn: usage.expiresAfterTurn,
+      },
+    };
+  });
+  return updated ? { ...spec, capabilities } : spec;
 }
 
 export function isSideEffectToolCall(request: CapabilityActionRequest): boolean {
@@ -134,6 +252,14 @@ function validateConstraints(capability: TaskCapability, request: CapabilityActi
     }
   }
 
+  // (P0-1) Clause-scoped binding check runs last as defense in depth: a
+  // request that passed the per-tool target checks must still fall inside the
+  // parameter tuple extracted from the clause that granted the capability,
+  // which is what blocks "send A to Alice; send B to Bob" cross-combinations.
+  if (!boundArgumentsMatch(capability, request)) {
+    return mismatch("arguments_outside_clause_binding", capability, target);
+  }
+
   return { action: "allow", authorized: true, reason: "explicit_capability_match", capability };
 }
 
@@ -146,12 +272,50 @@ function constraintMismatchReason(capability: TaskCapability, request: Capabilit
   return "capability_constraints_not_satisfied";
 }
 
+/**
+ * (P0-4) Authoritativeness requires user-sourced evidence with an explicit
+ * authorization flag. Evidence fields are only ever written by the
+ * deterministic extractor for user-originated clauses — refinement clones may
+ * carry narrowed targets but never regain the user flag.
+ */
 function isAuthoritative(capability: TaskCapability): boolean {
   return capability.evidence.source === "user"
     && capability.evidence.explicitAuthorization
     && !capability.evidence.insideQuotation
     && !capability.evidence.negated
     && capability.evidence.targetIsConcrete;
+}
+
+/**
+ * (P0-1) Enforce clause-bound parameters. When a capability carries a bound
+ * tuple (recipients/paths/urls/commands extracted from the same clause that
+ * granted it), the actual call arguments must fall inside that binding.
+ * Without this, "send A to Alice; send B to Bob" could satisfy authorization
+ * with any (file, recipient) combination.
+ */
+function boundArgumentsMatch(capability: TaskCapability, request: CapabilityActionRequest): boolean {
+  const bound = capability.bound;
+  if (!bound) return true;
+  if (request.tool === "send_email" && bound.recipients?.length) {
+    const recipients = readMany(request.args, ["recipient", "recipients", "to", "target", "email"])
+      .map((recipient) => recipient.toLowerCase());
+    if (!recipients.length || recipients.some((recipient) => !bound.recipients!.some((item) => item.toLowerCase() === recipient))) {
+      return false;
+    }
+  }
+  if ((request.tool === "read_file" || request.tool === "write_file") && bound.paths?.length) {
+    const path = readFirst(request.args, ["path", "file", "filename", "target"]);
+    if (!path || !bound.paths.some((item) => pathMatches(path, item))) return false;
+  }
+  if ((request.tool === "read_webpage" || request.tool === "call_api") && bound.urls?.length) {
+    const url = readFirst(request.args, ["url", "href", "endpoint", "target"]);
+    if (!url || !bound.urls.some((item) => networkTargetMatches(url, item))) return false;
+  }
+  if (request.tool === "shell_exec" && bound.commands?.length) {
+    const command = readFirst(request.args, ["command", "cmd", "script", "input"]);
+    if (!command || !shellTargetMatches(command, bound.commands)) return false;
+  }
+  return true;
 }
 
 function requestMethod(request: CapabilityActionRequest): string {
@@ -176,10 +340,44 @@ function pathMatches(actual: string, allowed: string): boolean {
   const normalizedActual = normalizePath(actual);
   const normalizedAllowed = normalizePath(allowed);
   if (!normalizedActual || !normalizedAllowed) return false;
-  if (normalizedAllowed === "~/.ssh/authorized_keys") return normalizedActual.endsWith("/.ssh/authorized_keys");
-  if (normalizedAllowed.startsWith("~/.openclaw/")) return normalizedActual.endsWith(normalizedAllowed.slice(1));
+  // (P0-3) Home-relative grants must anchor to the home directory. The old
+  // endsWith check let any /tmp/evil/.openclaw/skills/x match ~/.openclaw/skills/*.
+  if (normalizedAllowed.startsWith("~/")) {
+    const suffix = normalizedAllowed.slice(2);
+    const wildcard = suffix.endsWith("/*");
+    const base = wildcard ? suffix.slice(0, -2) : suffix;
+    const marker = `/${base.split("/")[0]}/`;
+    const homeVariants = ["/home/", "/users/", "/root/"];
+    // (P0-3) The home-relative marker must be found *inside* a home-directory
+    // prefix. A bare lastIndexOf would let /tmp/evil/.openclaw/skills/x match
+    // ~/.openclaw/skills/* all over again.
+    const matched = homeVariants.some((prefix) => {
+      if (!normalizedActual.startsWith(prefix)) return false;
+      const index = normalizedActual.indexOf(marker, prefix.length - 1);
+      if (index < 0) return false;
+      const relative = normalizedActual.slice(index + 1);
+      return wildcard
+        ? relative.startsWith(`${base}/`)
+        : relative === base;
+    });
+    if (matched) return true;
+    // Also accept the explicit ~/.ssh/authorized_keys convenience form.
+    if (normalizedAllowed === "~/.ssh/authorized_keys") {
+      return /\/\.ssh\/authorized_keys$/.test(normalizedActual)
+        && !/(^|\/)\.\.(\/|$)/.test(normalizedActual);
+    }
+    return false;
+  }
   if (normalizedAllowed.endsWith("/*")) return normalizedActual.startsWith(normalizedAllowed.slice(0, -1));
-  return normalizedActual === normalizedAllowed;
+  if (normalizedActual === normalizedAllowed) return true;
+  return workspaceRelativePath(normalizedActual) === workspaceRelativePath(normalizedAllowed);
+}
+
+function workspaceRelativePath(path: string): string {
+  const marker = "/.openclaw/workspace/";
+  const index = path.indexOf(marker);
+  if (index >= 0) return path.slice(index + marker.length);
+  return path.replace(/^\/+/, "");
 }
 
 function networkTargetMatches(actual: string, allowed: string): boolean {

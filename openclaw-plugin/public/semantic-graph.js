@@ -836,13 +836,13 @@ function createDefinitions(traceKind, verdict) {
   for (const [name, color] of Object.entries(colors)) {
     const marker = document.createElementNS(SVG_NS, "marker");
     marker.setAttribute("id", `arrow-${name}`);
-    marker.setAttribute("markerWidth", "8");
-    marker.setAttribute("markerHeight", "8");
-    marker.setAttribute("refX", "7");
-    marker.setAttribute("refY", "4");
+    marker.setAttribute("markerWidth", "10");
+    marker.setAttribute("markerHeight", "10");
+    marker.setAttribute("refX", "8.5");
+    marker.setAttribute("refY", "5");
     marker.setAttribute("orient", "auto");
     const path = document.createElementNS(SVG_NS, "path");
-    path.setAttribute("d", "M0,0 L8,4 L0,8 Z");
+    path.setAttribute("d", "M0,0 L10,5 L0,10 Z");
     path.setAttribute("fill", color);
     marker.appendChild(path);
     defs.appendChild(marker);

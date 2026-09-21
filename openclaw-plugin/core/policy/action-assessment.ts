@@ -3,6 +3,7 @@ import { safeStringify } from "../redact.ts";
 import { sourceFromTool, type TaintSink, type TrustSource } from "../trust.ts";
 import { isLowRiskShellReadCommand, isSafeSystemReadPath } from "./safe-ops.ts";
 import { hostFromUrl, isLocalHost, readFirstString, unique } from "./value-utils.ts";
+import { isInsideOpenClawWorkspace, isTrustedWorkspaceContextPath } from "../workspace-context.ts";
 
 export type PolicyActionInput = {
   tool: string;
@@ -203,15 +204,17 @@ function isSensitivePathWithAssets(path: string, sensitiveAssets: string[]): boo
 
 function isPersistencePath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").toLowerCase();
+  if (isInsideOpenClawWorkspace(normalized) && !isTrustedWorkspaceContextPath(normalized)) return false;
   return /(^|\/)(memory\.md|agents\.md|soul\.md|user\.md|openclaw\.json|skill\.md)$/i.test(normalized)
     || /(^|\/)(cron\.d|systemd|startup|skills|launchagents|launchdaemons)(\/|$)/i.test(normalized)
     || /(^|\/)\.ssh\/(authorized_keys|config)$/i.test(normalized)
     || /(^|\/)(\.bashrc|\.zshrc|\.profile|microsoft\.powershell_profile\.ps1)$/i.test(normalized)
-    || normalized.includes("/.openclaw/");
+    || (normalized.includes("/.openclaw/") && !isInsideOpenClawWorkspace(normalized));
 }
 
 function isSystemMutationPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").toLowerCase();
+  if (isInsideOpenClawWorkspace(normalized) || isTrustedWorkspaceContextPath(normalized)) return false;
   return SYSTEM_MUTATION_PATH_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
