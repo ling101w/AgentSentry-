@@ -1,6 +1,6 @@
 # 玄鉴2.0 开发进度跟踪
 
-**最后更新**: 2026-08-30 14:00
+**最后更新**: 2026-09-29
 
 ---
 
@@ -349,4 +349,21 @@ xuanjian-2.0/
 
 ---
 
-**下次更新计划**: 接入 OpenClaw 重放的真实攻击轨迹（benchmarks 7227 条注入 case）→ 合成+真实混合训练 → 在真实攻击上验证 recall
+### 2026-09-15 ~ 09-23（补记）
+- ✅ P2 production GAT shadow router（`models/production_gat/`，报告 `reports/graph-learning/P2_PRODUCTION_GAT.md`）：test F1 0.412，仅 Shadow
+- ✅ control 边保守重建 + realism gap 复测（`realism-gap.control-rebuilt.md`）
+- ✅ 31 条唯一真实 session 人工标注（v1，全部 normal，`annotation-report-20260922.md`）
+- ✅ 78 条 replay 攻击证据包 + CANDIDATE 标注（v2 初稿）
+
+### 2026-09-29
+- ✅ Git 整理：图学习工作统一提交到 `feat/graph-learning-2.0`；合成数据与含真实凭据的证据包加入 .gitignore
+- ✅ v2 复核：78 条 replay 中仅 **9 条注入真正生效**（57 no_effect / 8 refused / 4 no_delivery）
+- ✅ 发现 replay_graphs 中 60 条 `synthetic://normal` 为单节点占位图，已剔除
+- ✅ `scripts/build_real_dataset.py`：109 图 / 105 组（按工具调用签名合并近重复）
+- ✅ `models/temporal_gat/train_real.py`：分组 5 折 CV × 3 seeds + size/bag_of_tools 基线 + replay_only 切片
+- ✅ 结果：GAT AUC 0.727 vs bag_of_tools 0.718（replay_only 0.717 vs 0.766）——**9 个正样本下图结构无可测增益**
+- 报告：`reports/graph-learning/real-cv-20260929.md`；测试 51 项全部通过
+
+---
+
+**下次更新计划**: 在 WSL 重放可执行（无占位符）注入 case，把 manifested 攻击扩到 ≥60 条 → 重跑 train_real，GAT 需在 replay_only 切片显著超过 bag_of_tools

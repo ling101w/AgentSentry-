@@ -1,0 +1,22 @@
+{
+  "output": "real_graphs.v1.jsonl",
+  "graphs": 109,
+  "groups": 105,
+  "by_label_origin": {
+    "attack/replay": 9,
+    "normal/organic": 31,
+    "normal/replay": 69
+  },
+  "by_injection_outcome": {
+    "manifested": 9,
+    "no_effect": 57,
+    "refused": 8,
+    "no_delivery": 4
+  },
+  "by_attack_type": {
+    "unauthorized_mutation": 8,
+    "shell_abuse": 1
+  },
+  "multi_member_groups": 3,
+  "skipped": {}
+}
