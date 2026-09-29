@@ -1,0 +1,177 @@
+{
+  "schema_version": "production-gat-training-v1",
+  "input": "..\\reports\\graph-learning\\production-graph-pilot-20260915.jsonl",
+  "seed": 42,
+  "model": {
+    "type": "relation_gat_router",
+    "hidden_dim": 48,
+    "layers": 2,
+    "parameters": 15141
+  },
+  "dataset": {
+    "rows": 370,
+    "sessions": 109,
+    "splits": {
+      "train": 271,
+      "val": 48,
+      "test": 51
+    }
+  },
+  "label_definition": "policy_outcome != allow; weak label only",
+  "calibration": {
+    "threshold": 0.40885886549949646,
+    "recall_floor": 0.95,
+    "validation": {
+      "threshold": 0.40885886549949646,
+      "precision": 0.5384615384615384,
+      "recall": 1.0,
+      "f1": 0.7000000000000001,
+      "accuracy": 0.75,
+      "tp": 14,
+      "fp": 12,
+      "fn": 0,
+      "tn": 22
+    }
+  },
+  "test": {
+    "threshold": 0.40885886549949646,
+    "precision": 0.23529411764705882,
+    "recall": 0.6666666666666666,
+    "f1": 0.3478260869565218,
+    "accuracy": 0.4117647058823529,
+    "tp": 8,
+    "fp": 26,
+    "fn": 4,
+    "tn": 13
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 1.0393533846911263,
+      "threshold": 0.40885886549949646,
+      "val": {
+        "threshold": 0.40885886549949646,
+        "precision": 0.5384615384615384,
+        "recall": 1.0,
+        "f1": 0.7000000000000001,
+        "accuracy": 0.75,
+        "tp": 14,
+        "fp": 12,
+        "fn": 0,
+        "tn": 22
+      }
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.995133308803334,
+      "threshold": 0.4132634401321411,
+      "val": {
+        "threshold": 0.4132634401321411,
+        "precision": 0.4,
+        "recall": 1.0,
+        "f1": 0.5714285714285715,
+        "accuracy": 0.5625,
+        "tp": 14,
+        "fp": 21,
+        "fn": 0,
+        "tn": 13
+      }
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.9758842867963454,
+      "threshold": 0.34876856207847595,
+      "val": {
+        "threshold": 0.34876856207847595,
+        "precision": 0.3783783783783784,
+        "recall": 1.0,
+        "f1": 0.5490196078431372,
+        "accuracy": 0.5208333333333334,
+        "tp": 14,
+        "fp": 23,
+        "fn": 0,
+        "tn": 11
+      }
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.9344857615583083,
+      "threshold": 0.3321581482887268,
+      "val": {
+        "threshold": 0.3321581482887268,
+        "precision": 0.3783783783783784,
+        "recall": 1.0,
+        "f1": 0.5490196078431372,
+        "accuracy": 0.5208333333333334,
+        "tp": 14,
+        "fp": 23,
+        "fn": 0,
+        "tn": 11
+      }
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.887138892622555,
+      "threshold": 0.35564014315605164,
+      "val": {
+        "threshold": 0.35564014315605164,
+        "precision": 0.4827586206896552,
+        "recall": 1.0,
+        "f1": 0.6511627906976745,
+        "accuracy": 0.6875,
+        "tp": 14,
+        "fp": 15,
+        "fn": 0,
+        "tn": 19
+      }
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.8448712369974922,
+      "threshold": 0.4,
+      "val": {
+        "threshold": 0.4,
+        "precision": 0.4827586206896552,
+        "recall": 1.0,
+        "f1": 0.6511627906976745,
+        "accuracy": 0.6875,
+        "tp": 14,
+        "fp": 15,
+        "fn": 0,
+        "tn": 19
+      }
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.8525431576897117,
+      "threshold": 0.45236101746559143,
+      "val": {
+        "threshold": 0.45236101746559143,
+        "precision": 0.5185185185185185,
+        "recall": 1.0,
+        "f1": 0.6829268292682926,
+        "accuracy": 0.7291666666666666,
+        "tp": 14,
+        "fp": 13,
+        "fn": 0,
+        "tn": 21
+      }
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.7896463169771082,
+      "threshold": 0.43144798278808594,
+      "val": {
+        "threshold": 0.43144798278808594,
+        "precision": 0.5185185185185185,
+        "recall": 1.0,
+        "f1": 0.6829268292682926,
+        "accuracy": 0.7291666666666666,
+        "tp": 14,
+        "fp": 13,
+        "fn": 0,
+        "tn": 21
+      }
+    }
+  ]
+}

@@ -1,0 +1,602 @@
+[
+  {
+    "graph_id": "openclaw_session_c38aed99-23d9-4bb5-9e76-4bb1f2c9fe87",
+    "risk_score": 0.0022,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "intent_1",
+        "prob": 0.0007
+      },
+      {
+        "node_id": "obs_1",
+        "prob": 0.0004
+      },
+      {
+        "node_id": "call_1",
+        "prob": 0.0004
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_0a208599-0293-4040-ae2d-0c20c4f777bf",
+    "risk_score": 0.0021,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_3",
+        "prob": 0.0014
+      },
+      {
+        "node_id": "call_2",
+        "prob": 0.0014
+      },
+      {
+        "node_id": "call_4",
+        "prob": 0.0014
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_37f4d737-3484-481c-9771-5b2a95f4bd00",
+    "risk_score": 0.0021,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "intent_1",
+        "prob": 0.0006
+      },
+      {
+        "node_id": "obs_1",
+        "prob": 0.0004
+      },
+      {
+        "node_id": "call_1",
+        "prob": 0.0004
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_9589223c-4517-4cc3-bac3-8e0d9e46b0ba",
+    "risk_score": 0.0021,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "intent_1",
+        "prob": 0.0006
+      },
+      {
+        "node_id": "call_1",
+        "prob": 0.0004
+      },
+      {
+        "node_id": "obs_1",
+        "prob": 0.0004
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_b8342b6a-6ab6-48aa-9f77-a1e4f3abb142",
+    "risk_score": 0.0021,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "intent_1",
+        "prob": 0.0006
+      },
+      {
+        "node_id": "obs_1",
+        "prob": 0.0004
+      },
+      {
+        "node_id": "call_1",
+        "prob": 0.0004
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_c51a20fa-5c37-4091-b170-e1e36cfb18f0",
+    "risk_score": 0.0021,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "intent_1",
+        "prob": 0.0006
+      },
+      {
+        "node_id": "obs_1",
+        "prob": 0.0004
+      },
+      {
+        "node_id": "call_1",
+        "prob": 0.0004
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_d2bf4fe5-b967-440a-8978-b27d9882fe87",
+    "risk_score": 0.0021,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "intent_1",
+        "prob": 0.0006
+      },
+      {
+        "node_id": "call_1",
+        "prob": 0.0005
+      },
+      {
+        "node_id": "obs_1",
+        "prob": 0.0004
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_6dc03c59-2dd6-44b3-bb2a-0de31d8f0cea",
+    "risk_score": 0.002,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "intent_1",
+        "prob": 0.0007
+      },
+      {
+        "node_id": "obs_1",
+        "prob": 0.0005
+      },
+      {
+        "node_id": "call_1",
+        "prob": 0.0004
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_ac7222b9-1687-4cf9-8a5c-ceada29a4a4b",
+    "risk_score": 0.002,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_2",
+        "prob": 0.0023
+      },
+      {
+        "node_id": "call_3",
+        "prob": 0.0023
+      },
+      {
+        "node_id": "call_4",
+        "prob": 0.0022
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_d2b561f9-5900-42d5-b886-51e8b74d7bd7",
+    "risk_score": 0.002,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "intent_1",
+        "prob": 0.0006
+      },
+      {
+        "node_id": "call_1",
+        "prob": 0.0005
+      },
+      {
+        "node_id": "obs_1",
+        "prob": 0.0004
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_186d5a52-c8d8-44bf-84b5-7c6f259de00b",
+    "risk_score": 0.0016,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_6",
+        "prob": 0.0014
+      },
+      {
+        "node_id": "call_4",
+        "prob": 0.0012
+      },
+      {
+        "node_id": "call_5",
+        "prob": 0.0012
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_0a3b983b-4579-466c-acab-d48adca581e6",
+    "risk_score": 0.0015,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_2",
+        "prob": 0.0025
+      },
+      {
+        "node_id": "call_3",
+        "prob": 0.0024
+      },
+      {
+        "node_id": "call_4",
+        "prob": 0.0023
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_af24853c-8b20-4656-a5c1-a61ff6dc0625",
+    "risk_score": 0.0015,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_4",
+        "prob": 0.0023
+      },
+      {
+        "node_id": "call_3",
+        "prob": 0.0023
+      },
+      {
+        "node_id": "call_2",
+        "prob": 0.0023
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_b21fc60d-1378-4f4b-9449-325dd8355855",
+    "risk_score": 0.0015,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_6",
+        "prob": 0.0013
+      },
+      {
+        "node_id": "call_4",
+        "prob": 0.0012
+      },
+      {
+        "node_id": "call_5",
+        "prob": 0.0012
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_d02521b2-0192-4a94-a7a0-9ea60456091c",
+    "risk_score": 0.0015,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_2",
+        "prob": 0.0034
+      },
+      {
+        "node_id": "call_3",
+        "prob": 0.0033
+      },
+      {
+        "node_id": "call_4",
+        "prob": 0.0031
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_2096a051-bd1f-4141-b604-dcb198855288",
+    "risk_score": 0.0012,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_202",
+        "prob": 0.0032
+      },
+      {
+        "node_id": "call_196",
+        "prob": 0.0031
+      },
+      {
+        "node_id": "call_194",
+        "prob": 0.003
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_cf46f6bb-aa23-47e5-af91-85b085e1d83d",
+    "risk_score": 0.0011,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_246",
+        "prob": 0.0049
+      },
+      {
+        "node_id": "call_223",
+        "prob": 0.0044
+      },
+      {
+        "node_id": "call_241",
+        "prob": 0.0043
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_116dd195-a334-46ba-86a3-b2a4af33d0e6",
+    "risk_score": 0.001,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_5",
+        "prob": 0.0016
+      },
+      {
+        "node_id": "call_6",
+        "prob": 0.0014
+      },
+      {
+        "node_id": "call_4",
+        "prob": 0.0013
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_21e54d9c-cecd-41d5-b8b5-9bc35375d18d",
+    "risk_score": 0.001,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_37",
+        "prob": 0.0031
+      },
+      {
+        "node_id": "call_38",
+        "prob": 0.0029
+      },
+      {
+        "node_id": "call_9",
+        "prob": 0.0026
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_78a57ff6-cd8c-4111-a8bd-5dac9fcd5d97",
+    "risk_score": 0.001,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_2",
+        "prob": 0.002
+      },
+      {
+        "node_id": "call_3",
+        "prob": 0.0017
+      },
+      {
+        "node_id": "call_4",
+        "prob": 0.0014
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_97d8670c-42e7-4e91-a846-69e7e41c6958",
+    "risk_score": 0.001,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_19",
+        "prob": 0.0036
+      },
+      {
+        "node_id": "call_16",
+        "prob": 0.0031
+      },
+      {
+        "node_id": "call_17",
+        "prob": 0.0028
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_f2311907-3db9-4e85-bb54-3af70663358b",
+    "risk_score": 0.001,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_3",
+        "prob": 0.0025
+      },
+      {
+        "node_id": "call_2",
+        "prob": 0.0018
+      },
+      {
+        "node_id": "intent_1",
+        "prob": 0.0007
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_c999d9ac-a313-49d8-9537-9ec234ca9669",
+    "risk_score": 0.0009,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_30",
+        "prob": 0.0036
+      },
+      {
+        "node_id": "call_36",
+        "prob": 0.0034
+      },
+      {
+        "node_id": "call_35",
+        "prob": 0.003
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_ee5bed0b-94cd-4219-aabc-ce1a38a05c2b",
+    "risk_score": 0.0009,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_4",
+        "prob": 0.0035
+      },
+      {
+        "node_id": "call_3",
+        "prob": 0.0031
+      },
+      {
+        "node_id": "call_2",
+        "prob": 0.0025
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_03cb0f3c-aaf5-4578-b1ad-af2b97f2c64a",
+    "risk_score": 0.0008,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_63",
+        "prob": 0.0042
+      },
+      {
+        "node_id": "call_69",
+        "prob": 0.0036
+      },
+      {
+        "node_id": "call_70",
+        "prob": 0.0036
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_0f4de1ac-1a15-452e-ac1a-e733785b3a57",
+    "risk_score": 0.0008,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_2",
+        "prob": 0.0016
+      },
+      {
+        "node_id": "call_3",
+        "prob": 0.0011
+      },
+      {
+        "node_id": "intent_1",
+        "prob": 0.0006
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_37e4f164-6ae9-4163-9e54-2e791c862f66",
+    "risk_score": 0.0008,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_17",
+        "prob": 0.0034
+      },
+      {
+        "node_id": "call_16",
+        "prob": 0.0031
+      },
+      {
+        "node_id": "call_13",
+        "prob": 0.0026
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_6e69110d-4076-48f7-b6dc-591817e33bd9",
+    "risk_score": 0.0008,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_224",
+        "prob": 0.0038
+      },
+      {
+        "node_id": "call_225",
+        "prob": 0.0038
+      },
+      {
+        "node_id": "call_226",
+        "prob": 0.0038
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_8eab5cab-f3b2-454a-859d-6ce4d595b527",
+    "risk_score": 0.0008,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_2",
+        "prob": 0.0036
+      },
+      {
+        "node_id": "call_3",
+        "prob": 0.0032
+      },
+      {
+        "node_id": "call_4",
+        "prob": 0.0031
+      }
+    ]
+  },
+  {
+    "graph_id": "openclaw_session_14c7be22-2efa-47b5-983f-7a80318e331a",
+    "risk_score": 0.0007,
+    "label_in_file": "unknown",
+    "attack_type_in_file": null,
+    "top_nodes": [
+      {
+        "node_id": "call_65",
+        "prob": 0.0035
+      },
+      {
+        "node_id": "call_66",
+        "prob": 0.0035
+      },
+      {
+        "node_id": "call_67",
+        "prob": 0.0035
+      }
+    ]
+  }
+]

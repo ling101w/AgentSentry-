@@ -1,0 +1,891 @@
+{
+  "checkpoint": "checkpoints_v2/best_model.pth",
+  "vocab_size": {
+    "tools": 27,
+    "tasks": 8
+  },
+  "risk_threshold": 0.5,
+  "input": "data/openclaw/wsl_sessions_scripted.jsonl",
+  "summary": {
+    "total_graphs": 30,
+    "flagged": 0,
+    "with_root_attribution": 0
+  },
+  "latency": {
+    "batches": 1,
+    "total_ms": 51.32,
+    "ms_per_graph": 1.7107
+  },
+  "reports": [
+    {
+      "graph_id": "openclaw_session_03cb0f3c-aaf5-4578-b1ad-af2b97f2c64a",
+      "graph_risk": 0.019,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0178
+        },
+        {
+          "node_id": "obs_52",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0104
+        },
+        {
+          "node_id": "obs_50",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0103
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_0a208599-0293-4040-ae2d-0c20c4f777bf",
+      "graph_risk": 0.0298,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "call_4",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0139
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0134
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_0a3b983b-4579-466c-acab-d48adca581e6",
+      "graph_risk": 0.0296,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "call_4",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0183
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.018
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_0f4de1ac-1a15-452e-ac1a-e733785b3a57",
+      "graph_risk": 0.0193,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0138
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0109
+        },
+        {
+          "node_id": "obs_2",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0085
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_116dd195-a334-46ba-86a3-b2a4af33d0e6",
+      "graph_risk": 0.0239,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0176
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "sessions_list",
+          "prob": 0.0131
+        },
+        {
+          "node_id": "call_3",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0127
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_14c7be22-2efa-47b5-983f-7a80318e331a",
+      "graph_risk": 0.0186,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0176
+        },
+        {
+          "node_id": "call_55",
+          "node_type": "tool_call",
+          "tool_name": "process",
+          "prob": 0.0117
+        },
+        {
+          "node_id": "call_54",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0115
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_186d5a52-c8d8-44bf-84b5-7c6f259de00b",
+      "graph_risk": 0.0223,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0138
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0119
+        },
+        {
+          "node_id": "call_3",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0116
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_2096a051-bd1f-4141-b604-dcb198855288",
+      "graph_risk": 0.0212,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0176
+        },
+        {
+          "node_id": "call_144",
+          "node_type": "tool_call",
+          "tool_name": "browser",
+          "prob": 0.0112
+        },
+        {
+          "node_id": "call_141",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0111
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_21e54d9c-cecd-41d5-b8b5-9bc35375d18d",
+      "graph_risk": 0.0188,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0178
+        },
+        {
+          "node_id": "call_20",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0118
+        },
+        {
+          "node_id": "call_5",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0117
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_37e4f164-6ae9-4163-9e54-2e791c862f66",
+      "graph_risk": 0.0204,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0176
+        },
+        {
+          "node_id": "call_8",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0107
+        },
+        {
+          "node_id": "call_11",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0107
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_37f4d737-3484-481c-9771-5b2a95f4bd00",
+      "graph_risk": 0.0256,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0138
+        },
+        {
+          "node_id": "obs_1",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0078
+        },
+        {
+          "node_id": "call_1",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0066
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_6dc03c59-2dd6-44b3-bb2a-0de31d8f0cea",
+      "graph_risk": 0.0269,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "obs_1",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0077
+        },
+        {
+          "node_id": "call_1",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0069
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_6e69110d-4076-48f7-b6dc-591817e33bd9",
+      "graph_risk": 0.0162,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0176
+        },
+        {
+          "node_id": "call_30",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0116
+        },
+        {
+          "node_id": "call_28",
+          "node_type": "tool_call",
+          "tool_name": "process",
+          "prob": 0.0114
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_78a57ff6-cd8c-4111-a8bd-5dac9fcd5d97",
+      "graph_risk": 0.0254,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "call_4",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0129
+        },
+        {
+          "node_id": "call_3",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0089
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_8eab5cab-f3b2-454a-859d-6ce4d595b527",
+      "graph_risk": 0.0242,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0176
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0083
+        },
+        {
+          "node_id": "call_4",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0081
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_9589223c-4517-4cc3-bac3-8e0d9e46b0ba",
+      "graph_risk": 0.0256,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0138
+        },
+        {
+          "node_id": "obs_1",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0078
+        },
+        {
+          "node_id": "call_1",
+          "node_type": "tool_call",
+          "tool_name": "write",
+          "prob": 0.0066
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_97d8670c-42e7-4e91-a846-69e7e41c6958",
+      "graph_risk": 0.022,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0132
+        },
+        {
+          "node_id": "call_11",
+          "node_type": "tool_call",
+          "tool_name": "process",
+          "prob": 0.0127
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.012
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_ac7222b9-1687-4cf9-8a5c-ceada29a4a4b",
+      "graph_risk": 0.0431,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "call_3",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0184
+        },
+        {
+          "node_id": "call_4",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0177
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_af24853c-8b20-4656-a5c1-a61ff6dc0625",
+      "graph_risk": 0.0293,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "call_5",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0159
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0157
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_b21fc60d-1378-4f4b-9449-325dd8355855",
+      "graph_risk": 0.0215,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0138
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0118
+        },
+        {
+          "node_id": "call_3",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0115
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_b8342b6a-6ab6-48aa-9f77-a1e4f3abb142",
+      "graph_risk": 0.0256,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0138
+        },
+        {
+          "node_id": "obs_1",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0078
+        },
+        {
+          "node_id": "call_1",
+          "node_type": "tool_call",
+          "tool_name": "write",
+          "prob": 0.0066
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_c38aed99-23d9-4bb5-9e76-4bb1f2c9fe87",
+      "graph_risk": 0.0281,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "obs_1",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0078
+        },
+        {
+          "node_id": "call_1",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0068
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_c51a20fa-5c37-4091-b170-e1e36cfb18f0",
+      "graph_risk": 0.0256,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0138
+        },
+        {
+          "node_id": "obs_1",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0078
+        },
+        {
+          "node_id": "call_1",
+          "node_type": "tool_call",
+          "tool_name": "write",
+          "prob": 0.0066
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_c999d9ac-a313-49d8-9537-9ec234ca9669",
+      "graph_risk": 0.0221,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0178
+        },
+        {
+          "node_id": "call_26",
+          "node_type": "tool_call",
+          "tool_name": "write",
+          "prob": 0.0109
+        },
+        {
+          "node_id": "call_27",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0109
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_cf46f6bb-aa23-47e5-af91-85b085e1d83d",
+      "graph_risk": 0.0195,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0176
+        },
+        {
+          "node_id": "call_242",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0123
+        },
+        {
+          "node_id": "call_205",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0121
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_d02521b2-0192-4a94-a7a0-9ea60456091c",
+      "graph_risk": 0.0294,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "call_4",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.018
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0175
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_d2b561f9-5900-42d5-b886-51e8b74d7bd7",
+      "graph_risk": 0.025,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0138
+        },
+        {
+          "node_id": "obs_1",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0077
+        },
+        {
+          "node_id": "call_1",
+          "node_type": "tool_call",
+          "tool_name": "apply_patch",
+          "prob": 0.007
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_d2bf4fe5-b967-440a-8978-b27d9882fe87",
+      "graph_risk": 0.0254,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0138
+        },
+        {
+          "node_id": "obs_1",
+          "node_type": "observation",
+          "tool_name": null,
+          "prob": 0.0077
+        },
+        {
+          "node_id": "call_1",
+          "node_type": "tool_call",
+          "tool_name": "write",
+          "prob": 0.0067
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_ee5bed0b-94cd-4219-aabc-ce1a38a05c2b",
+      "graph_risk": 0.0285,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "call_3",
+          "node_type": "tool_call",
+          "tool_name": "read",
+          "prob": 0.0113
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "exec",
+          "prob": 0.0106
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    },
+    {
+      "graph_id": "openclaw_session_f2311907-3db9-4e85-bb54-3af70663358b",
+      "graph_risk": 0.0233,
+      "verdict": "clean",
+      "top_nodes": [
+        {
+          "node_id": "intent_1",
+          "node_type": "intent",
+          "tool_name": null,
+          "prob": 0.0201
+        },
+        {
+          "node_id": "call_2",
+          "node_type": "tool_call",
+          "tool_name": "gateway",
+          "prob": 0.0186
+        },
+        {
+          "node_id": "call_3",
+          "node_type": "tool_call",
+          "tool_name": "gateway",
+          "prob": 0.0108
+        }
+      ],
+      "paths": [],
+      "traces": [],
+      "label_in_file": "unknown",
+      "attack_type_in_file": null
+    }
+  ]
+}

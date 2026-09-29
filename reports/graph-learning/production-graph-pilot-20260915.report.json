@@ -1,0 +1,27 @@
+{
+  "schema_version": "graph-learning-pilot-report-v1",
+  "generated_at": "2026-09-15T10:42:04.917Z",
+  "source": "E:\\cslearn\\AgentSentry\\xuanjian\\AgentSentry\\reports\\graph-learning\\production-graph-pilot-20260915.jsonl",
+  "rows_read": 370,
+  "rows_exported": 370,
+  "invalid_rows": 0,
+  "node_count": {
+    "min": 4,
+    "mean": 18.05,
+    "max": 40
+  },
+  "edge_count": {
+    "min": 2,
+    "mean": 17.32,
+    "max": 40
+  },
+  "projection_truncated": 80,
+  "truncation_rate": 0.2162,
+  "weak_label_distribution": {
+    "allow": 282,
+    "review": 4,
+    "block": 84
+  },
+  "input_forbidden_key_matches": 0,
+  "quality_gate": "pass"
+}

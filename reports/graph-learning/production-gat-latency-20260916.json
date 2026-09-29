@@ -1,0 +1,20 @@
+{
+  "schema_version": "production-gat-latency-v1",
+  "device": "cpu",
+  "rows": 370,
+  "model_parameters": 15123,
+  "warmup": 10,
+  "latency_ms": {
+    "mean": 1.7180132432406174,
+    "median": 1.68759999996837,
+    "p95": 2.195379999193392,
+    "p99": 2.637142000821769,
+    "max": 3.7259000000631204
+  },
+  "profile": {
+    "nodes_mean": 18.05135135135135,
+    "edges_mean": 17.318918918918918,
+    "nodes_max": 40,
+    "edges_max": 40
+  }
+}

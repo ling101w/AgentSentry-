@@ -1,0 +1,148 @@
+{
+  "synthetic": {
+    "graph_count": 1000,
+    "node_count": {
+      "mean": 8.57,
+      "median": 8.5,
+      "min": 3,
+      "max": 14
+    },
+    "edge_count": {
+      "mean": 10.27,
+      "median": 10.0,
+      "min": 2,
+      "max": 18
+    },
+    "tool_vocab_size": 26,
+    "task_vocab_size": 7,
+    "tools_sample": [
+      "analyze_data",
+      "check_style",
+      "create_event",
+      "delete_file",
+      "filter_lines",
+      "format_result",
+      "generate_report",
+      "post_comment",
+      "read_calendar",
+      "read_code",
+      "read_email",
+      "read_file",
+      "read_log",
+      "read_memory",
+      "reply_user"
+    ],
+    "tasks_sample": [
+      "calendar_management",
+      "code_review",
+      "email_summary",
+      "file_processing",
+      "log_analysis",
+      "memory_management",
+      "web_search"
+    ],
+    "trust_distribution": {
+      "high (>0.7)": 1553,
+      "medium (0.4-0.7)": 1229,
+      "low (<0.4)": 5792,
+      "total": 8574
+    },
+    "source_distribution": {
+      "none": 4576,
+      "user": 1332,
+      "observation": 200,
+      "system": 2466
+    },
+    "node_type_distribution": {
+      "intent": 1000,
+      "tool_call": 3998,
+      "observation": 3279,
+      "entity": 297
+    },
+    "edge_type_distribution": {
+      "intent_drives": 1000,
+      "data_derivation": 3576,
+      "call_sequence": 2998,
+      "control_influence": 200,
+      "data_dependency": 2498
+    },
+    "dangerous_tool_total": 293,
+    "control_influence_total": 200
+  },
+  "real_wsl": {
+    "graph_count": 30,
+    "node_count": {
+      "mean": 75.73,
+      "median": 9.0,
+      "min": 3,
+      "max": 546
+    },
+    "edge_count": {
+      "mean": 108.5,
+      "median": 10.5,
+      "min": 2,
+      "max": 802
+    },
+    "tool_vocab_size": 14,
+    "task_vocab_size": 5,
+    "tools_sample": [
+      "apply_patch",
+      "browser",
+      "cron",
+      "edit",
+      "exec",
+      "gateway",
+      "memory_search",
+      "process",
+      "read",
+      "sessions_list",
+      "sessions_spawn",
+      "web_fetch",
+      "web_search",
+      "write"
+    ],
+    "tasks_sample": [
+      "code_review",
+      "email_summary",
+      "file_processing",
+      "unknown",
+      "web_search"
+    ],
+    "trust_distribution": {
+      "high (>0.7)": 0,
+      "medium (0.4-0.7)": 1047,
+      "low (<0.4)": 1225,
+      "total": 2272
+    },
+    "source_distribution": {
+      "none": 1201,
+      "system": 1071
+    },
+    "node_type_distribution": {
+      "intent": 30,
+      "tool_call": 1071,
+      "observation": 1052,
+      "entity": 119
+    },
+    "edge_type_distribution": {
+      "intent_drives": 30,
+      "data_derivation": 1171,
+      "call_sequence": 1041,
+      "data_dependency": 1013
+    },
+    "dangerous_tool_total": 0,
+    "control_influence_total": 0
+  },
+  "overlap": {
+    "tools_overlap_count": 0,
+    "tools_overlap_pct": 0.0,
+    "tasks_overlap_count": 4,
+    "tasks_overlap_pct": 50.0
+  },
+  "implications": [
+    "Synthetic graph size is ~7-12 nodes; real OpenClaw sessions scale to 100s of nodes (mean 8.6 synthetic vs larger for real), so synthetic cannot model the long-horizon tool chains in real sessions.",
+    "Synthetic trust distribution is uniform across (high/medium/low); real sessions are dominated by trust=medium (system observations) — the model cannot learn low-trust signals from current synthetic mix.",
+    "Tool vocab overlap is small (<10%); with the OOV bucket fix the model now has a non-zero signal for unseen tools, but the structural features (control_influence edges, call_sequence chains) must carry the load. Synthetic emits control_influence almost exclusively on attack graphs (0.0 trust edges), which makes synthetic distribution trivially separable — model accuracy of 1.000 is misleading.",
+    "Real graphs have ~0 control_influence edges in the current parser output (the prior fix added a fallback heuristic when source=observation is missing, but real OpenClaw logs still lack the explicit control_influence edge type). Need a stronger classifier for 'observation drove dangerous tool' that doesn't depend on edge-type labels."
+  ]
+}
