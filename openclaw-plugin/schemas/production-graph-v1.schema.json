@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentsentry.local/schemas/production-graph-v1.schema.json",
+  "title": "AgentSentry production graph learning input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "current_action", "context", "graph"],
+  "properties": {
+    "schema_version": { "const": "production-graph-v1" },
+    "current_action": { "type": "string", "pattern": "^n[0-9]+$" },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_mode", "task_family", "active_capability_count"],
+      "properties": {
+        "task_mode": { "enum": ["new_task", "task_continuation", "preference", "confirmation", "data_only", "chatter", "unknown"] },
+        "task_family": { "enum": ["analysis", "read_only", "write_task", "delivery", "memory", "shell", "mixed", "unknown"] },
+        "active_capability_count": { "type": "integer", "minimum": 0, "maximum": 10000 }
+      }
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["directed", "original_node_count", "original_edge_count", "projection_truncated", "nodes", "edges"],
+      "properties": {
+        "directed": { "const": true },
+        "original_node_count": { "type": "integer", "minimum": 1 },
+        "original_edge_count": { "type": "integer", "minimum": 0 },
+        "projection_truncated": { "type": "boolean" },
+        "nodes": {
+          "type": "array",
+          "maxItems": 40,
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "edges": {
+          "type": "array",
+          "maxItems": 40,
+          "items": { "$ref": "#/$defs/edge" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "sequence_offset", "in_degree", "out_degree", "current_action", "active_intent", "active_capability", "tool_family", "tool_bucket", "auth_state", "sink_effect", "source_class", "confidentiality", "integrity", "transformation_count", "opaque_transform", "capability_action", "capability_resource", "capability_effect"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^n[0-9]+$" },
+        "kind": { "enum": ["intent", "capability", "action", "data", "sink"] },
+        "sequence_offset": { "type": "integer", "minimum": -10000, "maximum": 10000 },
+        "in_degree": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "out_degree": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "current_action": { "type": "boolean" },
+        "active_intent": { "type": "boolean" },
+        "active_capability": { "type": "boolean" },
+        "tool_family": { "enum": ["read", "write", "network", "delivery", "execution", "memory", "agent", "other", "none"] },
+        "tool_bucket": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "auth_state": { "enum": ["authorized", "unauthorized", "unknown"] },
+        "sink_effect": { "enum": ["external", "persistent", "execution", "sensitive_read", "write", "unknown", "none"] },
+        "source_class": { "enum": ["user", "system", "workspace", "tool_result", "external", "memory", "webhook", "agent", "unknown", "none"] },
+        "confidentiality": { "enum": ["public", "internal", "secret", "none"] },
+        "integrity": { "enum": ["trusted", "untrusted", "tainted", "none"] },
+        "transformation_count": { "type": "integer", "minimum": 0, "maximum": 32 },
+        "opaque_transform": { "type": "boolean" },
+        "capability_action": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$|^none$|^other$" },
+        "capability_resource": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$|^none$|^other$" },
+        "capability_effect": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$|^none$|^other$" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "target", "kind", "basis", "confidence", "sequence_offset", "argument_binding", "match_kind"],
+      "properties": {
+        "source": { "type": "string", "pattern": "^n[0-9]+$" },
+        "target": { "type": "string", "pattern": "^n[0-9]+$" },
+        "kind": { "enum": ["declares", "governs", "authorizes", "constrains", "requests", "consumes", "produces", "derives", "targets"] },
+        "basis": { "enum": ["observed", "decoded", "conservative"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sequence_offset": { "type": "integer", "minimum": -10000, "maximum": 10000 },
+        "argument_binding": { "type": "boolean" },
+        "match_kind": { "enum": ["exact", "encoded_exact", "substring", "encoded_substring", "fuzzy", "encoded_fuzzy", "semantic", "none", "other"] }
+      }
+    }
+  }
+}
