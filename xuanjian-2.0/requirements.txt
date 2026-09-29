@@ -1,0 +1,39 @@
+# 玄鉴2.0 核心依赖
+
+# PyTorch 生态
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# 图学习
+torch-geometric>=2.3.0
+torch-scatter>=2.1.0
+torch-sparse>=0.6.0
+
+# 数据处理
+numpy>=1.24.0
+pandas>=2.0.0
+
+# 可视化
+networkx>=3.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Web服务（Sidecar）
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+
+# 工具
+tqdm>=4.65.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# 测试
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# 开发
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.4.0
