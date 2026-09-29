@@ -652,11 +652,6 @@ function dedupeCandidates(candidates: Candidate[]): Candidate[] {
   });
 }
 
-function mergeOptional(left?: string[], right?: string[]): string[] | undefined {
-  const merged = unique([...(left || []), ...(right || [])]);
-  return merged.length ? merged : undefined;
-}
-
 /** (P0-1) Constraint intersection: repeated grants only reaffirm, never widen. */
 function intersectOptional(left?: string[], right?: string[]): string[] | undefined {
   if (!left?.length) return right?.length ? [...right] : undefined;
