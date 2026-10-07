@@ -56,6 +56,7 @@ import {
 } from "./taint/provenance-graph.ts";
 import {
   authorizeCapability,
+  recordCapabilityUse,
   createAuthorizationState,
   deriveTaskSpecV2,
   updateAuthorizationState,
@@ -246,7 +247,7 @@ const TOOL_ALIASES: Array<[RegExp, string]> = [
   [/(shell|command|exec|terminal|powershell|cmd)/i, "shell_exec"],
 ];
 
-const HIGH_RISK_SINKS = new Set(["send_email", "call_api", "shell_exec", "memory_write"]);
+const HIGH_RISK_SINKS = new Set(["send_email", "call_api", "shell_exec", "memory_write", "calendar_write"]);
 const EXPLICIT_NO_EMAIL = ["do not email", "don't email", "no email", "不要发", "别发", "不要发送", "不要给任何人发"];
 
 export function createPolicyState(): PolicyState {
@@ -841,7 +842,10 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
   if (decision.findings.some((finding) => finding.layer === "Context Provenance" || finding.layer === "State Integrity")) {
     if (shouldMarkMainContextContaminated(decision.findings)) state.contaminated = true;
   }
-  if (decision.decision === "allow") updateBehaviorProfile(state, decision.action);
+  if (decision.decision === "allow") {
+    updateBehaviorProfile(state, decision.action);
+    if (decision.action.tool === "calendar_write") state.taskSpec = recordCapabilityUse(state.taskSpec, decision.action);
+  }
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, decision.risk_vector);
   mergeFindingTrust(state, decision.findings);
   state.dynamicSecurity = recordDynamicSecurityEvent(
@@ -2502,6 +2506,13 @@ function normalizeArgs(tool: string, params: Record<string, unknown>): Record<st
   }
   if (tool === "read_file" || tool === "write_file") {
     promote(args, "path", ["file", "filename", "target"]);
+    // AgentDojo's workspace file tools address fixtures by file_id. Keep the
+    // original id for audit/execution, but give policy a relative synthetic
+    // path so it never resolves the id as a host absolute path or reports a
+    // false workspace escape.
+    if (!readFirstString(args, ["path"]) && typeof args.file_id === "string" && args.file_id.trim()) {
+      args.path = `.agentsentry/agentdojo-files/${args.file_id.trim()}`;
+    }
   }
   if (tool === "write_file") {
     const patch = readFirstString(args, ["input", "patch", "diff"]);

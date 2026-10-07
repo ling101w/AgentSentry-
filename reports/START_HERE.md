@@ -8,7 +8,11 @@
 
 当前仓库和插件内部仍使用 `AgentSentry` 作为工程代码名，这是历史命名；展示、报告和答辩统一使用“玄鉴”。
 
-评测证据先读 `reports/EVALUATION_METHODOLOGY.md`：历史 520 + 320 条结果均为公开样例映射到 `/command-lab` 的开发回归，不是独立盲测，也不是 AgentDojo/InjecAgent 原生运行。
+评测证据先读 `reports/EVALUATION_METHODOLOGY.md`：历史 520 + 320 条结果是公开样例映射到 `/command-lab` 的开发回归；原生 AgentDojo 120 trials 和本次 18 条 API smoke 单独列出。完整结果盘点见 [benchmark-inventory-20261007](benchmark-inventory-20261007/README.md)。
+
+2026-10-07 已修正映射 benchmark 的判分，详见 [840 条结果复核](mapped-scoring-audit-20261007/README.md)。旧报告缺少逐步执行证据，不能继续以旧“100% 保护率”证明实际阻断；新版分别统计危险步骤检出、实际保护、正常步骤拒绝和任务完成。
+
+同日完成了新 API 的原生 AgentDojo development run：冻结 selection 120/120 成功，结果在 `runtime/native-qiaodao-agentdojo-retry-20261007/`；这是 dirty worktree 的完整开发记录，和 canonical 120-trial 结果分开引用。
 
 ## 先看哪几份
 

@@ -54,6 +54,7 @@ export type TaskSpecRefinementResult = {
 };
 
 const CANONICAL_TOOLS = [
+  "calendar_write",
   "read_webpage",
   "call_api",
   "read_file",
@@ -611,6 +612,7 @@ function targetIsConcrete(target: string): boolean {
 }
 
 function capabilityTools(capability: TaskCapability): string[] {
+  if (capability.resourceType === "calendar") return ["calendar_write"];
   if (capability.resourceType === "email") return ["send_email"];
   if (capability.resourceType === "file") return capability.action === "read" ? ["read_file"] : ["write_file"];
   if (capability.resourceType === "api") return capability.action === "read" ? ["read_webpage", "call_api"] : ["call_api"];

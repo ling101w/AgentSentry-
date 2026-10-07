@@ -81,6 +81,16 @@ async function handleRequest(request) {
   if (op === "start") {
     if (sessions.has(sessionId)) throw new Error("session already exists");
     const config = applySecurityProfile(new PluginConfig(), profile);
+    const enforcement = process.env.AGENTSENTRY_NATIVE_ENFORCEMENT || "block";
+    if (!["block", "observe"].includes(enforcement)) throw new Error("native enforcement must be block or observe");
+    config.enforcement.mode = enforcement;
+    if (process.env.AGENTSENTRY_NATIVE_JUDGE_BASE_URL) config.semantic.baseUrl = process.env.AGENTSENTRY_NATIVE_JUDGE_BASE_URL;
+    if (process.env.AGENTSENTRY_NATIVE_JUDGE_MODEL) config.semantic.model = process.env.AGENTSENTRY_NATIVE_JUDGE_MODEL;
+    if (process.env.AGENTSENTRY_NATIVE_JUDGE_TIMEOUT_MS) {
+      const timeout = Number(process.env.AGENTSENTRY_NATIVE_JUDGE_TIMEOUT_MS);
+      if (!Number.isFinite(timeout) || timeout < 100 || timeout > 60000) throw new Error("invalid native Judge timeout");
+      config.semantic.timeoutMs = timeout;
+    }
     if (process.env.AGENTSENTRY_NATIVE_DISABLE_JUDGE === "1") config.semantic.enabled = false;
     const state = createPolicyState();
     updateTaskSpec(state, [{ role: "user", content: payload.user_message }], config);
@@ -115,10 +125,13 @@ async function beforeTool(session, callId, payload) {
     : preliminary;
   const semanticJudgeCalled = preliminary.policy.deterministic_disposition === "ambiguous" && semanticFindings.length > 0;
   updateAfterDecision(session.state, detection.policy);
-  if (detection.decision === "allow") session.pending.set(callId, payload.tool_name);
+  const effectiveDecision = session.config.enforcement.mode === "observe" ? "allow" : detection.decision;
+  if (effectiveDecision === "allow") session.pending.set(callId, payload.tool_name);
 
   return {
-    decision: detection.decision,
+    decision: effectiveDecision,
+    policy_decision: detection.decision,
+    enforcement_mode: session.config.enforcement.mode,
     risk_score: detection.risk_score,
     deterministic_block: detection.policy.deterministic_block,
     normalized_tool: detection.policy.action.tool,
@@ -214,7 +227,7 @@ async function runSelfTest() {
   };
   const started = await handleRequest({ op: "start", session_id: sessionId, payload: basePayload });
   assert.equal(started.profile, "competition");
-  assert.equal(started.manifest_mapping_version, "1.0.0");
+  assert.equal(started.manifest_mapping_version, "1.1.0");
 
   const readDecision = await handleRequest({
     op: "before_tool",

@@ -122,3 +122,12 @@ def test_missing_optional_dependency_returns_setup_exit_without_model_access(mon
     monkeypatch.setattr(native, "load_agentdojo_api", missing)
     assert native.main(["--doctor"]) == 2
     assert "native-agentdojo" in capsys.readouterr().err
+
+
+def test_custom_provider_uses_default_tool_formatter_for_datetime_outputs():
+    source = Path("scripts/run_agentdojo_native.py").read_text(encoding="utf-8")
+    custom_start = source.index('if args.model == "openai-compatible":')
+    custom_end = source.index('    else:\n        try:', custom_start)
+    custom_branch = source[custom_start:custom_end]
+    assert "tool_output_format=None" in custom_branch
+    assert "tool_output_format=\"json\"" not in custom_branch
