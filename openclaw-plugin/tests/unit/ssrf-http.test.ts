@@ -38,7 +38,7 @@ describe("separate HTTP target and address permissions", () => {
     expect(isAddressAuthorized("10.2.2.3", url, options)).toBe(false);
     expect(isAddressAuthorized("fd12::1", url, options)).toBe(true);
     expect(isAddressAuthorized("fc12::1", url, options)).toBe(false);
-    for (const address of ["127.0.0.1", "::1", "169.254.169.254", "169.254.170.2", "100.100.100.200", "168.63.129.16", "fd00:ec2::254", "0.0.0.0", "fe80::1", "::ffff:127.0.0.1"]) {
+    for (const address of ["127.0.0.1", "::1", "169.254.169.254", "169.254.170.2", "100.100.100.200", "168.63.129.16", "fd00:ec2::254", "0.0.0.0", "fe80::1", "::ffff:127.0.0.1", "::ffff:168.63.129.16", "64:ff9b::a83f:8110", "2002:a83f:8110::1"]) {
       expect(isAddressAuthorized(address, url, { allowedPrivateCidrs: ["0.0.0.0/0", "::/0"], allowedHosts: ["internal.test"] })).toBe(false);
     }
     expect(isAddressAuthorized("10.1.2.3", url, { allowedPrivateCidrs: ["invalid", "10.0.0.0/999", "10.0.0.0/8/extra"] })).toBe(false);

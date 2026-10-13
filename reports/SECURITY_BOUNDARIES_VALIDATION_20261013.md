@@ -36,3 +36,5 @@ An independent evaluator must supply a holdout after release freeze. Samples aut
 The final evaluator maintenance change adds detector/evaluator source snapshots, before/after commit and clean-worktree checks, and model/Judge runtime configuration fingerprints. A retry may remain a development result but cannot become reportable when its source run was dirty, changed revision, used another model configuration/selection, or has no verifiable snapshots. Credentials are excluded from source and runtime configuration material. Native runner/protocol/calendar tests: 36 passed, including actual calendar tool contracts.
 
 The complete evaluation-protocol subset was rerun after runner hardening: 88 tests passed in 6.28 seconds.
+
+Final HTTP follow-up: metadata hard-deny checks also normalize embedded IPv4 addresses in IPv4-mapped/compatible IPv6, NAT64 and 6to4 forms. The six HTTP tests, scoped ESLint and typecheck passed after this change.

@@ -106,7 +106,14 @@ export function isAddressAuthorized(address: string, url: URL, options: SafeHttp
   const bytes = family === 6 ? ipv6Bytes(host) : null;
   // Link-local, unspecified, metadata and reserved ranges are never unlocked by CIDRs.
   const awsMetadataV6 = [0xfd, 0, 0x0e, 0xc2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0x54];
-  if (host === "100.100.100.200" || host === "168.63.129.16" || bytes?.every((value, index) => value === awsMetadataV6[index])) return false;
+  const embedsTailV4 = bytes && (
+    bytes.slice(0, 12).every((value) => value === 0)
+    || (bytes.slice(0, 10).every((value) => value === 0) && bytes[10] === 0xff && bytes[11] === 0xff)
+    || bytes.slice(0, 12).every((value, index) => value === [0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0][index])
+  );
+  const embeddedV4 = embedsTailV4 ? bytes!.slice(12).join(".")
+    : bytes && bytes[0] === 0x20 && bytes[1] === 2 ? bytes.slice(2, 6).join(".") : host;
+  if (embeddedV4 === "100.100.100.200" || embeddedV4 === "168.63.129.16" || bytes?.every((value, index) => value === awsMetadataV6[index])) return false;
   if (!isForbiddenIpAddress(host)) return true;
   const loopback = family === 4 ? host.startsWith("127.") : Boolean(bytes && bytes.slice(0, 15).every((value) => value === 0) && bytes[15] === 1);
   if (loopback) {
