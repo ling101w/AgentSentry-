@@ -277,14 +277,15 @@ describe("OpenClaw plugin hooks", () => {
       params: { command: "rm -rf /" },
     };
     const denied = await invoke(harness, "before_tool_call", dangerousEvent, denyContext);
-    expect(denied).toMatchObject({ requireApproval: { timeoutBehavior: "deny" } });
-    denied.requireApproval.onResolution("allow-always");
+    expect(denied).toMatchObject({ block: true });
+    expect(denied).not.toHaveProperty("requireApproval");
 
     const deniedAgain = await invoke(harness, "before_tool_call", {
       ...dangerousEvent,
       toolCallId: "tool-deny-2",
     }, denyContext);
-    expect(deniedAgain).toMatchObject({ requireApproval: { timeoutBehavior: "deny" } });
+    expect(deniedAgain).toMatchObject({ block: true });
+    expect(deniedAgain).not.toHaveProperty("requireApproval");
     await flushRecords();
 
     const decisions = readRecords(harness).filter((record) => record.type === "tool_decision");
@@ -320,6 +321,25 @@ describe("OpenClaw plugin hooks", () => {
     ]);
     expect((harness.command.handler({ args: "approvals status" }) as { text: string }).text).toContain("1 exact operation");
     expect(plugin.performanceMetrics.snapshot()).toMatchObject({ sample_count: 5 });
+  });
+
+  it("requires approval for ask in block mode and keeps observe non-enforcing", async () => {
+    for (const mode of ["block", "observe"]) {
+      const harness = createHarness({ enforcement: { mode } });
+      await harness.service.start();
+      const context = { sessionKey: `hooks:${mode}:ask`, workspaceDir: harness.stateDir };
+      await invoke(harness, "before_prompt_build", { messages: [{ role: "user", content: "Review project status." }] }, context);
+      const result = await invoke(harness, "before_tool_call", {
+        toolName: "write_file", toolCallId: `ask-${mode}`, params: { path: "reports/unrequested.md", content: "status" },
+      }, context);
+      if (mode === "block") {
+        expect(result).toMatchObject({ requireApproval: { timeoutBehavior: "deny" } });
+        result.requireApproval.onResolution("allow-invalid");
+        await flushRecords();
+        expect(readRecords(harness).find((record) => record.type === "approval_resolution")?.severity).toBe("warning");
+      } else expect(result).toBeUndefined();
+      await harness.service.stop();
+    }
   });
 
   it("labels contaminated tool output, records runtime audit, and covers exactly one assistant response", async () => {
@@ -454,9 +474,9 @@ describe("OpenClaw plugin hooks", () => {
     const harness = createHarness();
     await harness.service.start();
     await invoke(harness, "before_tool_call", {
-      toolName: "read_webpage",
+      toolName: "write_file",
       toolCallId: "pending-lru-call",
-      params: { url: "https://vendor.example/report" },
+      params: { path: "reports/unrequested.md", content: "status" },
     }, {
       sessionKey: "hooks:lru:pending",
       workspaceDir: harness.stateDir,

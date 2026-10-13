@@ -11,7 +11,7 @@
 2. 当前参数是否实际使用了低可信或敏感数据？
 3. 这个动作是否越过确定性的安全边界？
 
-系统输出 `allow`、`ask` 或 `deny`。其中 `ask` 表示动作尚未放行，必须经过操作员审批；LLM Semantic Judge 只处理确定性规则无法判断的语义歧义，而且只能收紧、不能放宽确定性裁决。
+系统输出 `allow`、`ask` 或 `deny`。在 `approval` 和 `block` 执行模式下，`deny` 是不可人工覆盖的硬拒绝，`ask` 必须经过操作员审批，`allow` 才进入执行；`observe` 只记录裁决，不保证阻断。审计字段 `decision_kind` 区分 `hard_deny`、`approval_required` 和 `allow`，`enforcement_action` 记录实际执行方式。LLM Semantic Judge 只处理确定性规则无法判断的语义歧义，而且只能收紧、不能放宽确定性裁决。
 
 ## 核心架构
 
