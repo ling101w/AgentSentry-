@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { buildContentIndex, type ContentIndex } from "./content-index.ts";
 import {
   analyzeTrustContent,
   type RiskVector,
@@ -33,6 +34,7 @@ export type SemanticClaim = {
 
 export interface FieldProvenance extends DataProvenance {
   value: string;
+  contentIndex: ContentIndex;
   trustLabel: TrustLabel;
   riskVector: RiskVector;
   tags: string[];
@@ -69,6 +71,7 @@ export function extractFieldProvenance(input: {
       transformations: [],
       contentFingerprint,
       value: value.slice(0, input.previewChars),
+      contentIndex: buildContentIndex(value),
       trustLabel: analysis.label,
       riskVector: analysis.risk_vector,
       tags: analysis.tags,
@@ -89,9 +92,10 @@ export function transformProvenance(input: {
   path: string;
   transformation: string;
   content: unknown;
+  contentFingerprint?: string;
 }): DataProvenance {
   const content = stringifyLeaf(input.content);
-  const contentFingerprint = fingerprint(content);
+  const contentFingerprint = input.contentFingerprint || fingerprint(content);
   const confidentiality = maxConfidentiality(input.parents.map((item) => item.confidentiality));
   const integrity = minIntegrity(input.parents.map((item) => item.integrity));
   const transformations = Array.from(new Set([

@@ -1,0 +1,9 @@
+# Provenance matching evidence
+
+Display previews and content matching now have separate representations. A field retains its complete content fingerprint and a normalized full-content fingerprint; a bounded in-memory rolling-window index contains SHA-256 hashes of 64-character chunks sampled every 32 characters. Public provenance nodes and Judge context do not include this index or the complete source content. Full-output exact matches work beyond the preview; copied fragments of at least 96 characters can intersect the sampled index regardless of their starting offset.
+
+The index covers the first 256 Ki characters per field and reports truncation. Fragment matches remain conservative evidence requiring review, because shared content is not proof of causal use. Exact/decoded-exact matches have stronger evidence; the matcher searches all retained exposures before choosing an inference, so a recent topical match cannot hide an older exact source.
+
+Coarse financial/credential/privilege claims alone no longer link unrelated texts. Semantic linkage requires a shared non-generic token or an explicit subject reference, such as "this employee". This still represents inference, not verified transformation. References inside model/tool arguments do not establish trusted source IDs; existing execution-layer graph lineage remains the authority for transformations.
+
+Limitations: an unrelated same-person statement can still require review; Chinese named-entity matching is not implemented. Translation and abstractive summaries without trustworthy execution lineage remain unproven. Fragments shorter than the index window, arbitrary one-character fragmentation, content beyond the index limit, and exposures evicted from the session cannot be reliably correlated by this mechanism. Existing encodings and semantic review remain complementary signals, not completeness guarantees.

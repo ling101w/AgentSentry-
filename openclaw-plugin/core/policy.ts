@@ -66,6 +66,7 @@ import {
   type TaskSpec,
 } from "./task-spec/index.ts";
 import { resolveToolManifest, type ToolSecurityManifest } from "./tool-manifest.ts";
+import { contentHash, matchesIndexedChunk, normalizeIndexedText, type ContentIndex } from "./taint/content-index.ts";
 import {
   addRisk,
   analyzeTrustContent,
@@ -152,6 +153,7 @@ export type PolicyState = {
     label: Label;
     provenanceId?: string;
     semanticClaims?: SemanticClaim[];
+    contentIndex?: ContentIndex;
   }>;
   apiCallCounts: Map<string, number>;
   behaviorProfiles: Map<string, BehaviorProfile>;
@@ -1129,7 +1131,7 @@ export function labelToolResult(
         tags: unique([...field.tags, ...field.semanticClaims.flatMap((claim) => claim.tags)]),
         taint_profile: taintProfileFromLabel(field.trustLabel) || undefined,
       };
-      state.exposures.push({ source: fieldLabel.source, text: field.value, label: fieldLabel, provenanceId: field.id, semanticClaims: field.semanticClaims });
+      state.exposures.push({ source: fieldLabel.source, text: field.value, label: fieldLabel, provenanceId: field.id, semanticClaims: field.semanticClaims, contentIndex: field.contentIndex });
     }
   }
   const publicFields = fieldProvenance.map(publicProvenance);
@@ -1235,6 +1237,7 @@ function inheritResultProvenance(
       path: field.path,
       transformation: `tool:${normalizeToolName(toolName || "unknown_tool")}`,
       content: field.value,
+      contentFingerprint: field.contentFingerprint,
     });
     const confidentiality = strongerConfidentiality(field.confidentiality, derived.confidentiality);
     const integrity = weakerIntegrity(field.integrity, derived.integrity);
@@ -1247,7 +1250,7 @@ function inheritResultProvenance(
       confidentiality,
       integrity,
       transformations: [...derived.transformations],
-      contentFingerprint: derived.contentFingerprint,
+      contentFingerprint: field.contentFingerprint,
       trustLabel: inheritedExposure?.label.trust_label || field.trustLabel,
       riskVector: mergeRiskVectors(field.riskVector, inheritedRisk),
       tags: unique([...field.tags, ...(inheritedExposure?.label.tags || []), "derived_tool_output"]),
@@ -2864,9 +2867,21 @@ function matchExposure(text: string, exposures: PolicyState["exposures"]): { exp
   const normalizedVariants = exposureTextVariants(text);
   if (!normalizedVariants.length) return null;
   const targetClaims = semanticClaimsForValue({ value: text });
+  let inferred: { exposure: PolicyState["exposures"][number]; mode: string } | null = null;
   for (let exposureIndex = exposures.length - 1; exposureIndex >= 0; exposureIndex -= 1) {
     const exposure = exposures[exposureIndex];
     const candidateVariants = exposureTextVariants(exposure.text);
+    if (exposure.contentIndex) {
+      for (let variantIndex = 0; variantIndex < normalizedVariants.length; variantIndex++) {
+        const normalized = normalizeIndexedText(normalizedVariants[variantIndex]);
+        if (normalized.length >= 8 && contentHash(normalized) === exposure.contentIndex.normalizedHash) {
+          return { exposure, mode: variantIndex > 0 ? "encoded_exact" : "exact" };
+        }
+        if (matchesIndexedChunk(normalized, exposure.contentIndex)) {
+          if (!inferred || inferred.mode === "semantic_derivation") inferred = { exposure, mode: "fingerprint_chunk" };
+        }
+      }
+    }
     for (let textIndex = 0; textIndex < normalizedVariants.length; textIndex += 1) {
       const normalized = normalizedVariants[textIndex];
       for (let candidateIndex = 0; candidateIndex < candidateVariants.length; candidateIndex += 1) {
@@ -2874,20 +2889,32 @@ function matchExposure(text: string, exposures: PolicyState["exposures"]): { exp
         const minLength = Math.min(normalized.length, candidate.length);
         const transformed = textIndex > 0 || candidateIndex > 0;
         if (minLength >= 8 && normalized === candidate) {
+          if (exposure.contentIndex && exposure.contentIndex.normalizedLength > candidate.length) {
+            inferred ??= { exposure, mode: "substring" };
+            continue;
+          }
           return { exposure, mode: transformed ? "encoded_exact" : "exact" };
         }
         if (minLength >= 24 && (normalized.includes(candidate) || candidate.includes(normalized))) {
-          return { exposure, mode: transformed ? "encoded_substring" : "substring" };
+          if (!inferred || inferred.mode === "semantic_derivation") inferred = { exposure, mode: transformed ? "encoded_substring" : "substring" };
         }
         if (minLength >= 32 && similarity(normalized.slice(0, 1200), candidate.slice(0, 1200)) >= 0.82) {
-          return { exposure, mode: transformed ? "encoded_fuzzy" : "fuzzy" };
+          if (!inferred) inferred = { exposure, mode: transformed ? "encoded_fuzzy" : "fuzzy" };
         }
       }
     }
-    const semanticMatch = matchSemanticClaims(targetClaims, exposure.semanticClaims || []);
-    if (semanticMatch) return { exposure, mode: semanticMatch };
+    const semanticMatch = relatedSemanticSubject(text, exposure.text)
+      ? matchSemanticClaims(targetClaims, exposure.semanticClaims || []) : "";
+    if (semanticMatch && !inferred) inferred = { exposure, mode: semanticMatch };
   }
-  return null;
+  return inferred;
+}
+
+function relatedSemanticSubject(target: string, source: string): boolean {
+  if (/(该员工|该用户|该客户|此人|这位|this employee|that employee|this user|their salary)/iu.test(target)) return true;
+  const generic = new Set(["high", "income", "salary", "credential", "credentials", "private", "privileged", "material", "token", "secret", "password", "reference"]);
+  const sourceTokens = new Set(source.toLowerCase().match(/[a-z0-9_@.-]{4,}/g)?.filter((token) => !generic.has(token)) || []);
+  return (target.toLowerCase().match(/[a-z0-9_@.-]{4,}/g) || []).some((token) => !generic.has(token) && sourceTokens.has(token));
 }
 
 function provenanceEvidenceForMatch(mode: string): { basis: SemanticEvidenceBasis; confidence: number } {
@@ -2896,6 +2923,7 @@ function provenanceEvidenceForMatch(mode: string): { basis: SemanticEvidenceBasi
   if (mode === "substring") return { basis: "conservative", confidence: 0.9 };
   if (mode === "encoded_substring") return { basis: "conservative", confidence: 0.86 };
   if (mode === "fuzzy") return { basis: "conservative", confidence: 0.82 };
+  if (mode === "fingerprint_chunk") return { basis: "conservative", confidence: 0.9 };
   if (mode === "encoded_fuzzy") return { basis: "conservative", confidence: 0.78 };
   if (mode === "semantic_derivation") return { basis: "conservative", confidence: 0.72 };
   return { basis: "conservative", confidence: 0.7 };
