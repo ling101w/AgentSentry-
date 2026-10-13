@@ -466,6 +466,10 @@ def run_native(
     args: argparse.Namespace,
     working_tree_dirty: bool,
 ) -> int:
+    release_commit = git_commit()
+    source_before = native_source_snapshot()
+    runtime_config_sha256 = native_runtime_config_hash(args)
+    previous_manifest = load_json(args.retry_from / "manifest.json") if args.retry_from else None
     if args.max_trials is not None and args.max_trials < 1:
         raise NativeSetupError("--max-trials must be at least 1")
     client = None
@@ -645,6 +649,14 @@ def run_native(
     write_jsonl(trials_path, trials)
 
     finished_at = datetime.now(UTC)
+    source_after = native_source_snapshot()
+    finished_commit = git_commit()
+    final_dirty = git_worktree_dirty() is not False
+    source_unchanged = source_before == source_after and release_commit == finished_commit
+    retry_verified = previous_manifest is None or retry_source_verified(
+        previous_manifest, source_before, release_commit, runtime_config_sha256, canonical_sha256(selection)
+    )
+    runtime_unchanged = native_runtime_config_hash(args) == runtime_config_sha256
     errors = sum(trial["status"] == "error" for trial in trials)
     expected_trials = int(selection["expected"]["trials"])
     detector_events = len(transcript)
@@ -653,6 +665,12 @@ def run_native(
         and errors == 0
         and detector_events > 0
         and not working_tree_dirty
+        and not final_dirty
+        and source_unchanged
+        and runtime_unchanged
+        and retry_verified
+        and os.getenv("AGENTSENTRY_NATIVE_DISABLE_JUDGE") != "1"
+        and os.getenv("AGENTSENTRY_NATIVE_ENFORCEMENT", "block") == "block"
         and not args.allow_no_judge
     )
     status = "complete" if clean_complete else "partial" if detector_events else "failed"
@@ -663,6 +681,8 @@ def run_native(
             "profile": profile,
             "bridge": bridge_metadata,
             "tool_manifest_sha256": sha256_file(TOOL_MANIFEST),
+            "runtime_config_sha256": runtime_config_sha256,
+            "source_sha256": source_before["sha256"],
         }
     )
     public_result = {
@@ -672,8 +692,8 @@ def run_native(
         "status": status,
         "run": {
             "run_id": run_id,
-            "release_commit": git_commit(),
-            "working_tree_dirty": working_tree_dirty,
+            "release_commit": release_commit,
+            "working_tree_dirty": working_tree_dirty or final_dirty,
             "started_at": started_at.isoformat(),
             "finished_at": finished_at.isoformat(),
         },
@@ -724,6 +744,16 @@ def run_native(
         {
             "run_id": run_id,
             "created_after_detector_shutdown": True,
+            "release_commit_before": release_commit,
+            "release_commit_after": finished_commit,
+            "source_snapshot_before": source_before,
+            "source_snapshot_after": source_after,
+            "source_unchanged": source_unchanged,
+            "working_tree_dirty_before": working_tree_dirty,
+            "working_tree_dirty_after": final_dirty,
+            "runtime_config_sha256": runtime_config_sha256,
+            "runtime_unchanged": runtime_unchanged,
+            "retry_source_verified": retry_verified,
             "opaque_id_key_commitment": hashlib.sha256(secret).hexdigest(),
             "selection_sha256": canonical_sha256(selection),
             "tool_manifest_sha256": sha256_file(TOOL_MANIFEST),
@@ -736,7 +766,7 @@ def run_native(
 
     if args.publish:
         if not clean_complete:
-            raise NativeSetupError("--publish requires a clean, complete, error-free run with semantic Judge enabled")
+            raise NativeSetupError("--publish requires a clean, complete, error-free run with semantic Judge enabled and unchanged detector/evaluator sources")
         shutil.copyfile(result_path, CANONICAL_RESULT)
 
     print(json.dumps(public_result["metrics"], ensure_ascii=False, indent=2))
@@ -991,6 +1021,51 @@ def git_commit() -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise NativeSetupError("Git HEAD is not a full commit hash")
     return commit
+
+
+def native_source_snapshot() -> dict[str, Any]:
+    """Hash executed detector builds and evaluator sources without reading credentials."""
+    files = {
+        BRIDGE_SCRIPT,
+        TOOL_MANIFEST,
+        DETECTOR_EVENT_SCHEMA,
+        Path(__file__).resolve(),
+        ROOT / "openclaw-plugin" / "package.json",
+        ROOT / "pyproject.toml",
+    }
+    for directory, pattern in (
+        (ROOT / "openclaw-plugin" / "dist", "*.js"),
+        (ROOT / "src" / "agentsentry", "*.py"),
+    ):
+        files.update(directory.rglob(pattern))
+    digests = {path.relative_to(ROOT).as_posix(): sha256_file(path) for path in sorted(files)}
+    return {"sha256": canonical_sha256(digests), "files": digests}
+
+
+def native_runtime_config_hash(args: argparse.Namespace) -> str:
+    material = {key: os.getenv(key, "") for key in (
+        "OPENAI_COMPATIBLE_BASE_URL", "OPENAI_BASE_URL", "AGENTSENTRY_NATIVE_PROFILE", "AGENTSENTRY_NATIVE_ENFORCEMENT",
+        "AGENTSENTRY_NATIVE_JUDGE_BASE_URL", "AGENTSENTRY_NATIVE_JUDGE_MODEL", "AGENTSENTRY_NATIVE_JUDGE_TIMEOUT_MS",
+    )}
+    material.update(model=args.model, model_id=args.model_id, allow_no_judge=args.allow_no_judge)
+    material["judge_disabled"] = args.allow_no_judge or os.getenv("AGENTSENTRY_NATIVE_DISABLE_JUDGE") == "1"
+    return canonical_sha256(material)
+
+
+def retry_source_verified(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], commit: str,
+                          runtime_hash: str, selection_hash: str) -> bool:
+    return (
+        manifest.get("source_snapshot_before") == snapshot
+        and manifest.get("source_snapshot_after") == snapshot
+        and manifest.get("release_commit_before") == commit
+        and manifest.get("release_commit_after") == commit
+        and manifest.get("source_unchanged") is True
+        and manifest.get("working_tree_dirty_before") is False
+        and manifest.get("working_tree_dirty_after") is False
+        and manifest.get("runtime_unchanged") is True
+        and manifest.get("runtime_config_sha256") == runtime_hash
+        and manifest.get("selection_sha256") == selection_hash
+    )
 
 
 def git_worktree_dirty() -> bool | None:

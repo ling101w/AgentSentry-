@@ -16,6 +16,49 @@ class FakeBridge:
         return {"decision": "allow", "summary": "fixture"}
 
 
+def test_source_snapshot_tracks_executed_build_and_evaluator_but_ignores_credentials(tmp_path, monkeypatch):
+    detector = tmp_path / "openclaw-plugin" / "dist" / "core"
+    detector.mkdir(parents=True)
+    evaluator = tmp_path / "src" / "agentsentry"
+    evaluator.mkdir(parents=True)
+    for relative in ("bridge.mjs", "manifest.json", "schema.json", "runner.py", "openclaw-plugin/package.json", "pyproject.toml"):
+        (tmp_path / relative).write_text("fixture", encoding="utf-8")
+    (detector / "policy.js").write_text("allow", encoding="utf-8")
+    (evaluator / "adapter.py").write_text("version=1", encoding="utf-8")
+    monkeypatch.setattr(native, "ROOT", tmp_path)
+    monkeypatch.setattr(native, "BRIDGE_SCRIPT", tmp_path / "bridge.mjs")
+    monkeypatch.setattr(native, "TOOL_MANIFEST", tmp_path / "manifest.json")
+    monkeypatch.setattr(native, "DETECTOR_EVENT_SCHEMA", tmp_path / "schema.json")
+    monkeypatch.setattr(native, "__file__", str(tmp_path / "runner.py"))
+    before = native.native_source_snapshot()
+    (tmp_path / ".env").write_text("API_KEY=private-fixture", encoding="utf-8")
+    assert native.native_source_snapshot() == before
+    assert ".env" not in before["files"]
+    (detector / "policy.js").write_text("deny", encoding="utf-8")
+    changed = native.native_source_snapshot()
+    assert changed["sha256"] != before["sha256"]
+    (evaluator / "adapter.py").write_text("version=2", encoding="utf-8")
+    assert native.native_source_snapshot()["sha256"] != changed["sha256"]
+
+
+def test_retry_cannot_promote_dirty_changed_or_unverifiable_trials_to_reportable():
+    snapshot = {"sha256": "fixture", "files": {"policy.js": "a"}}
+    manifest = {
+        "source_snapshot_before": snapshot, "source_snapshot_after": snapshot,
+        "release_commit_before": "commit", "release_commit_after": "commit",
+        "source_unchanged": True, "working_tree_dirty_before": False, "working_tree_dirty_after": False,
+        "runtime_unchanged": True, "runtime_config_sha256": "runtime", "selection_sha256": "selection",
+    }
+    assert native.retry_source_verified(manifest, snapshot, "commit", "runtime", "selection")
+    for key, value in (
+        ("source_snapshot_after", {"sha256": "changed"}), ("release_commit_after", "other-commit"),
+        ("working_tree_dirty_before", True), ("working_tree_dirty_after", True),
+        ("runtime_config_sha256", "other-model"), ("selection_sha256", "other-selection"),
+    ):
+        assert not native.retry_source_verified({**manifest, key: value}, snapshot, "commit", "runtime", "selection")
+    assert not native.retry_source_verified({}, snapshot, "commit", "runtime", "selection")
+
+
 def test_frozen_selection_is_exactly_40_cases_by_three_seeds():
     selection = native.load_selection(Path("evaluation/native/agentdojo_selection.json"))
     specs = native.build_trial_specs(selection)
