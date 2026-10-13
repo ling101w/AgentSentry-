@@ -201,9 +201,39 @@ python -m pytest -q
 - 它们不是独立盲测。
 - 它们不是 AgentDojo/InjecAgent 原生端到端成绩。
 - 历史标签不会进入 detector 输入；新的评测协议将 labels 保留在 evaluator-owned envelope。
-- Native AgentDojo adapter、doctor/plan/contract 已实现，但模型驱动发布结果在完成干净 release run 前保持 `not_run`。
+- Native AgentDojo adapter、doctor/plan/contract 已实现。下述历史模型运行结果已经在本地完成；最新安全修复分支的模型驱动成绩仍需重新运行。
 
 指标、标签隔离和证据等级见 [EVALUATION_METHODOLOGY.md](reports/EVALUATION_METHODOLOGY.md)。
+
+### 已在本地运行的 AgentDojo / DeepTrap
+
+以下两组是 **2026 年 8 月在本地实际运行的模型 benchmark**，2026-10-13 从留存结果核对并提交数据、评分记录与图表。它们对应历史版本，不是最新修复分支的重新评测。完整数据、run ID、版本、分母和复核方法见 [本地 benchmark 数据说明](reports/local-benchmarks-202608/README.md)。
+
+AgentDojo Native Expanded v1：DeepSeek V4 Pro，workspace v1.2.2，每组 100 攻击 + 40 正常任务。
+
+| 方法 | 官方 ASR ↓ | FPR（正常任务 deny）↓ | 正常 Utility ↑ |
+| --- | ---: | ---: | ---: |
+| 无防护 No Defense | 61.0% | 0% | 87.5% |
+| 玄鉴 Risk-based | 1.0% | 25.0% | 67.5% |
+| 玄鉴 Evidence-gated | 0% | 0% | 92.5% |
+| 玄甲 AgentWard | 2.0% | 2.5% | 97.5% |
+
+![AgentDojo 本地运行结果](reports/local-benchmarks-202608/agentdojo.png)
+
+四组均有 140/140 最终完成记录。AgentWard 属于 dirty worktree 开发运行，`reportable=false`；与玄鉴使用不同 provider，此表作相同 case 的描述性对比。Evidence-gated 是后验优化发布复跑。AgentWard 官方 ASR 为 2%，独立审计的实际危险副作用为 4%，两者口径不同。
+
+DeepTrap：DeepSeek V4 Flash，每组 42 个预污染任务，六类风险各 7 条。
+
+| 方法 | AGS ↓ | 攻击环境 UGS ↑ |
+| --- | ---: | ---: |
+| 无防护 No Defense | 0.3361 | 0.4119 |
+| 玄鉴 Risk-based | 0.1428 | 0.1119 |
+| 玄鉴 Evidence-gated | 0.2371 | 0.2167 |
+| 玄甲 AgentWard | 0.2909 | 0.1548 |
+
+![DeepTrap 本地运行结果](reports/local-benchmarks-202608/deeptrap.png)
+
+DeepTrap 的 AGS/UGS 已从 168 条任务数值复算，与图表一致。UGS 是攻击环境效用，不能当作 clean Utility/FPR；原记录包含 timeout/error，42/42 评分有效不代表执行全部无错误。状态、历史 ask 放行行为及审计完整性限制详见数据说明。
 
 ## 能力边界
 

@@ -1,5 +1,7 @@
 # 评测口径与证据等级
 
+历史本地模型结果已公开：2026 年 8 月 AgentDojo Native Expanded v1 四组各 140 trials，以及 DeepTrap 四组各 42 个任务，见 [数据包和图表说明](local-benchmarks-202608/README.md)。2026-10-13 核对并提交公开汇总、逐任务数字评分、来源哈希和图片；这不是最新修复版本的模型复跑。AgentWard 开发运行身份、跨 provider 可比性、DeepTrap 原 timeout/error 状态及 UGS 口径均随数据保留。
+
 2026-10-13 修复分支验证：授权、执行模式、HTTP 地址权限、审计背压、内容来源索引和工具语义总预算已分别提交。插件全量回归与官方 AgentDojo 无模型工具契约通过；这不是独立盲测或本版本真实模型 ASR/Utility。详见 `SECURITY_BOUNDARIES_VALIDATION_20261013.md`。
 
 原生 runner 现在保存开始时的 release commit，并在运行前后对实际 detector `dist/*.js`、bridge、manifest、evaluator Python 源码及包配置计算指纹，结束时再次检查工作树。提交号、源码或构建变化会禁止 `reportable` 和 `--publish`；重试合并也必须匹配原运行的源码快照。快照只包含指定源码文件，不读取凭据。开始/结束指纹核对不能替代实验期间禁止修改工作树的操作要求。
