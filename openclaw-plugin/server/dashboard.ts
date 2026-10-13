@@ -5355,6 +5355,10 @@ async function executeHttpRequest(action: LabAction, config: PluginConfig): Prom
     allowedHosts: labLocalHttpUrl(parsed)
       ? Array.from(new Set([stripIpv6Brackets(parsed.hostname), ...config.policy.allowlistedApiHosts]))
       : config.policy.allowlistedApiHosts,
+    allowedPrivateCidrs: config.policy.allowedPrivateCidrs,
+    allowedLoopbackOrigins: labLocalHttpUrl(parsed)
+      ? [parsed.origin]
+      : config.policy.allowedLoopbackOrigins,
     maxBytes: 1024 * 1024,
     maxRedirects: 5,
     timeoutMs: 5000,

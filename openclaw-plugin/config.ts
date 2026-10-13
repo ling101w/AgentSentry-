@@ -159,6 +159,8 @@ export class PluginConfig {
     restrictWritesToAllowedRoots: boolean;
     allowlistedRecipients: string[];
     allowlistedApiHosts: string[];
+    allowedPrivateCidrs: string[];
+    allowedLoopbackOrigins: string[];
     allowedWriteRoots: string[];
     sensitiveAssets: string[];
   };
@@ -285,6 +287,8 @@ export class PluginConfig {
       restrictWritesToAllowedRoots: false,
       allowlistedRecipients: [],
       allowlistedApiHosts: [],
+      allowedPrivateCidrs: [],
+      allowedLoopbackOrigins: [],
       allowedWriteRoots: [],
       sensitiveAssets: ["secret.txt", "api_key", "token", "password", "system_prompt.txt", ".env", "id_rsa"],
     };
@@ -448,6 +452,8 @@ export class PluginConfig {
       config.policy.restrictWritesToAllowedRoots = readBoolean(policy.restrictWritesToAllowedRoots, config.policy.restrictWritesToAllowedRoots);
       config.policy.allowlistedRecipients = readStringArray(policy.allowlistedRecipients, config.policy.allowlistedRecipients);
       config.policy.allowlistedApiHosts = readStringArray(policy.allowlistedApiHosts, config.policy.allowlistedApiHosts);
+      config.policy.allowedPrivateCidrs = readStringArray(policy.allowedPrivateCidrs, config.policy.allowedPrivateCidrs);
+      config.policy.allowedLoopbackOrigins = readStringArray(policy.allowedLoopbackOrigins, config.policy.allowedLoopbackOrigins);
       config.policy.allowedWriteRoots = readStringArray(policy.allowedWriteRoots, config.policy.allowedWriteRoots);
       config.policy.sensitiveAssets = readStringArray(policy.sensitiveAssets, config.policy.sensitiveAssets);
     }
