@@ -89,6 +89,9 @@ const services: Service[] = [];
 afterEach(async () => {
   for (const service of services.splice(0)) await service.stop();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  delete process.env.AGENTSENTRY_HOOK_BUDGET_KEY;
 });
 
 function createHarness(overrides: Record<string, any> = {}): Harness {
@@ -153,6 +156,22 @@ async function flushRecords(): Promise<void> {
 }
 
 describe("OpenClaw plugin hooks", () => {
+  it("returns deterministic blocks without waiting for Judge or shadow scoring", async () => {
+    const harness = createHarness({ semantic: { enabled: true, mode: "full", apiKeyEnv: "AGENTSENTRY_HOOK_BUDGET_KEY" }, graphLearning: { enabled: true } });
+    await harness.service.start();
+    const fetchMock = vi.fn(() => new Promise(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.AGENTSENTRY_HOOK_BUDGET_KEY = "fixture";
+    let resolveShadow!: (value: null) => void;
+    const shadow = vi.spyOn(plugin.graphShadow!, "score").mockImplementation(() => new Promise((resolve) => { resolveShadow = resolve; }));
+    const result = await invoke(harness, "before_tool_call", {
+      toolName: "shell_exec", toolCallId: "hard-deny-no-model", params: { command: "rm -rf /" },
+    }, { sessionKey: "hooks:hard-no-model", workspaceDir: harness.stateDir });
+    expect(result).toMatchObject({ block: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(shadow).toHaveBeenCalledTimes(1));
+    resolveShadow(null);
+  });
   it("returns the authenticated access URL from the dashboard command without persisting its token", async () => {
     const harness = createHarness({ dashboard: { enabled: true, port: 0 } });
     await harness.service.start();

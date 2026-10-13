@@ -51,7 +51,8 @@ import {
   type ToolCallPerformanceSample,
 } from "./core/performance-metrics.ts";
 import { buildProductionGraphInput, createGraphTrainingEnvelope, type GraphTrainingEnvelope } from "./core/graph-learning/production-graph.ts";
-import { GraphShadowRouter, type GraphShadowScore } from "./core/graph-learning/shadow-router.ts";
+import { GraphShadowRouter } from "./core/graph-learning/shadow-router.ts";
+import { ShadowTelemetry } from "./core/graph-learning/shadow-telemetry.ts";
 import { RollbackManager, type OperationCheckpoint, type RollbackSnapshot } from "./core/rollback.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
 import {
@@ -62,6 +63,7 @@ import {
   semanticJudgeToolCall,
   semanticGateForMemoryWrite,
   semanticGateForToolCall,
+  semanticBudgetMs,
 } from "./core/semantic.ts";
 import { SessionRegistry } from "./core/session-registry.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
@@ -117,6 +119,7 @@ const plugin = {
   startupConfig: null as PluginConfig | null,
   performanceMetrics: new ToolCallPerformanceTracker(),
   graphShadow: null as GraphShadowRouter | null,
+  shadowTelemetry: new ShadowTelemetry(),
   sessions: new SessionRegistry<SessionState>({ canEvict: sessionCanEvict }),
 
   register(api: OpenClawPluginApi) {
@@ -129,6 +132,7 @@ const plugin = {
     plugin.performanceMetrics = new ToolCallPerformanceTracker();
     applyGraphShadowRuntimeConfig(plugin.config);
     plugin.graphShadow = new GraphShadowRouter(plugin.config);
+    plugin.shadowTelemetry = new ShadowTelemetry();
     configureToolManifestSigning(plugin.config);
     configureAgentTrust(plugin.config);
     plugin.sessions = new SessionRegistry<SessionState>({
@@ -166,8 +170,9 @@ const plugin = {
           await plugin.dashboard.close();
           plugin.dashboard = null;
         }
-        await plugin.store?.close();
+        plugin.shadowTelemetry.close();
         await plugin.graphShadow?.close();
+        await plugin.store?.close();
         plugin.graphShadow = null;
         plugin.sessions.clear();
       },
@@ -635,43 +640,44 @@ const plugin = {
         // Training telemetry is optional and cannot change enforcement.
       }
       const graphTrainingProjectionMs = performance.now() - graphProjectionStartedAt;
-      const graphShadowScore: GraphShadowScore | null = graphLearning && plugin.graphShadow
-        ? await plugin.graphShadow.score(graphLearning.input)
-        : null;
-      const toolJudgeRouted = semanticGateForToolCall(event.toolName, params, plugin.config!, {
+      const skipSemantic = preliminary.policy.deterministic_block && preliminary.decision === "deny";
+      const semanticDeadlineMs = Date.now() + semanticBudgetMs(plugin.config!);
+      const toolJudgeRouted = !skipSemantic && semanticGateForToolCall(event.toolName, params, plugin.config!, {
         policyState: state.policyState,
         relatedFindings: preliminary.policy.findings,
       }).shouldJudge;
       const semanticToolStartedAt = performance.now();
-      const semanticToolFindings = await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
+      const semanticToolFindings = toolJudgeRouted ? await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
         policyState: state.policyState,
         relatedFindings: preliminary.policy.findings,
-      });
+        deadlineMs: semanticDeadlineMs,
+      }) : [];
       const semanticToolMs = performance.now() - semanticToolStartedAt;
       const memoryContent = action.tool === "memory_write"
         ? firstToolString(params, ["content", "body", "text", "value", "payload", "new_string", "replacement", "patch"]) || params
         : "";
-      const memoryJudgeRouted = action.tool === "memory_write"
+      const memoryJudgeRouted = !skipSemantic && Date.now() < semanticDeadlineMs && action.tool === "memory_write"
         && semanticGateForMemoryWrite(memoryContent, plugin.config!).shouldJudge;
       const semanticMemoryStartedAt = performance.now();
-      const semanticMemoryFindings = action.tool === "memory_write"
+      const semanticMemoryFindings = memoryJudgeRouted
         ? await semanticJudgeMemoryWrite(memoryContent, state.policyState.currentTask, plugin.config!, {
           policyState: state.policyState,
           relatedFindings: preliminary.policy.findings,
+          deadlineMs: semanticDeadlineMs,
         })
         : [];
       const semanticMemoryMs = performance.now() - semanticMemoryStartedAt;
-      const ambiguousJudgeRouted = plugin.config!.semantic.enabled
+      const ambiguousJudgeRouted = !skipSemantic && Date.now() < semanticDeadlineMs && plugin.config!.semantic.enabled
         && plugin.config!.semantic.judgeToolCalls
         && plugin.config!.semantic.mode !== "off"
         && preliminary.policy.deterministic_disposition === "ambiguous";
       const semanticAmbiguousStartedAt = performance.now();
-      const semanticAmbiguousFindings = await semanticJudgeAmbiguousAction({
+      const semanticAmbiguousFindings = ambiguousJudgeRouted ? await semanticJudgeAmbiguousAction({
         action: preliminary.policy.action,
         taskSpec: preliminary.policy.task_spec,
         policyState: state.policyState,
         preliminary: preliminary.policy,
-      }, plugin.config!);
+      }, plugin.config!, { deadlineMs: semanticDeadlineMs }) : [];
       const semanticAmbiguousMs = performance.now() - semanticAmbiguousStartedAt;
       const semanticFindings = [...semanticToolFindings, ...semanticMemoryFindings, ...semanticAmbiguousFindings];
       const finalPolicyStartedAt = performance.now();
@@ -774,9 +780,23 @@ const plugin = {
         } : null,
         findings: result.findings,
         graph_learning: graphLearning,
-        graph_shadow: graphShadowScore,
+        graph_shadow: null,
+        graph_shadow_status: graphLearning && plugin.graphShadow?.enabled() ? "scheduled" : "disabled",
         performance: performanceSample,
       };
+      const shadowRouter = plugin.graphShadow;
+      const shadowStore = plugin.store;
+      if (graphLearning && shadowRouter?.enabled() && shadowStore) {
+        const input = graphLearning.input;
+        const accepted = plugin.shadowTelemetry.submit(() => shadowRouter.score(input), (score) => {
+          shadowStore.add({
+            run_id: state.runId, session_key: state.sessionKey, type: "graph_shadow_score", layer: "Runtime", severity: "info",
+            title: `Shadow score: ${event.toolName}`, summary: `Shadow route: ${score.route}`,
+            payload: { toolCallId: event.toolCallId || "", toolName: event.toolName, graph_shadow: score },
+          });
+        });
+        if (!accepted) payload.graph_shadow_status = "backpressured";
+      }
       const operationCheckpoint = effectiveDecision === "allow"
         ? plugin.rollback!.checkpointOperation({
           action: effectivePolicy.action,
