@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { intersectOptional } from "./constraints.ts";
 import { calendarCreationCapabilities, calendarTaskBoundCapabilities } from "./calendar.ts";
 import type {
   CapabilityAction,
@@ -662,15 +663,6 @@ function dedupeCandidates(candidates: Candidate[]): Candidate[] {
     seen.add(key);
     return true;
   });
-}
-
-/** (P0-1) Constraint intersection: repeated grants only reaffirm, never widen. */
-function intersectOptional(left?: string[], right?: string[]): string[] | undefined {
-  if (!left?.length) return right?.length ? [...right] : undefined;
-  if (!right?.length) return [...left];
-  const rightSet = new Set(right);
-  const intersection = left.filter((item) => rightSet.has(item));
-  return intersection.length ? intersection : undefined;
 }
 
 function classifyTaskFamily(capabilities: TaskCapability[]): TaskSpec["task_family"] {

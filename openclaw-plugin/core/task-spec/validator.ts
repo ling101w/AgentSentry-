@@ -8,6 +8,7 @@ import { posix } from "node:path";
 import { hostFromUrl, targetMatches } from "../security/url.ts";
 import { isLowRiskShellReadCommand } from "../policy/safe-ops.ts";
 import { authorizeCalendarArguments } from "./calendar.ts";
+import { hasEmptyConstraint } from "./constraints.ts";
 
 const SIDE_EFFECT_TOOLS = new Set(["write_file", "send_email", "call_api", "shell_exec", "memory_write", "calendar_write"]);
 
@@ -209,6 +210,9 @@ function descriptorMatches(
 }
 
 function validateConstraints(capability: TaskCapability, request: CapabilityActionRequest, method?: string): CapabilityAuthorization {
+  if (hasEmptyConstraint(capability.constraints)) {
+    return mismatch("capability_constraint_conflict", capability, targetFor(request));
+  }
   if (request.tool === "calendar_write") return authorizeCalendarArguments(capability, request);
   const target = targetFor(request);
   if (capability.constraints.allowedMethods?.length && method && !capability.constraints.allowedMethods.includes(method)) {

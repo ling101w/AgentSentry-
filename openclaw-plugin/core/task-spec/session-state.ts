@@ -1,4 +1,5 @@
 import { deriveTaskSpecV2 } from "./extractor.ts";
+import { intersectOptional } from "./constraints.ts";
 import type { TaskCapability, TaskSpec } from "./types.ts";
 
 const CANONICAL_TOOLS = [
@@ -227,14 +228,6 @@ function mergeCapabilities(capabilities: TaskCapability[]): TaskCapability[] {
     current.evidence.confidence = Math.max(current.evidence.confidence, capability.evidence.confidence);
   }
   return [...merged.values()];
-}
-
-function intersectOptional(left?: string[], right?: string[]): string[] | undefined {
-  if (!left?.length) return right?.length ? [...right] : undefined;
-  if (!right?.length) return [...left];
-  const rightSet = new Set(right);
-  const intersection = left.filter((item) => rightSet.has(item));
-  return intersection.length ? intersection : undefined;
 }
 
 function uniqueBy<T>(items: T[], keyOf: (item: T) => string): T[] {
