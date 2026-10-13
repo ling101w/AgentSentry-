@@ -65,6 +65,10 @@ export class RecordStore {
     return { hashChain: this.auditHashChainEnabled };
   }
 
+  persistenceStatus() {
+    return this.writer.status();
+  }
+
   subscribe(listener: RecordListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -204,7 +208,7 @@ export class RecordStore {
     this.resetPending = true;
     void this.writer.reset().finally(() => {
       this.resetPending = false;
-    });
+    }).catch(() => undefined);
   }
 
   compact(): Promise<void> {

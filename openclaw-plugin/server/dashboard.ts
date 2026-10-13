@@ -371,6 +371,11 @@ async function handleRequest(
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/audit/persistence") {
+    sendJson(req, res, { ok: true, persistence: store.persistenceStatus() });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/settings/dashboard") {
     sendJson(req, res, dashboardSettings(config, readDashboardConsoleState(store)));
     return;

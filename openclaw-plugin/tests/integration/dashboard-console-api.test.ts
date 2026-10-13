@@ -53,6 +53,14 @@ function seedBlockedRecord(store: RecordStore): void {
 }
 
 describe("dashboard console backend contracts", () => {
+  it("exposes persistence backlog and failure counters separately from hash integrity", async () => {
+    const { store, server, headers } = await harness();
+    seedBlockedRecord(store);
+    await store.flush();
+    const result = await fetch(`${server.url}/api/audit/persistence`, { headers }).then((response) => response.json());
+    expect(result).toMatchObject({ ok: true, persistence: { state: "healthy", pendingEvents: 0, pendingBytes: 0, writeFailures: 0, droppedEvents: 0 } });
+    expect(result.persistence.lastSuccessfulWrite).toMatch(/^\d{4}-/);
+  });
   it("persists settings, alert dispositions, inventory and dry-run results", async () => {
     const { config, store, server, headers } = await harness();
     seedBlockedRecord(store);
