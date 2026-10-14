@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import { isDeepStrictEqual } from "node:util";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { ConfigSchema, PluginConfig } from "./config.ts";
 import { ApprovalCache, approvalCachePath } from "./core/approval-cache.ts";
 import { decisionKind, toolEnforcementAction } from "./core/enforcement.ts";
 import { handleAgentSentryCommand } from "./core/commands.ts";
-import { detectMessageContent, detectToolCall, serializeToolParams } from "./core/detect.ts";
+import { detectMessageContent, serializeToolParams } from "./core/detect.ts";
 import { annotateUserInputForRisk } from "./core/input-annotation.ts";
 import { foundationFindingBlocksSession, scanInitializationSurface } from "./core/init-defense.ts";
 import { annotateActiveSkills } from "./core/skill-context.ts";
@@ -35,7 +36,6 @@ import {
   resultFindings,
   restorePolicyStateCheckpoint,
   updateActionGraphEnforcement,
-  updateAfterDecision,
   updateAfterMessage,
   updateAfterRuntimeFindings,
   updateTaskSpec,
@@ -56,15 +56,11 @@ import { ShadowTelemetry } from "./core/graph-learning/shadow-telemetry.ts";
 import { RollbackManager, type OperationCheckpoint, type RollbackSnapshot } from "./core/rollback.ts";
 import { deleteRuntimeConfig, loadRuntimeConfig, runtimeConfigPath, saveRuntimeConfig } from "./core/runtime-config.ts";
 import {
-  semanticJudgeAmbiguousAction,
-  semanticJudgeMemoryWrite,
   semanticJudgeMessage,
   semanticJudgeTaskSpec,
-  semanticJudgeToolCall,
-  semanticGateForMemoryWrite,
-  semanticGateForToolCall,
-  semanticBudgetMs,
 } from "./core/semantic.ts";
+import { supervisionService } from "./core/supervision-service.ts";
+import { SessionQueue } from "./core/session-queue.ts";
 import { SessionRegistry } from "./core/session-registry.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint, systemMonitorStatus, type EbpfLogCheckpoint } from "./core/system-monitor.ts";
 import { startDashboard, type DashboardServer } from "./server/dashboard.ts";
@@ -102,8 +98,10 @@ type SessionState = {
   lastFoundationDigest?: string;
 };
 
+const toolSessionQueue = new SessionQueue();
+
 function sessionCanEvict(state: SessionState): boolean {
-  return state.policyState.semanticActionGraph.pendingCalls.size === 0 && state.runtimeCheckpoints.size === 0;
+  return !toolSessionQueue.has(state.sessionKey) && state.policyState.semanticActionGraph.pendingCalls.size === 0 && state.runtimeCheckpoints.size === 0;
 }
 
 const plugin = {
@@ -588,24 +586,30 @@ const plugin = {
     });
 
     api.on("before_tool_call", async (event, ctx) => {
+      const toolSession = getSession(ctx);
+      return toolSessionQueue.run(toolSession.sessionKey, async () => {
+      const sourceConfig = plugin.config!;
+      const config = structuredClone(sourceConfig);
+      const approvalCache = plugin.approvalCache!;
+      const rollback = plugin.rollback!;
       const toolCallStartedAt = performance.now();
       const performanceRecordedAt = new Date().toISOString();
       let semanticActionGraphMs = 0;
       let semanticActionGraphEvaluations = 0;
-      const state = getSession(ctx);
+      const state = toolSession;
       state.toolCount += 1;
       const rawParams = (event?.params || {}) as Record<string, unknown>;
       const params = event.toolName === "sessions_send"
-        ? sealAgentMessageParameters(rawParams, plugin.config!)
+        ? sealAgentMessageParameters(rawParams, config)
         : rawParams;
       const operationKey = computeOperationKey(event.toolName, params, {
-        profile: plugin.config!.profile,
-        policy: plugin.config!.policy,
-        detection: plugin.config!.detection,
-        semantic: plugin.config!.semantic,
-        provenanceScan: plugin.config!.provenanceScan,
-        runtimeIsolation: plugin.config!.runtimeIsolation,
-        enforcement: plugin.config!.enforcement.mode,
+        profile: config.profile,
+        policy: config.policy,
+        detection: config.detection,
+        semantic: config.semantic,
+        provenanceScan: config.provenanceScan,
+        runtimeIsolation: config.runtimeIsolation,
+        enforcement: config.enforcement.mode,
         taskSpec: state.policyState.taskSpec,
       });
       const detectionContext = {
@@ -617,93 +621,55 @@ const plugin = {
           semanticActionGraphEvaluations += 1;
         },
       };
-      const preliminaryPolicyStartedAt = performance.now();
-      const preprocessingMs = preliminaryPolicyStartedAt - toolCallStartedAt;
-      const preliminary = detectToolCall(event.toolName, params, plugin.config!, state.policyState, [], detectionContext);
-      const preliminaryPolicyMs = performance.now() - preliminaryPolicyStartedAt;
-      const action = preliminary.policy.action;
-      const graphProjectionStartedAt = performance.now();
+      const preprocessingMs = performance.now() - toolCallStartedAt;
       let graphLearning: GraphTrainingEnvelope | null = null;
-      try {
-        const graphInput = buildProductionGraphInput({
-          graph: preliminary.policy.effects?.semanticActionGraph || state.policyState.semanticActionGraph,
-          currentActionNodeId: preliminary.policy.action_graph_node_id,
-          taskMode: preliminary.policy.task_spec.task_mode,
-          taskFamily: preliminary.policy.task_spec.task_family,
-        });
-        graphLearning = createGraphTrainingEnvelope({
-          sampleId: newId("graph_sample"),
-          capturedAt: performanceRecordedAt,
-          graphInput,
-        });
-      } catch {
-        // Training telemetry is optional and cannot change enforcement.
-      }
-      const graphTrainingProjectionMs = performance.now() - graphProjectionStartedAt;
-      const skipSemantic = preliminary.policy.deterministic_block && preliminary.decision === "deny";
-      const semanticDeadlineMs = Date.now() + semanticBudgetMs(plugin.config!);
-      const toolJudgeRouted = !skipSemantic && semanticGateForToolCall(event.toolName, params, plugin.config!, {
-        policyState: state.policyState,
-        relatedFindings: preliminary.policy.findings,
-      }).shouldJudge;
-      const semanticToolStartedAt = performance.now();
-      const semanticToolFindings = toolJudgeRouted ? await semanticJudgeToolCall(event.toolName, params, state.policyState.currentTask, plugin.config!, {
-        policyState: state.policyState,
-        relatedFindings: preliminary.policy.findings,
-        deadlineMs: semanticDeadlineMs,
-      }) : [];
-      const semanticToolMs = performance.now() - semanticToolStartedAt;
-      const memoryContent = action.tool === "memory_write"
-        ? firstToolString(params, ["content", "body", "text", "value", "payload", "new_string", "replacement", "patch"]) || params
-        : "";
-      const memoryJudgeRouted = !skipSemantic && Date.now() < semanticDeadlineMs && action.tool === "memory_write"
-        && semanticGateForMemoryWrite(memoryContent, plugin.config!).shouldJudge;
-      const semanticMemoryStartedAt = performance.now();
-      const semanticMemoryFindings = memoryJudgeRouted
-        ? await semanticJudgeMemoryWrite(memoryContent, state.policyState.currentTask, plugin.config!, {
-          policyState: state.policyState,
-          relatedFindings: preliminary.policy.findings,
-          deadlineMs: semanticDeadlineMs,
-        })
-        : [];
-      const semanticMemoryMs = performance.now() - semanticMemoryStartedAt;
-      const ambiguousJudgeRouted = !skipSemantic && Date.now() < semanticDeadlineMs && plugin.config!.semantic.enabled
-        && plugin.config!.semantic.judgeToolCalls
-        && plugin.config!.semantic.mode !== "off"
-        && preliminary.policy.deterministic_disposition === "ambiguous";
-      const semanticAmbiguousStartedAt = performance.now();
-      const semanticAmbiguousFindings = ambiguousJudgeRouted ? await semanticJudgeAmbiguousAction({
-        action: preliminary.policy.action,
-        taskSpec: preliminary.policy.task_spec,
-        policyState: state.policyState,
-        preliminary: preliminary.policy,
-      }, plugin.config!, { deadlineMs: semanticDeadlineMs }) : [];
-      const semanticAmbiguousMs = performance.now() - semanticAmbiguousStartedAt;
-      const semanticFindings = [...semanticToolFindings, ...semanticMemoryFindings, ...semanticAmbiguousFindings];
-      const finalPolicyStartedAt = performance.now();
-      const result = semanticFindings.length
-        ? detectToolCall(event.toolName, params, plugin.config!, state.policyState, semanticFindings, detectionContext)
-        : preliminary;
-      const finalPolicyMs = semanticFindings.length ? performance.now() - finalPolicyStartedAt : 0;
-      const cachedApproval = plugin.approvalCache!.has(operationKey) && result.decision === "ask" && !result.policy.deterministic_block;
+      let graphTrainingProjectionMs = 0;
+      const evaluation = await supervisionService.evaluate({
+        toolName: event.toolName, params, state: state.policyState, config, context: detectionContext, judgeRoutes: "full",
+        onPreliminary: (preliminary) => {
+          const graphProjectionStartedAt = performance.now();
+          try {
+            const graphInput = buildProductionGraphInput({
+              graph: preliminary.policy.effects?.semanticActionGraph || state.policyState.semanticActionGraph,
+              currentActionNodeId: preliminary.policy.action_graph_node_id,
+              taskMode: preliminary.policy.task_spec.task_mode,
+              taskFamily: preliminary.policy.task_spec.task_family,
+            });
+            graphLearning = createGraphTrainingEnvelope({
+              sampleId: newId("graph_sample"),
+              capturedAt: performanceRecordedAt,
+              graphInput,
+            });
+          } catch {
+            // Training telemetry is optional and cannot change enforcement.
+          }
+          graphTrainingProjectionMs = performance.now() - graphProjectionStartedAt;
+        },
+      });
+      // A changed configuration must be re-evaluated by the host before execution.
+      if (plugin.config !== sourceConfig || !isDeepStrictEqual(structuredClone(sourceConfig), config)) throw new Error("AgentSentry configuration changed during evaluation; retry the tool call");
+      const { result } = evaluation;
+      graphLearning = graphLearning as GraphTrainingEnvelope | null;
+      const { preliminaryPolicyMs, semanticToolMs, semanticMemoryMs, semanticAmbiguousMs, finalPolicyMs } = evaluation.timings;
+      const { toolJudgeRouted, memoryJudgeRouted, ambiguousJudgeRouted } = evaluation.routes;
+      const cachedApproval = approvalCache.has(operationKey) && result.decision === "ask" && !result.policy.deterministic_block;
       const effectiveDecision = cachedApproval ? "allow" : result.decision;
       const effectivePolicy = cachedApproval ? { ...result.policy, decision: "allow" as const } : result.policy;
       const decisionReadyMs = performance.now() - toolCallStartedAt;
       const effectsStartedAt = performance.now();
-      const cacheEntry = cachedApproval ? plugin.approvalCache!.recordHit(operationKey) : null;
+      const cacheEntry = cachedApproval ? approvalCache.recordHit(operationKey) : null;
       const severity = severityForDecision(effectiveDecision);
-      const enforcementAction = toolEnforcementAction(plugin.config!.enforcement.mode, effectiveDecision);
+      const enforcementAction = toolEnforcementAction(config.enforcement.mode, effectiveDecision);
       const graphStatus = enforcementAction === "approval"
         ? "awaiting_approval"
         : enforcementAction === "block"
           ? "blocked"
           : "executing";
-      updateAfterDecision(state.policyState, effectivePolicy, plugin.config!);
+      supervisionService.commit(state.policyState, effectivePolicy, config, graphStatus);
       persistAllowedMemoryLabel(state, effectivePolicy.action.tool, params, effectiveDecision);
-      updateActionGraphEnforcement(state.policyState, effectivePolicy, graphStatus);
       const sandbox = effectiveDecision !== "deny"
         ? createShellSandboxTransaction(
-          plugin.config!,
+          config,
           detectionContext.workspaceDir,
           firstToolString(effectivePolicy.action.args, ["command", "cmd", "script", "input"]),
         )
@@ -745,18 +711,18 @@ const plugin = {
         toolName: event.toolName,
         normalized_tool: result.policy.action.tool,
         toolCallId: event.toolCallId || "",
-        params: serializeToolParams(params, plugin.config!),
+        params: serializeToolParams(params, config),
         decision: effectiveDecision,
         original_decision: result.decision,
         raw_decision: result.policy.intervention?.raw_decision || result.decision,
         intervention: result.policy.intervention || null,
-        intervention_mode: plugin.config!.intervention.mode,
-        enforcement_mode: plugin.config!.enforcement.mode,
+        intervention_mode: config.intervention.mode,
+        enforcement_mode: config.enforcement.mode,
         enforcement_action: enforcementAction,
         decision_kind: decisionKind(effectiveDecision),
         operation_key: operationKey,
         approval_cache_hit: cachedApproval,
-        approval_cache_size: plugin.approvalCache!.size(),
+        approval_cache_size: approvalCache.size(),
         risk_score: result.risk_score,
         sentry_score: result.policy.sentry_score,
         deterministic_block: result.policy.deterministic_block,
@@ -798,7 +764,7 @@ const plugin = {
         if (!accepted) payload.graph_shadow_status = "backpressured";
       }
       const operationCheckpoint = effectiveDecision === "allow"
-        ? plugin.rollback!.checkpointOperation({
+        ? rollback.checkpointOperation({
           action: effectivePolicy.action,
           workspaceDir: detectionContext.workspaceDir,
           operationKey,
@@ -807,7 +773,7 @@ const plugin = {
         : null;
       const rollbackSnapshots = operationCheckpoint?.file_snapshots || [];
 
-      if (plugin.config!.runtimeIsolation.auditAfterExecution && effectiveDecision === "allow") {
+      if (config.runtimeIsolation.auditAfterExecution && effectiveDecision === "allow") {
         const checkpointKey = runtimeCheckpointKey(event.toolCallId || "", event.toolName);
         state.runtimeCheckpoints.set(checkpointKey, {
           checkpoint: ebpfLogCheckpoint(),
@@ -880,7 +846,7 @@ const plugin = {
         const description = formatApprovalDescription({
           toolName: event.toolName,
           toolCallId: event.toolCallId || "",
-          paramPreview: serializeToolParams(params, plugin.config!),
+          paramPreview: serializeToolParams(params, config),
           dataSources: result.findings.map((finding) => String(finding.evidence?.source || "")).filter(Boolean),
           sideEffect: result.policy.action.tool,
           riskScore: result.risk_score,
@@ -904,7 +870,7 @@ const plugin = {
             toolCallId: event.toolCallId || "",
             decision: effectiveDecision,
             original_decision: result.decision,
-            enforcement_mode: plugin.config!.enforcement.mode,
+            enforcement_mode: config.enforcement.mode,
             operation_key: operationKey,
             risk_score: result.risk_score,
             deterministic_block: result.policy.deterministic_block,
@@ -921,14 +887,14 @@ const plugin = {
             title: `AgentSentry: ${event.toolName}`,
             description,
             severity: "warning",
-            timeoutMs: plugin.config!.enforcement.approvalTimeoutMs,
+            timeoutMs: config.enforcement.approvalTimeoutMs,
             timeoutBehavior: "deny",
             onResolution: (decision: string) => {
               const cacheEligible = result.decision === "ask" && !result.policy.deterministic_block;
-              if (decision === "allow-always" && cacheEligible) plugin.approvalCache!.add(operationKey, event.toolName);
+              if (decision === "allow-always" && cacheEligible) approvalCache.add(operationKey, event.toolName);
               const approved = decision === "allow-once" || decision === "allow-always";
               const approvedOperationCheckpoint = approved
-                ? plugin.rollback!.checkpointOperation({
+                ? rollback.checkpointOperation({
                   action: result.policy.action,
                   workspaceDir: detectionContext.workspaceDir,
                   operationKey,
@@ -936,7 +902,7 @@ const plugin = {
                 })
                 : null;
               const approvedRollbackSnapshots = approvedOperationCheckpoint?.file_snapshots || [];
-              if (approved && plugin.config!.runtimeIsolation.auditAfterExecution) {
+              if (approved && config.runtimeIsolation.auditAfterExecution) {
                 const checkpointKey = runtimeCheckpointKey(event.toolCallId || "", event.toolName);
 	                state.runtimeCheckpoints.set(checkpointKey, {
 	                  checkpoint: ebpfLogCheckpoint(),
@@ -971,8 +937,8 @@ const plugin = {
                   toolName: event.toolName,
                   toolCallId: event.toolCallId || "",
                   operation_key: operationKey,
-                  cache_size: plugin.approvalCache!.size(),
-                  cache_path: plugin.approvalCache!.path,
+                  cache_size: approvalCache.size(),
+                  cache_path: approvalCache.path,
                   rollback_checkpoint_count: approvedRollbackSnapshots.length,
                   risk_score: result.risk_score,
                   summary: result.summary,
@@ -983,7 +949,12 @@ const plugin = {
         };
 	      }
       if (sandbox || params !== rawParams) return { params: executionParams };
-	    });
+	    }).catch((error: unknown) => {
+        const reason = String(error instanceof Error ? error.message : error);
+        addAlert(toolSession, "Tool supervision could not commit", reason, { toolName: event.toolName, toolCallId: event.toolCallId || "" });
+        return { block: true, blockReason: reason };
+      });
+    });
 
     api.on("after_tool_call", (event, ctx) => {
       const state = getSession(ctx);

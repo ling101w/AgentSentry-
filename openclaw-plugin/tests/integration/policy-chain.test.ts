@@ -291,6 +291,7 @@ describe("policy integration chain", () => {
       [],
       { toolCallId: callId },
     );
+    updateAfterDecision(state, { ...attempt.policy, decision: "deny" }, config);
     updateActionGraphEnforcement(state, { ...attempt.policy, decision: "deny" }, "blocked");
 
     const findings = resultFindings(callId, { delivery_id: "delivered-42" }, state, config, "send_email");
@@ -346,6 +347,7 @@ describe("policy integration chain", () => {
       [],
       { toolCallId: callId },
     );
+    updateAfterDecision(state, attempt.policy, config);
     updateActionGraphEnforcement(state, attempt.policy, "executing");
     resultFindings(callId, { summary: "Public summary" }, state, config, "summarize_text");
     const countsAfterFirst = {
