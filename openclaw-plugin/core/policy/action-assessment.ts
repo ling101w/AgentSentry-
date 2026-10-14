@@ -67,6 +67,12 @@ export function assessActionWithSensitiveAssets(action: PolicyActionInput, sensi
   if (action.tool === "call_api") actionClass = "network";
   if (action.tool === "shell_exec") actionClass = "execution";
   if (action.tool === "memory_write") actionClass = "memory";
+  if (action.tool === "calendar_write") {
+    actionClass = "write";
+    externalSink = true;
+    persistence = true;
+    reasons.push("calendar changes persistent shared state");
+  }
 
   if (action.tool === "send_email") {
     externalSink = true;
@@ -130,6 +136,7 @@ export function shouldHardBlockTaskMismatch(
 }
 
 export function isTrustSensitiveSink(action: PolicyActionInput, assessment: ActionAssessment): boolean {
+  if (action.tool === "calendar_write") return true;
   if (action.tool === "send_email") return true;
   if (action.tool === "shell_exec") return assessment.highRisk;
   if (action.tool === "memory_write") return true;
@@ -139,6 +146,7 @@ export function isTrustSensitiveSink(action: PolicyActionInput, assessment: Acti
 }
 
 export function sinkForAction(action: PolicyActionInput, assessment: ActionAssessment): TaintSink | null {
+  if (action.tool === "calendar_write") return "call_api";
   if (action.tool === "send_email") return "send_email";
   if (action.tool === "call_api" && assessment.externalSink) return "call_api";
   if (action.tool === "shell_exec" && assessment.highRisk) return "shell_exec";

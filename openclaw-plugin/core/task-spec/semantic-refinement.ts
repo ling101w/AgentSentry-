@@ -6,6 +6,7 @@ import type { DetectionFinding } from "../detect.ts";
 import { clampText, safeStringify } from "../redact.ts";
 import { hostFromUrl } from "../policy/value-utils.ts";
 import { finding } from "../trust.ts";
+import { intersectOptional } from "./constraints.ts";
 import {
   DEFAULT_CAPABILITY_TTL_TURNS,
   DEFAULT_MAX_BYTES,
@@ -54,6 +55,7 @@ export type TaskSpecRefinementResult = {
 };
 
 const CANONICAL_TOOLS = [
+  "calendar_write",
   "read_webpage",
   "call_api",
   "read_file",
@@ -278,10 +280,10 @@ function parseCapabilities(value: unknown): SemanticCapability[] {
       resourceType,
       effect,
       targets,
-      allowedMethods: parseStringArray(obj.allowedMethods, 6).map((method) => method.toUpperCase()),
-      allowedPaths: parseStringArray(obj.allowedPaths, 8),
-      allowedHosts: parseStringArray(obj.allowedHosts, 8).map((host) => host.toLowerCase()),
-      allowedRecipients: parseStringArray(obj.allowedRecipients, 8).map((recipient) => recipient.toLowerCase()),
+      allowedMethods: obj.allowedMethods === undefined ? undefined : parseStringArray(obj.allowedMethods, 6).map((method) => method.toUpperCase()),
+      allowedPaths: obj.allowedPaths === undefined ? undefined : parseStringArray(obj.allowedPaths, 8),
+      allowedHosts: obj.allowedHosts === undefined ? undefined : parseStringArray(obj.allowedHosts, 8).map((host) => host.toLowerCase()),
+      allowedRecipients: obj.allowedRecipients === undefined ? undefined : parseStringArray(obj.allowedRecipients, 8).map((recipient) => recipient.toLowerCase()),
       confidence,
       evidenceSpan,
     });
@@ -346,18 +348,10 @@ function applyRefinement(
       targets: deterministic.targets.filter((target) => candidate.targets.includes(target)),
       constraints: {
         ...structuredClone(deterministic.constraints),
-        allowedMethods: deterministic.constraints.allowedMethods
-          ? deterministic.constraints.allowedMethods.filter((method) => !candidate.allowedMethods?.length || candidate.allowedMethods.includes(method))
-          : undefined,
-        allowedPaths: deterministic.constraints.allowedPaths
-          ? deterministic.constraints.allowedPaths.filter((path) => !candidate.allowedPaths?.length || candidate.allowedPaths.includes(path))
-          : undefined,
-        allowedHosts: deterministic.constraints.allowedHosts
-          ? deterministic.constraints.allowedHosts.filter((host) => !candidate.allowedHosts?.length || candidate.allowedHosts.includes(host))
-          : undefined,
-        allowedRecipients: deterministic.constraints.allowedRecipients
-          ? deterministic.constraints.allowedRecipients.filter((recipient) => !candidate.allowedRecipients?.length || candidate.allowedRecipients.includes(recipient))
-          : undefined,
+        allowedMethods: intersectOptional(deterministic.constraints.allowedMethods, candidate.allowedMethods),
+        allowedPaths: intersectOptional(deterministic.constraints.allowedPaths, candidate.allowedPaths),
+        allowedHosts: intersectOptional(deterministic.constraints.allowedHosts, candidate.allowedHosts),
+        allowedRecipients: intersectOptional(deterministic.constraints.allowedRecipients, candidate.allowedRecipients),
         maxCalls: deterministic.constraints.maxCalls,
         maxBytes: deterministic.constraints.maxBytes,
       },
@@ -452,7 +446,7 @@ function validateSemanticCapability(candidate: SemanticCapability, taskSpec: Tas
   if (candidate.resourceType === "api") {
     const invalidHost = candidate.targets.some((target) => !hostFromUrl(target));
     if (invalidHost) return "invalid_api_target";
-    if (candidate.effect !== "read_only" && !candidate.allowedMethods?.every((method) => ["POST", "PUT", "PATCH", "DELETE"].includes(method))) {
+    if (candidate.effect !== "read_only" && (!candidate.allowedMethods?.length || !candidate.allowedMethods.every((method) => ["POST", "PUT", "PATCH", "DELETE"].includes(method)))) {
       return "api_side_effect_requires_explicit_method";
     }
   }
@@ -479,15 +473,16 @@ function constructGapFillCapability(
 
   const targets = candidate.targets;
   const constraints: TaskCapability["constraints"] = {};
-  if (candidate.allowedMethods?.length) constraints.allowedMethods = unique(candidate.allowedMethods.map((item) => item.toUpperCase()));
-  if (candidate.allowedHosts?.length) constraints.allowedHosts = unique(candidate.allowedHosts.map((item) => item.toLowerCase()));
+  if (candidate.allowedMethods !== undefined) constraints.allowedMethods = unique(candidate.allowedMethods.map((item) => item.toUpperCase()));
+  else if (candidate.resourceType === "api" && candidate.effect === "read_only") constraints.allowedMethods = ["GET", "HEAD"];
+  if (candidate.allowedHosts !== undefined) constraints.allowedHosts = unique(candidate.allowedHosts.map((item) => item.toLowerCase()));
   if (candidate.resourceType === "email") {
     constraints.allowedRecipients = unique(
-      (candidate.allowedRecipients?.length ? candidate.allowedRecipients : targets).map((item) => item.toLowerCase()),
+      (candidate.allowedRecipients ?? targets).map((item) => item.toLowerCase()),
     );
   }
   if (candidate.resourceType === "file") {
-    constraints.allowedPaths = candidate.allowedPaths?.length ? unique(candidate.allowedPaths) : targets.slice();
+    constraints.allowedPaths = candidate.allowedPaths !== undefined ? unique(candidate.allowedPaths) : targets.slice();
   }
   if (candidate.effect !== "read_only") {
     constraints.maxCalls = DEFAULT_MAX_CALLS;
@@ -611,6 +606,7 @@ function targetIsConcrete(target: string): boolean {
 }
 
 function capabilityTools(capability: TaskCapability): string[] {
+  if (capability.resourceType === "calendar") return ["calendar_write"];
   if (capability.resourceType === "email") return ["send_email"];
   if (capability.resourceType === "file") return capability.action === "read" ? ["read_file"] : ["write_file"];
   if (capability.resourceType === "api") return capability.action === "read" ? ["read_webpage", "call_api"] : ["call_api"];

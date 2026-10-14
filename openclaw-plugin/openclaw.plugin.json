@@ -240,6 +240,16 @@
             "items": { "type": "string" },
             "description": "Public HTTP hosts allowed for call_api and read_webpage execution. Empty means host allowlist is not enforced; SSRF address checks still apply."
           },
+          "allowedPrivateCidrs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Explicit private address CIDRs for dashboard HTTP business tools; does not authorize loopback, link-local or metadata."
+          },
+          "allowedLoopbackOrigins": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Exact scheme/host/port origins permitted to resolve to loopback."
+          },
           "allowedWriteRoots": {
             "type": "array",
             "items": { "type": "string" },

@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { PluginConfig } from "../../config.ts";
 import { detectToolCall } from "../../core/detect.ts";
 import { validateSemanticActionGraph } from "../../core/semantic-action-graph.ts";
@@ -10,6 +13,11 @@ import {
   updateAfterMessage,
   updateTaskSpec,
 } from "../../core/policy.ts";
+
+const temporaryRoots: string[] = [];
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 describe("policy integration chain", () => {
   it("does not carry legacy denied proposals into a replacement TaskSpec", () => {
@@ -72,6 +80,11 @@ describe("policy integration chain", () => {
   });
 
   it("allows an authorized workspace note write through apply_patch", () => {
+    const root = mkdtempSync(join(tmpdir(), "agentsentry-policy-patch-"));
+    temporaryRoots.push(root);
+    const workspaceDir = join(root, ".openclaw", "workspace");
+    mkdirSync(workspaceDir, { recursive: true });
+    const targetPath = join(workspaceDir, "notes", "standup-2026-08-20.md").replace(/\\/g, "/");
     const config = new PluginConfig();
     config.semantic.enabled = false;
     const state = createPolicyState();
@@ -82,12 +95,12 @@ describe("policy integration chain", () => {
     const result = detectToolCall("apply_patch", {
       input: [
         "*** Begin Patch",
-        "*** Add File: /root/.openclaw/workspace/notes/standup-2026-08-20.md",
+        `*** Add File: ${targetPath}`,
         "+昨日完成插件联调。",
         "*** End Patch",
       ].join("\n"),
-    }, config, state, [], { workspaceDir: "/root/.openclaw/workspace" });
-    expect(result.policy.action.args.path).toBe("/root/.openclaw/workspace/notes/standup-2026-08-20.md");
+    }, config, state, [], { workspaceDir });
+    expect(result.policy.action.args.path).toBe(targetPath);
     expect(result.decision).toBe("allow");
   });
 

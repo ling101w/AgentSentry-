@@ -24,6 +24,8 @@ export function formatApprovalDescription(input: {
   toolName: string;
   toolCallId?: string;
   paramPreview: unknown;
+  dataSources?: string[];
+  sideEffect?: string;
   riskScore: number;
   reasons: string[];
   violations: string[];
@@ -40,6 +42,11 @@ export function formatApprovalDescription(input: {
   maxChars: number;
 }): string {
   const params = typeof input.paramPreview === "string" ? input.paramPreview : safeStringify(input.paramPreview);
+  const targetKeys = ["url", "href", "endpoint", "path", "file", "filename", "attachment", "attachments", "recipient", "recipients", "to", "target", "command", "cmd"];
+  const targetParams = input.paramPreview && typeof input.paramPreview === "object" && !Array.isArray(input.paramPreview)
+    ? Object.fromEntries(targetKeys.filter((key) => key in (input.paramPreview as Record<string, unknown>)).map((key) => [key, (input.paramPreview as Record<string, unknown>)[key]]))
+    : {};
+  const targets = Object.keys(targetParams).length ? safeStringify(targetParams) : "";
   const detail = uniqueStrings(input.violations.length ? input.violations : input.reasons).map(humanizeReason).slice(0, 4);
   const judgeFindings = (input.findings || []).filter((finding) =>
     finding.finding_type === "semantic"
@@ -58,12 +65,15 @@ export function formatApprovalDescription(input: {
       [
         "玄鉴需要人工审批此工具调用。",
         `工具：${input.toolName}`,
+        targets ? `目标：${targets}` : "",
+        params ? `目标及参数：${params}` : "",
+        input.sideEffect ? `副作用类型：${input.sideEffect}` : "",
+        input.dataSources?.length ? `数据来源：${uniqueStrings(input.dataSources).join("；")}` : "",
         input.toolCallId ? `调用 ID：${input.toolCallId}` : "",
         `风险分：${input.riskScore}${input.decision ? `；策略决策：${input.decision}` : ""}`,
         detail.length ? `规则命中：${detail.join("；")}` : "",
         `LLM-Judge 分析：${uniqueStrings(judgeAnalysis).slice(0, 3).join("；")}`,
         "建议：只有在本次任务明确授权该工具、目标路径、收件人或外部接口时才允许；不确定时拒绝。",
-        params ? `参数摘要：${params}` : "",
       ]
         .filter(Boolean)
         .join("\n"),
@@ -74,10 +84,13 @@ export function formatApprovalDescription(input: {
   return clampText(
     [
       `工具：${input.toolName}`,
+      targets ? `目标：${targets}` : "",
+      params ? `目标及参数：${params}` : "",
+      input.sideEffect ? `副作用类型：${input.sideEffect}` : "",
+      input.dataSources?.length ? `数据来源：${uniqueStrings(input.dataSources).join("；")}` : "",
       input.toolCallId ? `调用 ID：${input.toolCallId}` : "",
       `风险分：${input.riskScore}`,
       detail.length ? `原因：${detail.join("；")}` : "",
-      params ? `参数摘要：${params}` : "",
     ]
       .filter(Boolean)
       .join("\n"),

@@ -95,3 +95,22 @@ atbench_p0_metric_semantics_refined.zip
 output/*
 !output/README.md
 !output/*.tar.gz
+
+# Local dashboard runs and packaged plugin builds.
+artifacts/dashboard-*
+openclaw-plugin/openclaw-plugin.zip
+
+# xuanjian-2.0: synthetic sets are regenerable (data/synthetic/generate_v2.py).
+xuanjian-2.0/data/synthetic/*.json
+xuanjian-2.0/data/synthetic/*.png
+xuanjian-2.0/data/synthetic_*/
+# Real-session evidence packs contain live credentials from the user's own
+# research sessions; keep them local. Replay attack packs are safe to share.
+xuanjian-2.0/data/annotation/evidence/*.md
+xuanjian-2.0/data/replay/*.bak
+xuanjian-2.0/data/replay/*.log
+xuanjian-2.0/data/replay/*.pid
+xuanjian-2.0/wsl_temp_check.txt
+# Human annotation results are versioned despite the global *.jsonl rule.
+!xuanjian-2.0/data/annotation/annotations.v*.jsonl
+!xuanjian-2.0/data/annotation/evidence_manifest.jsonl

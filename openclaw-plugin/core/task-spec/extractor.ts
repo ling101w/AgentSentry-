@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { intersectOptional } from "./constraints.ts";
+import { calendarCreationCapabilities, calendarTaskBoundCapabilities } from "./calendar.ts";
 import type {
   CapabilityAction,
   CapabilityEffect,
@@ -18,6 +20,7 @@ const CANONICAL_TOOLS = [
   "memory_read",
   "memory_write",
   "shell_exec",
+  "calendar_write",
 ];
 
 const ACTION_DENIALS: Array<[string, RegExp]> = [
@@ -107,7 +110,15 @@ export function deriveTaskSpecV2(
   // (P0-1) Merging must never cross clause boundaries: keep one capability per
   // (action, resourceType, effect, clause) so "send A to Alice; send B to Bob"
   // stays two capabilities instead of a cartesian {A,B} -> {Alice,Bob}.
-  const merged = mergeCapabilities(capabilities);
+  const authoritative = stripNonAuthoritativeText(normalized);
+  const exactCalendar = /\b(?:same participants?|based on (?:the )?emails?|from (?:the )?emails?)\b/i.test(authoritative)
+    ? []
+    : calendarCreationCapabilities(normalized, authoritative, source);
+  const merged = [
+    ...mergeCapabilities(capabilities),
+    ...exactCalendar,
+    ...(exactCalendar.length ? [] : calendarTaskBoundCapabilities(normalized, authoritative, source)),
+  ];
   const taskFamily = classifyTaskFamily(merged);
   const taskConfidence = taskConfidenceScore(merged);
   // (P1) Denials are collected clause-locally so a negated send in one clause
@@ -263,7 +274,8 @@ function candidatesForClause(clause: string): Candidate[] {
 }
 
 function explicitSend(text: string): boolean {
-  return /\b(?:please\s+)?(?:send|email|mail|forward)\b/i.test(text)
+  const instruction = text.replace(/\b(?:e-?mail)\s+(?:address|addresses|account|accounts)\b/gi, "contact address");
+  return /\b(?:please\s+)?(?:send|email|mail|forward)\b/i.test(instruction)
     || /(?:请|帮我|现在|直接)?(?:把|将).{0,80}(?:发送给|发送到|发送至|发给|邮件给)/i.test(text)
     || /(?:请|帮我)?给\s*[^，,。；;]{1,80}(?:发|发送).{0,30}(?:邮件|报告|文件|消息)/i.test(text)
     || /^\s*(?:(?:请|帮我|现在|直接)\s*)?(?:发送|发邮件|外发).{0,80}(?:给|到)/i.test(text);
@@ -550,6 +562,7 @@ function compactConstraints(candidate: Candidate): TaskCapability["constraints"]
 }
 
 function capabilityTools(capability: TaskCapability): string[] {
+  if (capability.resourceType === "calendar" && capability.action === "write") return ["calendar_write"];
   if (capability.resourceType === "file" && capability.action === "read") return ["read_file"];
   if (capability.resourceType === "file" && capability.action === "write") return ["write_file"];
   if (capability.resourceType === "email" && capability.action === "send") return ["send_email"];
@@ -650,20 +663,6 @@ function dedupeCandidates(candidates: Candidate[]): Candidate[] {
     seen.add(key);
     return true;
   });
-}
-
-function mergeOptional(left?: string[], right?: string[]): string[] | undefined {
-  const merged = unique([...(left || []), ...(right || [])]);
-  return merged.length ? merged : undefined;
-}
-
-/** (P0-1) Constraint intersection: repeated grants only reaffirm, never widen. */
-function intersectOptional(left?: string[], right?: string[]): string[] | undefined {
-  if (!left?.length) return right?.length ? [...right] : undefined;
-  if (!right?.length) return [...left];
-  const rightSet = new Set(right);
-  const intersection = left.filter((item) => rightSet.has(item));
-  return intersection.length ? intersection : undefined;
 }
 
 function classifyTaskFamily(capabilities: TaskCapability[]): TaskSpec["task_family"] {

@@ -89,6 +89,9 @@ const services: Service[] = [];
 afterEach(async () => {
   for (const service of services.splice(0)) await service.stop();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  delete process.env.AGENTSENTRY_HOOK_BUDGET_KEY;
 });
 
 function createHarness(overrides: Record<string, any> = {}): Harness {
@@ -153,6 +156,22 @@ async function flushRecords(): Promise<void> {
 }
 
 describe("OpenClaw plugin hooks", () => {
+  it("returns deterministic blocks without waiting for Judge or shadow scoring", async () => {
+    const harness = createHarness({ semantic: { enabled: true, mode: "full", apiKeyEnv: "AGENTSENTRY_HOOK_BUDGET_KEY" }, graphLearning: { enabled: true } });
+    await harness.service.start();
+    const fetchMock = vi.fn(() => new Promise(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.AGENTSENTRY_HOOK_BUDGET_KEY = "fixture";
+    let resolveShadow!: (value: null) => void;
+    const shadow = vi.spyOn(plugin.graphShadow!, "score").mockImplementation(() => new Promise((resolve) => { resolveShadow = resolve; }));
+    const result = await invoke(harness, "before_tool_call", {
+      toolName: "shell_exec", toolCallId: "hard-deny-no-model", params: { command: "rm -rf /" },
+    }, { sessionKey: "hooks:hard-no-model", workspaceDir: harness.stateDir });
+    expect(result).toMatchObject({ block: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(shadow).toHaveBeenCalledTimes(1));
+    resolveShadow(null);
+  });
   it("returns the authenticated access URL from the dashboard command without persisting its token", async () => {
     const harness = createHarness({ dashboard: { enabled: true, port: 0 } });
     await harness.service.start();
@@ -277,14 +296,15 @@ describe("OpenClaw plugin hooks", () => {
       params: { command: "rm -rf /" },
     };
     const denied = await invoke(harness, "before_tool_call", dangerousEvent, denyContext);
-    expect(denied).toMatchObject({ requireApproval: { timeoutBehavior: "deny" } });
-    denied.requireApproval.onResolution("allow-always");
+    expect(denied).toMatchObject({ block: true });
+    expect(denied).not.toHaveProperty("requireApproval");
 
     const deniedAgain = await invoke(harness, "before_tool_call", {
       ...dangerousEvent,
       toolCallId: "tool-deny-2",
     }, denyContext);
-    expect(deniedAgain).toMatchObject({ requireApproval: { timeoutBehavior: "deny" } });
+    expect(deniedAgain).toMatchObject({ block: true });
+    expect(deniedAgain).not.toHaveProperty("requireApproval");
     await flushRecords();
 
     const decisions = readRecords(harness).filter((record) => record.type === "tool_decision");
@@ -320,6 +340,25 @@ describe("OpenClaw plugin hooks", () => {
     ]);
     expect((harness.command.handler({ args: "approvals status" }) as { text: string }).text).toContain("1 exact operation");
     expect(plugin.performanceMetrics.snapshot()).toMatchObject({ sample_count: 5 });
+  });
+
+  it("requires approval for ask in block mode and keeps observe non-enforcing", async () => {
+    for (const mode of ["block", "observe"]) {
+      const harness = createHarness({ enforcement: { mode } });
+      await harness.service.start();
+      const context = { sessionKey: `hooks:${mode}:ask`, workspaceDir: harness.stateDir };
+      await invoke(harness, "before_prompt_build", { messages: [{ role: "user", content: "Review project status." }] }, context);
+      const result = await invoke(harness, "before_tool_call", {
+        toolName: "write_file", toolCallId: `ask-${mode}`, params: { path: "reports/unrequested.md", content: "status" },
+      }, context);
+      if (mode === "block") {
+        expect(result).toMatchObject({ requireApproval: { timeoutBehavior: "deny" } });
+        result.requireApproval.onResolution("allow-invalid");
+        await flushRecords();
+        expect(readRecords(harness).find((record) => record.type === "approval_resolution")?.severity).toBe("warning");
+      } else expect(result).toBeUndefined();
+      await harness.service.stop();
+    }
   });
 
   it("labels contaminated tool output, records runtime audit, and covers exactly one assistant response", async () => {
@@ -454,9 +493,9 @@ describe("OpenClaw plugin hooks", () => {
     const harness = createHarness();
     await harness.service.start();
     await invoke(harness, "before_tool_call", {
-      toolName: "read_webpage",
+      toolName: "write_file",
       toolCallId: "pending-lru-call",
-      params: { url: "https://vendor.example/report" },
+      params: { path: "reports/unrequested.md", content: "status" },
     }, {
       sessionKey: "hooks:lru:pending",
       workspaceDir: harness.stateDir,

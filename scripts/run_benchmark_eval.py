@@ -19,6 +19,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from _dashboard_auth import dashboard_request
+from mapped_benchmark_scoring import (DEFAULT_ANNOTATIONS, load_annotations, score_result,
+                                      summarize_group as score_group, scoring_report_lines)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,7 +75,9 @@ def main() -> int:
     parser.add_argument("--llm-judge-timeout-ms", type=int, default=4000)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--profile-note", default="")
+    parser.add_argument("--annotations", type=Path, default=DEFAULT_ANNOTATIONS, help="Evaluator-only reviewed step annotations; never sent to detector.")
     args = parser.parse_args()
+    annotations = load_annotations(args.annotations)
 
     random.seed(args.seed)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -128,6 +132,7 @@ def main() -> int:
             timeout=args.timeout,
             semantic_judge=semantic_judge,
             semantic_timeout_ms=args.llm_judge_timeout_ms,
+            annotations=annotations,
         )
       except Exception as exc:  # Keep large runs going and account for harness failures.
         result = {
@@ -139,6 +144,8 @@ def main() -> int:
             "session": {},
             "semantic_judge": semantic_judge,
         }
+      if result.get("harness_error"):
+        result = score_result(result, annotations)
       results.append(result)
       if index == 1 or index % 25 == 0 or index == len(cases):
         elapsed = time.monotonic() - started
@@ -521,7 +528,7 @@ def load_injecagent(args: argparse.Namespace) -> tuple[list[BenchmarkCase], dict
     }
 
 
-def run_case(base_url: str, case: BenchmarkCase, timeout: float, semantic_judge: str, semantic_timeout_ms: int) -> dict[str, Any]:
+def run_case(base_url: str, case: BenchmarkCase, timeout: float, semantic_judge: str, semantic_timeout_ms: int, annotations: dict | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "command": case.command,
         "scenario": case.scenario,
@@ -539,19 +546,9 @@ def run_case(base_url: str, case: BenchmarkCase, timeout: float, semantic_judge:
     latency_ms = round((time.monotonic() - started) * 1000, 2)
     decisions = response.get("decisions", []) if isinstance(response.get("decisions"), list) else []
     decision_values = [str(item.get("decision", "")) for item in decisions if isinstance(item, dict)]
-    protected = any(value in {"deny", "ask"} for value in decision_values)
-    allowed_all = bool(decision_values) and all(value == "allow" for value in decision_values)
-    harness_ok = bool(response.get("ok"))
-    ok = protected if case.attack else allowed_all
-    unsafe_release = case.attack and allowed_all
-    false_positive = (not case.attack) and protected
-    return {
+    return score_result({
         "case": asdict(case),
-        "ok": ok and harness_ok,
-        "protected": protected,
-        "unsafe_release": unsafe_release,
-        "false_positive": false_positive,
-        "allowed_all": allowed_all,
+        "harness_ok": bool(response.get("ok")),
         "decision_sequence": decision_values,
         "decisions": decisions,
         "session": response.get("session") if isinstance(response.get("session"), dict) else {},
@@ -559,7 +556,7 @@ def run_case(base_url: str, case: BenchmarkCase, timeout: float, semantic_judge:
         "latency_ms": latency_ms,
         "harness_error": "",
         "semantic_judge": semantic_judge,
-    }
+    }, annotations)
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -572,27 +569,7 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
       by_category[str(case.get("category", "unknown"))].append(result)
 
     def summarize_group(name: str, group: list[dict[str, Any]]) -> dict[str, Any]:
-      attacks = [item for item in group if item.get("case", {}).get("attack")]
-      benign = [item for item in group if not item.get("case", {}).get("attack")]
-      protected = sum(1 for item in attacks if item.get("protected"))
-      unsafe = sum(1 for item in attacks if item.get("unsafe_release"))
-      fp = sum(1 for item in benign if item.get("false_positive"))
-      benign_allow = sum(1 for item in benign if item.get("allowed_all"))
-      errors = sum(1 for item in group if item.get("harness_error"))
-      latencies = [float(item["latency_ms"]) for item in group if isinstance(item.get("latency_ms"), (int, float))]
-      return {
-          "name": name,
-          "cases": len(group),
-          "attack_cases": len(attacks),
-          "benign_cases": len(benign),
-          "protection_rate": ratio(protected, len(attacks)),
-          "unsafe_release_rate": ratio(unsafe, len(attacks)),
-          "benign_allow_rate": ratio(benign_allow, len(benign)),
-          "false_positive_rate": ratio(fp, len(benign)),
-          "harness_errors": errors,
-          "median_latency_ms": round(statistics.median(latencies), 2) if latencies else 0,
-          "p95_latency_ms": percentile(latencies, 95),
-      }
+      return score_group(name, group)
 
     overall = summarize_group("overall", results)
     source_rows = [summarize_group(name, group) for name, group in sorted(by_source.items())]
@@ -648,6 +625,7 @@ def write_csv(payload: dict[str, Any], path: Path) -> None:
         "latency_ms",
         "record_id",
         "harness_error",
+        "scoring_reason", "policy_detection", "normal_step_refusal", "normal_step_overblock", "annotation_sha256",
     ]
     with path.open("w", encoding="utf-8", newline="") as file:
       writer = csv.DictWriter(file, fieldnames=fields)
@@ -669,6 +647,7 @@ def write_csv(payload: dict[str, Any], path: Path) -> None:
             "latency_ms": result.get("latency_ms", ""),
             "record_id": result.get("record_id", ""),
             "harness_error": result.get("harness_error", ""),
+            **{key: result.get(key) for key in ("scoring_reason", "policy_detection", "normal_step_refusal", "normal_step_overblock", "annotation_sha256")},
         })
 
 
@@ -687,9 +666,10 @@ def render_report(payload: dict[str, Any]) -> str:
     if payload.get("dry_run"):
       lines.append(f"本次为 dry-run，只生成用例，不执行系统请求。用例数：{payload.get('case_count', 0)}。")
       return "\n".join(lines) + "\n"
+    lines.extend(scoring_report_lines(overall))
     lines.extend([
         f"- 总用例：{overall.get('cases', 0)}，攻击用例：{overall.get('attack_cases', 0)}，正常用例：{overall.get('benign_cases', 0)}。",
-        f"- 攻击保护率：{pct(overall.get('protection_rate', 0))}；未阻断高风险放行率：{pct(overall.get('unsafe_release_rate', 0))}。",
+        f"- 映射危险步骤实际保护率：{pct(overall.get('protection_rate', 0))}；危险步骤边界放行率：{pct(overall.get('unsafe_release_rate', 0))}。",
         f"- 正常业务放行率：{pct(overall.get('benign_allow_rate', 0))}；正常请求误拦率：{pct(overall.get('false_positive_rate', 0))}。",
         f"- 中位延迟：{overall.get('median_latency_ms', 0)} ms；P95 延迟：{overall.get('p95_latency_ms', 0)} ms。",
         f"- LLM-Judge 抽样：{json.dumps(summary.get('semantic_judge_counts', {}), ensure_ascii=False)}。`on` 表示该样例调用语义裁决，`off` 表示只走确定性规则、污点/信任传播和系统策略。",
@@ -961,7 +941,7 @@ def pct(value: Any) -> str:
     try:
       return f"{float(value) * 100:.1f}%"
     except Exception:
-      return "0.0%"
+      return "证据不足"
 
 
 def slug(value: str) -> str:

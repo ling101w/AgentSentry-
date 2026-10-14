@@ -1,0 +1,91 @@
+{
+  "device": "cpu",
+  "model_params": 198546,
+  "hidden_dim": 64,
+  "num_layers": 3,
+  "checkpoint": "checkpoints_v2/best_model.pth",
+  "data_dir": "E:\\cslearn\\AgentSentry\\xuanjian\\AgentSentry\\xuanjian-2.0\\data\\synthetic_v2",
+  "num_graphs": 1000,
+  "profile": {
+    "nodes_per_graph": {
+      "mean": 8.57,
+      "median": 8.5,
+      "min": 3,
+      "max": 14
+    },
+    "edges_per_graph": {
+      "mean": 10.27,
+      "median": 10.0,
+      "min": 2,
+      "max": 18
+    }
+  },
+  "sweep": {
+    "1": {
+      "batch_size": 1,
+      "num_batches": 1000,
+      "batch_ms_avg": 11.1994,
+      "batch_ms_med": 11.3924,
+      "batch_ms_std": 1.656,
+      "batch_ms_p95": 13.4388,
+      "batch_ms_p99": 14.2408,
+      "graphs_per_sec": 87.8,
+      "graph_ms_avg": 11.1994,
+      "graph_ms_med": 11.3924,
+      "graph_ms_std": 1.656
+    },
+    "4": {
+      "batch_size": 4,
+      "num_batches": 250,
+      "batch_ms_avg": 14.733,
+      "batch_ms_med": 14.382,
+      "batch_ms_std": 1.3065,
+      "batch_ms_p95": 17.2045,
+      "batch_ms_p99": 18.1907,
+      "graphs_per_sec": 278.1,
+      "graph_ms_avg": 3.6832,
+      "graph_ms_med": 3.5955,
+      "graph_ms_std": 0.3261
+    },
+    "8": {
+      "batch_size": 8,
+      "num_batches": 125,
+      "batch_ms_avg": 16.591,
+      "batch_ms_med": 16.1411,
+      "batch_ms_std": 1.8119,
+      "batch_ms_p95": 19.7321,
+      "batch_ms_p99": 21.8252,
+      "graphs_per_sec": 495.6,
+      "graph_ms_avg": 2.0739,
+      "graph_ms_med": 2.0176,
+      "graph_ms_std": 0.2257
+    },
+    "16": {
+      "batch_size": 16,
+      "num_batches": 63,
+      "batch_ms_avg": 21.5633,
+      "batch_ms_med": 22.2004,
+      "batch_ms_std": 3.5271,
+      "batch_ms_p95": 26.1763,
+      "batch_ms_p99": 32.2295,
+      "graphs_per_sec": 720.7,
+      "graph_ms_avg": 1.3585,
+      "graph_ms_med": 1.3912,
+      "graph_ms_std": 0.2059
+    },
+    "32": {
+      "batch_size": 32,
+      "num_batches": 32,
+      "batch_ms_avg": 24.9964,
+      "batch_ms_med": 24.105,
+      "batch_ms_std": 3.8025,
+      "batch_ms_p95": 32.8392,
+      "batch_ms_p99": 34.3016,
+      "graphs_per_sec": 1327.5,
+      "graph_ms_avg": 0.7999,
+      "graph_ms_med": 0.7549,
+      "graph_ms_std": 0.1827
+    }
+  },
+  "recommendation": "large-batch"
+}

@@ -1,0 +1,5 @@
+arm,ASR,FPR,benign_utility,attack_trials,benign_trials,reportable,run_id
+no_defense,0.61,0.0,0.875,100,40,True,agentdojo-native-20260811T063554Z-e65f358b
+risk_based,0.01,0.25,0.675,100,40,True,agentdojo-native-20260811T081157Z-e0ce738c
+evidence_gated,0.0,0.0,0.925,100,40,True,agentdojo-native-20260814T080717Z-0c80934f
+agentward,0.02,0.025,0.975,100,40,False,agentdojo-native-20260818T002106Z-3080364c

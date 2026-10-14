@@ -175,9 +175,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bridge-timeout", type=float, default=20.0)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--max-trials", type=int, help="Development-only prefix limit; the result remains partial.")
+    parser.add_argument("--task-ids", help="Development-only comma-separated user task ids to run from the frozen selection.")
     parser.add_argument("--allow-dirty", action="store_true", help="Allow a non-reportable development run from a dirty worktree.")
     parser.add_argument("--allow-no-judge", action="store_true", help="Disable semantic Judge and mark the run non-reportable.")
     parser.add_argument("--publish", action="store_true", help="Replace the canonical result only after a clean complete run.")
+    parser.add_argument("--retry-from", type=Path, help="Retry only error trials from a previous native run directory and merge the replacement rows.")
     return parser
 
 
@@ -244,7 +246,15 @@ def load_agentdojo_api() -> SimpleNamespace:
             )
         from agentdojo.agent_pipeline.agent_pipeline import AgentPipeline, PipelineConfig
         from agentdojo.agent_pipeline.ground_truth_pipeline import GroundTruthPipeline
+        from agentdojo.agent_pipeline.llms.openai_llm import (
+            OpenAILLM,
+            _function_to_openai,
+            _message_to_openai,
+            _openai_to_assistant_message,
+        )
         from agentdojo.attacks import load_attack
+        from agentdojo.attacks.base_attacks import FixedJailbreakAttack
+        from agentdojo.attacks.important_instructions_attacks import ToolKnowledgeAttack
         from agentdojo.functions_runtime import FunctionsRuntime
         from agentdojo.models import ModelsEnum
         from agentdojo.task_suite.load_suites import get_suite
@@ -261,8 +271,14 @@ def load_agentdojo_api() -> SimpleNamespace:
         GroundTruthPipeline=GroundTruthPipeline,
         FunctionsRuntime=FunctionsRuntime,
         ModelsEnum=ModelsEnum,
+        OpenAILLM=OpenAILLM,
+        function_to_openai=_function_to_openai,
+        message_to_openai=_message_to_openai,
+        openai_to_assistant_message=_openai_to_assistant_message,
         get_suite=get_suite,
         load_attack=load_attack,
+        FixedJailbreakAttack=FixedJailbreakAttack,
+        ToolKnowledgeAttack=ToolKnowledgeAttack,
         package_version=package_version,
     )
 
@@ -450,30 +466,145 @@ def run_native(
     args: argparse.Namespace,
     working_tree_dirty: bool,
 ) -> int:
+    release_commit = git_commit()
+    source_before = native_source_snapshot()
+    runtime_config_sha256 = native_runtime_config_hash(args)
+    previous_manifest = load_json(args.retry_from / "manifest.json") if args.retry_from else None
     if args.max_trials is not None and args.max_trials < 1:
         raise NativeSetupError("--max-trials must be at least 1")
-    try:
-        model = api.ModelsEnum(args.model)
-    except Exception as exc:
-        choices = ", ".join(str(value) for value in api.ModelsEnum)
-        raise NativeSetupError(f"unsupported AgentDojo model {args.model!r}; choose one of: {choices}") from exc
+    client = None
+    if args.model == "openai-compatible":
+        import httpx
+        import openai
+
+        base_url = os.environ.get("OPENAI_COMPATIBLE_BASE_URL", "").strip()
+        api_key = os.environ.get("OPENAI_COMPATIBLE_API_KEY", "").strip()
+        if not base_url or not api_key or not args.model_id:
+            raise NativeSetupError(
+                "openai-compatible requires OPENAI_COMPATIBLE_BASE_URL, "
+                "OPENAI_COMPATIBLE_API_KEY and --model-id"
+            )
+        client = openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=float(os.environ.get("AGENTSENTRY_NATIVE_REQUEST_TIMEOUT", "60")),
+            max_retries=0,
+            http_client=httpx.Client(
+                timeout=float(os.environ.get("AGENTSENTRY_NATIVE_REQUEST_TIMEOUT", "60")),
+                follow_redirects=False,
+            ),
+        )
+
+        class CompatibleLLM(api.OpenAILLM):
+            name = args.model_id
+
+            def query(self, query, runtime, env, messages=(), extra_args=None):
+                converted = [api.message_to_openai(message, self.model) for message in messages]
+                for message in converted:
+                    if message["role"] == "developer":
+                        message["role"] = "system"
+                    if isinstance(message.get("content"), list):
+                        message["content"] = "\n".join(part.get("text", "") for part in message["content"])
+                tools = [api.function_to_openai(function) for function in runtime.functions.values()]
+                body = {
+                    "model": args.model_id,
+                    "messages": converted,
+                    "temperature": 0,
+                    "max_tokens": 2048,
+                }
+                if tools:
+                    body.update(tools=tools, tool_choice="auto")
+                response = self.client.chat.completions.create(**body)
+                if not response.choices:
+                    raise RuntimeError("EMPTY_PROVIDER_RESPONSE")
+                if response.choices[0].finish_reason == "length":
+                    raise RuntimeError("MODEL_OUTPUT_TRUNCATED")
+                output = api.openai_to_assistant_message(response.choices[0].message)
+                return query, runtime, env, [*messages, output], extra_args or {}
+
+        pipeline = api.AgentPipeline.from_config(
+            api.PipelineConfig(
+                llm=CompatibleLLM(client, args.model_id, temperature=0),
+                model_id=args.model_id,
+                defense=None,
+                tool_delimiter="tool",
+                system_message_name=None,
+                system_message=None,
+                # The workspace suite contains datetime values in tool
+                # outputs. AgentDojo's default formatter handles them; the
+                # JSON formatter attempts a raw json.dumps and fails before
+                # the provider request. Keep custom providers aligned with
+                # the known-good smoke adapter.
+                tool_output_format=None,
+            )
+        )
+    else:
+        try:
+            model = api.ModelsEnum(args.model)
+        except Exception as exc:
+            choices = ", ".join(str(value) for value in api.ModelsEnum)
+            raise NativeSetupError(f"unsupported AgentDojo model {args.model!r}; choose one of: {choices}") from exc
+
+        pipeline = api.AgentPipeline.from_config(
+            api.PipelineConfig(
+                llm=model,
+                model_id=args.model_id,
+                defense=None,
+                tool_delimiter="tool",
+                system_message_name=None,
+                system_message=None,
+                tool_output_format="json",
+            )
+        )
 
     if args.allow_no_judge:
         os.environ["AGENTSENTRY_NATIVE_DISABLE_JUDGE"] = "1"
-    pipeline = api.AgentPipeline.from_config(
-        api.PipelineConfig(
-            llm=model,
-            model_id=args.model_id,
-            defense=None,
-            tool_delimiter="tool",
-            system_message_name=None,
-            system_message=None,
-            tool_output_format="json",
-        )
-    )
-    attacker = api.load_attack(selection["attack"], suite, pipeline)
+    if args.model == "openai-compatible" and selection["attack"] == "tool_knowledge":
+        class CompatibleToolKnowledge(api.ToolKnowledgeAttack):
+            def __init__(self, task_suite, target_pipeline):
+                api.FixedJailbreakAttack.__init__(self, self._JB_STRING, task_suite, target_pipeline)
+                self.user_name = "Emma Johnson"
+                self.model_name = args.model_id
+
+        attacker = CompatibleToolKnowledge(suite, pipeline)
+    else:
+        attacker = api.load_attack(selection["attack"], suite, pipeline)
     trial_specs = build_trial_specs(selection)
-    if args.max_trials is not None:
+    retry_trials: dict[tuple[str, int, int], str] = {}
+    existing_trials: list[dict[str, Any]] = []
+    existing_labels: list[dict[str, Any]] = []
+    existing_transcript: list[dict[str, Any]] = []
+    if args.retry_from:
+        retry_root = args.retry_from.resolve()
+        try:
+            existing_trials = [json.loads(line) for line in (retry_root / PRIVATE_FILE_NAMES["trials"]).read_text(encoding="utf-8").splitlines() if line.strip()]
+            existing_labels = [json.loads(line) for line in (retry_root / PRIVATE_FILE_NAMES["labels"]).read_text(encoding="utf-8").splitlines() if line.strip()]
+            existing_transcript = [json.loads(line) for line in (retry_root / PRIVATE_FILE_NAMES["transcript"]).read_text(encoding="utf-8").splitlines() if line.strip()]
+        except (OSError, json.JSONDecodeError) as exc:
+            raise NativeSetupError(f"cannot read --retry-from artifacts: {retry_root}") from exc
+        failed_ids = {str(row.get("trial_id")) for row in existing_trials if row.get("status") == "error"}
+        labels_by_id = {str(row.get("trial_id")): row for row in existing_labels}
+        retry_specs: list[TrialSpec] = []
+        for trial_id in failed_ids:
+            label = labels_by_id.get(trial_id)
+            if not label:
+                raise NativeSetupError(f"retry source is missing label for failed trial {trial_id}")
+            retry_specs.append(TrialSpec(
+                case_id=str(label["benchmark_case_id"]),
+                user_task_id=str(label["user_task_id"]),
+                injection_task_id=label.get("injection_task_id"),
+                is_attack=bool(label["is_attack"]),
+                seed=int(label["seed"]),
+                repetition=int(label["repetition"]),
+            ))
+            retry_trials[(str(label["benchmark_case_id"]), int(label["seed"]), int(label["repetition"]))] = trial_id
+        trial_specs = sorted(retry_specs, key=lambda item: (item.repetition, item.is_attack, item.user_task_id))
+    if args.task_ids and not args.retry_from:
+        requested_tasks = {item.strip() for item in args.task_ids.split(",") if item.strip()}
+        if not requested_tasks or not requested_tasks.issubset(set(selection["benign_task_ids"]) | {p["user_task_id"] for p in selection["attack_pairs"]}):
+            raise NativeSetupError("--task-ids contains a task outside the frozen selection")
+        trial_specs = [spec for spec in trial_specs if spec.user_task_id in requested_tasks]
+    if args.max_trials is not None and not args.retry_from:
         trial_specs = trial_specs[: args.max_trials]
 
     started_at = datetime.now(UTC)
@@ -481,13 +612,13 @@ def run_native(
     output_dir = args.output_root.resolve() / run_id
     output_dir.mkdir(parents=True, exist_ok=False)
     secret = secrets.token_bytes(32)
-    transcript: list[dict[str, Any]] = []
-    labels: list[dict[str, Any]] = []
-    trials: list[dict[str, Any]] = []
+    transcript: list[dict[str, Any]] = list(existing_transcript)
+    labels: list[dict[str, Any]] = list(existing_labels)
+    trials: list[dict[str, Any]] = list(existing_trials)
 
     for index, spec in enumerate(trial_specs, start=1):
         random.seed(spec.seed)
-        trial_id = opaque_trial_id(secret, spec.case_id, spec.seed, spec.repetition)
+        trial_id = retry_trials.get((spec.case_id, spec.seed, spec.repetition)) or opaque_trial_id(secret, spec.case_id, spec.seed, spec.repetition)
         trial, label = run_trial(
             spec,
             trial_id,
@@ -500,6 +631,8 @@ def run_native(
             args.bridge_timeout,
         )
         validate_native_trial(trial)
+        trials = [row for row in trials if row.get("trial_id") != trial_id]
+        labels = [row for row in labels if row.get("trial_id") != trial_id]
         trials.append(trial)
         labels.append(label)
         print(
@@ -516,6 +649,14 @@ def run_native(
     write_jsonl(trials_path, trials)
 
     finished_at = datetime.now(UTC)
+    source_after = native_source_snapshot()
+    finished_commit = git_commit()
+    final_dirty = git_worktree_dirty() is not False
+    source_unchanged = source_before == source_after and release_commit == finished_commit
+    retry_verified = previous_manifest is None or retry_source_verified(
+        previous_manifest, source_before, release_commit, runtime_config_sha256, canonical_sha256(selection)
+    )
+    runtime_unchanged = native_runtime_config_hash(args) == runtime_config_sha256
     errors = sum(trial["status"] == "error" for trial in trials)
     expected_trials = int(selection["expected"]["trials"])
     detector_events = len(transcript)
@@ -524,6 +665,12 @@ def run_native(
         and errors == 0
         and detector_events > 0
         and not working_tree_dirty
+        and not final_dirty
+        and source_unchanged
+        and runtime_unchanged
+        and retry_verified
+        and os.getenv("AGENTSENTRY_NATIVE_DISABLE_JUDGE") != "1"
+        and os.getenv("AGENTSENTRY_NATIVE_ENFORCEMENT", "block") == "block"
         and not args.allow_no_judge
     )
     status = "complete" if clean_complete else "partial" if detector_events else "failed"
@@ -534,6 +681,8 @@ def run_native(
             "profile": profile,
             "bridge": bridge_metadata,
             "tool_manifest_sha256": sha256_file(TOOL_MANIFEST),
+            "runtime_config_sha256": runtime_config_sha256,
+            "source_sha256": source_before["sha256"],
         }
     )
     public_result = {
@@ -543,8 +692,8 @@ def run_native(
         "status": status,
         "run": {
             "run_id": run_id,
-            "release_commit": git_commit(),
-            "working_tree_dirty": working_tree_dirty,
+            "release_commit": release_commit,
+            "working_tree_dirty": working_tree_dirty or final_dirty,
             "started_at": started_at.isoformat(),
             "finished_at": finished_at.isoformat(),
         },
@@ -595,6 +744,16 @@ def run_native(
         {
             "run_id": run_id,
             "created_after_detector_shutdown": True,
+            "release_commit_before": release_commit,
+            "release_commit_after": finished_commit,
+            "source_snapshot_before": source_before,
+            "source_snapshot_after": source_after,
+            "source_unchanged": source_unchanged,
+            "working_tree_dirty_before": working_tree_dirty,
+            "working_tree_dirty_after": final_dirty,
+            "runtime_config_sha256": runtime_config_sha256,
+            "runtime_unchanged": runtime_unchanged,
+            "retry_source_verified": retry_verified,
             "opaque_id_key_commitment": hashlib.sha256(secret).hexdigest(),
             "selection_sha256": canonical_sha256(selection),
             "tool_manifest_sha256": sha256_file(TOOL_MANIFEST),
@@ -607,13 +766,15 @@ def run_native(
 
     if args.publish:
         if not clean_complete:
-            raise NativeSetupError("--publish requires a clean, complete, error-free run with semantic Judge enabled")
+            raise NativeSetupError("--publish requires a clean, complete, error-free run with semantic Judge enabled and unchanged detector/evaluator sources")
         shutil.copyfile(result_path, CANONICAL_RESULT)
 
     print(json.dumps(public_result["metrics"], ensure_ascii=False, indent=2))
     print(f"public result: {result_path}")
     if args.publish:
         print(f"canonical result: {CANONICAL_RESULT}")
+    if client is not None:
+        client.close()
     return 0 if errors == 0 else 1
 
 
@@ -860,6 +1021,51 @@ def git_commit() -> str:
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise NativeSetupError("Git HEAD is not a full commit hash")
     return commit
+
+
+def native_source_snapshot() -> dict[str, Any]:
+    """Hash executed detector builds and evaluator sources without reading credentials."""
+    files = {
+        BRIDGE_SCRIPT,
+        TOOL_MANIFEST,
+        DETECTOR_EVENT_SCHEMA,
+        Path(__file__).resolve(),
+        ROOT / "openclaw-plugin" / "package.json",
+        ROOT / "pyproject.toml",
+    }
+    for directory, pattern in (
+        (ROOT / "openclaw-plugin" / "dist", "*.js"),
+        (ROOT / "src" / "agentsentry", "*.py"),
+    ):
+        files.update(directory.rglob(pattern))
+    digests = {path.relative_to(ROOT).as_posix(): sha256_file(path) for path in sorted(files)}
+    return {"sha256": canonical_sha256(digests), "files": digests}
+
+
+def native_runtime_config_hash(args: argparse.Namespace) -> str:
+    material = {key: os.getenv(key, "") for key in (
+        "OPENAI_COMPATIBLE_BASE_URL", "OPENAI_BASE_URL", "AGENTSENTRY_NATIVE_PROFILE", "AGENTSENTRY_NATIVE_ENFORCEMENT",
+        "AGENTSENTRY_NATIVE_JUDGE_BASE_URL", "AGENTSENTRY_NATIVE_JUDGE_MODEL", "AGENTSENTRY_NATIVE_JUDGE_TIMEOUT_MS",
+    )}
+    material.update(model=args.model, model_id=args.model_id, allow_no_judge=args.allow_no_judge)
+    material["judge_disabled"] = args.allow_no_judge or os.getenv("AGENTSENTRY_NATIVE_DISABLE_JUDGE") == "1"
+    return canonical_sha256(material)
+
+
+def retry_source_verified(manifest: Mapping[str, Any], snapshot: Mapping[str, Any], commit: str,
+                          runtime_hash: str, selection_hash: str) -> bool:
+    return (
+        manifest.get("source_snapshot_before") == snapshot
+        and manifest.get("source_snapshot_after") == snapshot
+        and manifest.get("release_commit_before") == commit
+        and manifest.get("release_commit_after") == commit
+        and manifest.get("source_unchanged") is True
+        and manifest.get("working_tree_dirty_before") is False
+        and manifest.get("working_tree_dirty_after") is False
+        and manifest.get("runtime_unchanged") is True
+        and manifest.get("runtime_config_sha256") == runtime_hash
+        and manifest.get("selection_sha256") == selection_hash
+    )
 
 
 def git_worktree_dirty() -> bool | None:

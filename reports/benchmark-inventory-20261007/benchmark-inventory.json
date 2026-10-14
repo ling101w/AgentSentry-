@@ -1,0 +1,357 @@
+{
+  "generated_at": "2026-10-07T12:07:29.158199+00:00",
+  "roots": [
+    "reports",
+    "evaluation",
+    "benchmarks",
+    "runtime"
+  ],
+  "files_scanned": 214,
+  "result_objects": 41,
+  "unique_content": 38,
+  "unique_objects": 35,
+  "rows": [
+    {
+      "path": "reports\\dashboard-execution-acceptance-20261006.json",
+      "sha256": "fd7e06c002da908ffeeefcc73704754e14bf1d87dedd4a5fff9afb3a98042805",
+      "count": 8,
+      "generated_at": "2026-10-06T09:12:05.837Z",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\native-calendar-fix-20261006.json",
+      "sha256": "302b6573389805bc0dd243d0bbec717825cebc1bfb4ce356ec4acb7dec4813c6",
+      "count": 6,
+      "generated_at": null,
+      "status": null,
+      "model": "glm-5.3"
+    },
+    {
+      "path": "reports\\native-glm53-smoke-20261006.json",
+      "sha256": "ba974a8c5c53b7672a34de19ae27c1addb5d878f3bd96b37b9be669a4b6ccb63",
+      "count": 18,
+      "generated_at": null,
+      "status": null,
+      "model": "glm-5.3"
+    },
+    {
+      "path": "reports\\benchmark_judge_full\\benchmark_eval_results.llm_judge_full.json",
+      "sha256": "b8fa27675d3e8198ab138387389f8fc3cc49df7f2e54dabb4c5cc594ea2c7015",
+      "count": 520,
+      "generated_at": "2026-07-02T17:14:55.042332+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_judge_full\\tool_attack_benchmark_results.llm_judge_full.json",
+      "sha256": "b00407f34319f9bacaa247926779630bb9b8880cbb12cda2d87a2d8d39b4da35",
+      "count": 320,
+      "generated_at": "2026-07-02T17:53:39.085069+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_risk_tiered\\benchmark_eval_results.risk_tiered.json",
+      "sha256": "241ef544ca7f31c7c7de1c7514db67cec41743a54253fa8b6a7e92447ef6817e",
+      "count": 520,
+      "generated_at": "2026-07-02T20:23:42.757995+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_risk_tiered\\tool_attack_benchmark_results.risk_tiered.json",
+      "sha256": "7edef8f18953a4d0756af6f6574c2282f10e65d7161b20e3f17bf3dbe6394fe4",
+      "count": 320,
+      "generated_at": "2026-07-02T20:43:46.048745+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\mapped-scoring-audit-20261007\\general.json",
+      "sha256": "3506df8fba47446801a5b41a71d4eb51cd26bb658ce8565d7ad0c82e0741febb",
+      "count": 520,
+      "generated_at": "2026-10-07T04:57:24.669775+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\mapped-scoring-audit-20261007\\live-contract-check-initial.json",
+      "sha256": "9fb19aa16717f0bcf9298b98ba7e7591931139387b54c69b4e9eed5a6cd7ced5",
+      "count": 2,
+      "generated_at": "2026-10-07T04:54:25.570074+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\mapped-scoring-audit-20261007\\live-contract-check.json",
+      "sha256": "c4608263d46d9bfd6381dc47080d4172658be73185f07b07a22d4ee31a41823b",
+      "count": 2,
+      "generated_at": "2026-10-07T04:57:45.572093+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\mapped-scoring-audit-20261007\\tool.json",
+      "sha256": "42c1049ded6ea7d5fb582e516e850d1f6872653bf5a34b0d54b814c43658cad9",
+      "count": 320,
+      "generated_at": "2026-10-07T04:57:24.735616+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\supervision_ablation\\ebpf_runtime_ablation.latest.json",
+      "sha256": "5a56b94294ad39ceff26788b99a46aa9b8f3664ee40a25e4a0ea0d45105865ce",
+      "count": 6,
+      "generated_at": "2026-07-04T11:55:00.932Z",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\supervision_ablation\\ebpf_runtime_ablation_20260704T115500Z.json",
+      "sha256": "5a56b94294ad39ceff26788b99a46aa9b8f3664ee40a25e4a0ea0d45105865ce",
+      "count": 6,
+      "generated_at": "2026-07-04T11:55:00.932Z",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\plugin_comparison\\custom_realistic_100\\raw_realistic_comparison_result_v2.json",
+      "sha256": "71ac92beaa231d10aed8a95e94a4b262ca360f66746e961d98b7992ca337eaee",
+      "count": 200,
+      "generated_at": null,
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_ablation\\20260703T192532Z\\xuanjian_risk_tiered\\results.json",
+      "sha256": "a7e4623e736680ddf1f0f4efdae2cb411cd81fd0d4d2ca1488980f1f9c384bbf",
+      "count": 840,
+      "generated_at": "2026-07-03T20:43:28.428889+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_ablation\\20260703T164230Z\\baseline_no_xuanjian\\results.json",
+      "sha256": "72a01ce26bd8b13074449394f8f86a2151f8f1fabf207f26f69f8ce2e6fa32f6",
+      "count": 840,
+      "generated_at": "2026-07-03T16:45:19.283018+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_ablation\\20260703T164230Z\\xuanjian_full_llm\\results.json",
+      "sha256": "26e68b01599b2787c239ce86492de606f16fcc71e353e2f2f580ac219e376d75",
+      "count": 840,
+      "generated_at": "2026-07-03T19:08:19.582698+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_ablation\\20260703T164230Z\\xuanjian_no_llm\\results.json",
+      "sha256": "c5040092511a46bd220d970c646f953692b51206cdcf55e10eaf17a75d20c0af",
+      "count": 840,
+      "generated_at": "2026-07-03T16:51:56.287394+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_ablation\\20260703T164155Z\\baseline_no_xuanjian\\results.json",
+      "sha256": "bea8cf3d4586f4b49176563b8cec9a6d97745c411ba501cb2ef03bc40afd073f",
+      "count": 6,
+      "generated_at": "2026-07-03T16:42:06.181055+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_ablation\\20260703T164102Z\\xuanjian_no_llm\\results.json",
+      "sha256": "ac590f5c277b442ac767691a9d7c50810a4612b89d1564949df3d31be3155362",
+      "count": 6,
+      "generated_at": "2026-07-03T16:41:14.158716+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "reports\\benchmark_ablation\\20260703T163837Z\\xuanjian_no_llm\\results.json",
+      "sha256": "edf93d9b0c598e896effeadd2c29a9a359282f262d8f8acb52d2b2c7abd334f5",
+      "count": 6,
+      "generated_at": "2026-07-03T16:38:50.057290+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "runtime\\kimera-smoke\\current-summary.json",
+      "sha256": "5f7857ab6b4bb82f2872c6b522097000cc6790ab80b442ede1f607edb84a7393",
+      "count": 11,
+      "generated_at": null,
+      "status": null,
+      "model": "glm-5.3"
+    },
+    {
+      "path": "runtime\\mapped-scoring-refinal\\general.json",
+      "sha256": "3506df8fba47446801a5b41a71d4eb51cd26bb658ce8565d7ad0c82e0741febb",
+      "count": 520,
+      "generated_at": "2026-10-07T04:57:24.669775+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "runtime\\mapped-scoring-refinal\\tool.json",
+      "sha256": "42c1049ded6ea7d5fb582e516e850d1f6872653bf5a34b0d54b814c43658cad9",
+      "count": 320,
+      "generated_at": "2026-10-07T04:57:24.735616+00:00",
+      "status": null,
+      "model": null
+    },
+    {
+      "path": "runtime\\native-kimera-20261007\\results.json",
+      "sha256": "70059cc56f42de1fbd71cdaa312c8813d20a35d74696b352e5455d06343a69be",
+      "count": 18,
+      "generated_at": null,
+      "status": null,
+      "model": "gpt-5.6-sol"
+    },
+    {
+      "path": "runtime\\native-qiaodao-20261007\\results.json",
+      "sha256": "cd5ffab2fa244fdc2a2ef57070c172a87d1daf76d1ef6be9e4d2a60be5dc8dff",
+      "count": 18,
+      "generated_at": null,
+      "status": null,
+      "model": "deepseek-v4-flash"
+    },
+    {
+      "path": "runtime\\native-qiaodao-grok-20261007\\results.json",
+      "sha256": "7b699fe1d9bdce21b54ccd6d7521a148f12c44f5abda8247038d2ea56a35f281",
+      "count": 18,
+      "generated_at": null,
+      "status": null,
+      "model": "grok-4.20-non-reasoning"
+    },
+    {
+      "path": "runtime\\native-qiaodao-targeted-20261007\\agentdojo-native-20261007T114244Z-537aa65c\\result.public.json",
+      "sha256": "ddbce3c46afa40716dffca4037157bc2ef1f20046850a8c09c37fd66dce123e8",
+      "count": 42,
+      "generated_at": null,
+      "status": "partial",
+      "model": null
+    },
+    {
+      "path": "runtime\\native-qiaodao-diagnose-nojudge2-20261007\\agentdojo-native-20261007T101918Z-f0fa884e\\result.public.json",
+      "sha256": "84fc0cd9311a4597c97673764ae74d7a325e2fe9346e527b069da56d37613aa2",
+      "count": 1,
+      "generated_at": null,
+      "status": "partial",
+      "model": null
+    },
+    {
+      "path": "runtime\\native-qiaodao-diagnose-nojudge-20261007\\agentdojo-native-20261007T101652Z-3a42d596\\result.public.json",
+      "sha256": "8775c5b60cc145a48f8fb6a3d9d5fa76a358c6019de37413df4393f60d958d38",
+      "count": 1,
+      "generated_at": null,
+      "status": "partial",
+      "model": null
+    },
+    {
+      "path": "runtime\\native-qiaodao-diagnose-judge-20261007\\agentdojo-native-20261007T102018Z-92620c21\\result.public.json",
+      "sha256": "f3e8b19943e4b0f915ee9b28546c17daaf421a70a93d2f3f0da40bb9e40ccd0d",
+      "count": 1,
+      "generated_at": null,
+      "status": "partial",
+      "model": null
+    },
+    {
+      "path": "runtime\\native-qiaodao-calendar-targeted-20261007\\agentdojo-native-20261007T115939Z-7c505dde\\result.public.json",
+      "sha256": "8fc4d9218f4791a2ca679ff2c0a946eb02d12dfe575768e620c13820db3921e7",
+      "count": 24,
+      "generated_at": null,
+      "status": "partial",
+      "model": null
+    },
+    {
+      "path": "runtime\\native-qiaodao-agentdojo-retry-20261007\\agentdojo-native-20261007T104451Z-b970ee87\\result.public.json",
+      "sha256": "223582c30621d291887f18ee21572a469d0ee0717b1801872a0c8e11fe225a4f",
+      "count": 120,
+      "generated_at": null,
+      "status": "partial",
+      "model": null
+    },
+    {
+      "path": "runtime\\native-qiaodao-agentdojo-one-20261007\\agentdojo-native-20261007T074256Z-34db9d33\\result.public.json",
+      "sha256": "96af817fe4582c485eb771fd9e69e8bf3461e51464b0bb2e36b35887ead8e2aa",
+      "count": 1,
+      "generated_at": null,
+      "status": "partial",
+      "model": null
+    },
+    {
+      "path": "runtime\\native-qiaodao-agentdojo-fixed-20261007\\agentdojo-native-20261007T102255Z-b92035a3\\result.public.json",
+      "sha256": "4946aa5e420bbe6d6ad36a9061da47e83100a8aa0122c9cfe7cc3f9c8db8ea96",
+      "count": 120,
+      "generated_at": null,
+      "status": "partial",
+      "model": null
+    },
+    {
+      "path": "runtime\\kimera-smoke\\calendar-fix-final\\results-retried.json",
+      "sha256": "283d1930744e874d796f415f536b65659e6ce8b4ad3d87390a9908cd5f2fa12e",
+      "count": 6,
+      "generated_at": null,
+      "status": null,
+      "model": "glm-5.3"
+    },
+    {
+      "path": "runtime\\kimera-smoke\\calendar-fix-final\\results.json",
+      "sha256": "4f83c8b44facd569e4592265385ad3624dbb315e33ade29968a883df5fd5fd14",
+      "count": 6,
+      "generated_at": null,
+      "status": null,
+      "model": "glm-5.3"
+    },
+    {
+      "path": "runtime\\kimera-smoke\\calendar-fix-v1\\results.json",
+      "sha256": "29ce1f88dfec32f27578b93e7693b0d7d1371b254015be41796ceaf912e3e278",
+      "count": 6,
+      "generated_at": null,
+      "status": null,
+      "model": "glm-5.3"
+    },
+    {
+      "path": "runtime\\kimera-smoke\\calendar-fix-v1\\summary.json",
+      "sha256": "6e9927c62531a48db7ce74948c6d8f117a6684a2e609a89b3b2236ad987bb081",
+      "count": 6,
+      "generated_at": null,
+      "status": null,
+      "model": "glm-5.3"
+    },
+    {
+      "path": "runtime\\kimera-smoke\\native-glm53\\results.json",
+      "sha256": "3d57a585fb3261938bfe360e706c9a4f152931d2bdc977b731ef9f7cd148fd28",
+      "count": 1,
+      "generated_at": null,
+      "status": null,
+      "model": "glm-5.3"
+    },
+    {
+      "path": "runtime\\kimera-smoke\\native-glm53-yaml\\results.json",
+      "sha256": "9743749023a6556dd8347a706f6126b98af8890467a100161977644a3287c94e",
+      "count": 18,
+      "generated_at": null,
+      "status": null,
+      "model": "glm-5.3"
+    }
+  ],
+  "duplicate_groups": {
+    "3506df8fba47446801a5b41a71d4eb51cd26bb658ce8565d7ad0c82e0741febb": [
+      "reports\\mapped-scoring-audit-20261007\\general.json",
+      "runtime\\mapped-scoring-refinal\\general.json"
+    ],
+    "42c1049ded6ea7d5fb582e516e850d1f6872653bf5a34b0d54b814c43658cad9": [
+      "reports\\mapped-scoring-audit-20261007\\tool.json",
+      "runtime\\mapped-scoring-refinal\\tool.json"
+    ],
+    "5a56b94294ad39ceff26788b99a46aa9b8f3664ee40a25e4a0ea0d45105865ce": [
+      "reports\\supervision_ablation\\ebpf_runtime_ablation.latest.json",
+      "reports\\supervision_ablation\\ebpf_runtime_ablation_20260704T115500Z.json"
+    ]
+  }
+}

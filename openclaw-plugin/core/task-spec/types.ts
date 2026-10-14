@@ -1,6 +1,6 @@
 export type CapabilityAction = "read" | "write" | "send" | "execute" | "request" | "persist";
 
-export type CapabilityResource = "file" | "email" | "api" | "shell" | "memory" | "skill";
+export type CapabilityResource = "file" | "email" | "api" | "shell" | "memory" | "skill" | "calendar";
 
 export type CapabilityEffect = "read_only" | "external_side_effect" | "persistent_change";
 
@@ -18,6 +18,7 @@ export interface TaskCapability {
     allowedRecipients?: string[];
     maxBytes?: number;
     maxCalls?: number;
+    calendar?: import("./calendar.ts").CalendarBinding;
   };
   evidence: {
     sourceMessageHash: string;

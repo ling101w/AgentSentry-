@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "mapping_version": "1.0.0",
+  "mapping_version": "1.1.0",
   "agentdojo": {
     "package_version": "0.1.35",
     "benchmark_version": "v1.2.2",
@@ -57,10 +57,6 @@
       "aliases": [
         "get_unread_emails",
         "delete_email",
-        "create_calendar_event",
-        "cancel_calendar_event",
-        "reschedule_calendar_event",
-        "add_calendar_event_participants",
         "share_file"
       ],
       "dataOrigins": ["user", "workspace", "email", "third_party_api"],
@@ -69,6 +65,18 @@
       "canExfiltrate": true,
       "requiresExplicitAuthorization": true,
       "defaultTrust": "external"
+    },
+    {
+      "toolId": "calendar_write",
+      "aliases": ["create_calendar_event", "cancel_calendar_event", "reschedule_calendar_event", "add_calendar_event_participants"],
+      "dataOrigins": ["user", "third_party_api"],
+      "sideEffects": ["network_write", "persistent_state"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": true,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external",
+      "purposeBinding": "task_bound",
+      "targetFields": ["title", "participants", "event_id"]
     }
   ]
 }

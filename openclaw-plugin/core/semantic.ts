@@ -21,6 +21,7 @@ export type SemanticJudgeContext = {
   policyState?: PolicyState;
   phase?: "message" | "tool_call" | "memory_write" | "provenance" | "task_spec";
   relatedFindings?: DetectionFinding[];
+  deadlineMs?: number;
 };
 
 export type JudgeResult = {
@@ -64,7 +65,7 @@ export async function semanticJudgeAmbiguousAction(input: {
   taskSpec: TaskSpec;
   policyState: PolicyState;
   preliminary: PolicyDecision;
-}, config: PluginConfig): Promise<DetectionFinding[]> {
+}, config: PluginConfig, context: SemanticJudgeContext = {}): Promise<DetectionFinding[]> {
   if (!config.semantic.enabled || !config.semantic.judgeToolCalls || config.semantic.mode === "off") return [];
   if (input.preliminary.deterministic_disposition !== "ambiguous") return [];
   const cacheKey = semanticActionCacheKey(input.taskSpec, input.action);
@@ -74,13 +75,13 @@ export async function semanticJudgeAmbiguousAction(input: {
     if (cached) semanticActionCache.delete(cacheKey);
   }
   const inflight = semanticActionInflight.get(cacheKey);
-  if (inflight) return markSemanticCacheHit(await inflight, cacheKey);
+  if (inflight) return markSemanticCacheHit(await withinDeadline(inflight, context.deadlineMs, []), cacheKey);
 
-  const request = judgeAmbiguousAction(input, config, cacheKey);
+  const request = judgeAmbiguousAction(input, config, cacheKey, context.deadlineMs);
   semanticActionInflight.set(cacheKey, request);
   try {
     const findings = await request;
-    if (config.semantic.cacheEnabled) {
+    if (config.semantic.cacheEnabled && findings.length) {
       semanticActionCache.set(cacheKey, { expiresAt: Date.now() + SEMANTIC_ACTION_CACHE_TTL_MS, findings: structuredClone(findings) });
       while (semanticActionCache.size > SEMANTIC_ACTION_CACHE_MAX) {
         const oldest = semanticActionCache.keys().next().value;
@@ -117,7 +118,7 @@ async function judgeAmbiguousAction(input: {
   taskSpec: TaskSpec;
   policyState: PolicyState;
   preliminary: PolicyDecision;
-}, config: PluginConfig, cacheKey: string): Promise<DetectionFinding[]> {
+}, config: PluginConfig, cacheKey: string, deadlineMs?: number): Promise<DetectionFinding[]> {
   const judgeGate = gate(true, "medium", "deterministic enforcement returned ambiguous");
   const contextPack = semanticContextPack({
     phase: input.action.tool === "memory_write" ? "memory_write" : "tool_call",
@@ -141,7 +142,7 @@ async function judgeAmbiguousAction(input: {
         : []),
     ],
   });
-  const judged = await callJudge(prompt, config);
+  const judged = await callJudge(prompt, config, deadlineMs);
   if (!judged) return [];
   const resolution = semanticDecisionFromJudge(judged);
   return [{
@@ -194,7 +195,7 @@ export async function semanticJudgeToolCall(
     ],
   });
 
-  const judged = await callJudge(prompt, config);
+  const judged = await callJudge(prompt, config, context.deadlineMs);
   if (!judged) return [];
   return judgeToFinding(judged, "Intent Authorization", "semantic judge reviewed tool call", { toolName, semantic_gate: gate, context_scope: contextScope(context.policyState) });
 }
@@ -251,7 +252,7 @@ export async function semanticJudgeTaskSpec(
       "Do not relax deterministic policy; only classify semantic ambiguity.",
     ],
   });
-  const judged = await callJudge(prompt, config);
+  const judged = await callJudge(prompt, config, context.deadlineMs);
   if (!judged) return [];
   return judgeToFinding(judged, "Intent Authorization", "semantic judge reviewed task spec", {
     semantic_gate: gate,
@@ -281,7 +282,7 @@ export async function semanticJudgeMessage(content: unknown, config: PluginConfi
     ],
   });
 
-  const judged = await callJudge(prompt, config);
+  const judged = await callJudge(prompt, config, context.deadlineMs);
   if (!judged) return [];
   return judgeToFinding(judged, "Context Provenance", "semantic judge reviewed message content", { semantic_gate: gate, context_scope: contextScope(context.policyState) });
 }
@@ -314,7 +315,7 @@ export async function semanticJudgeMemoryWrite(
     ],
   });
 
-  const judged = await callJudge(prompt, config);
+  const judged = await callJudge(prompt, config, context.deadlineMs);
   if (!judged) return [];
   const findings = judgeToFinding(judged, "State Integrity", "semantic judge reviewed memory write", { semantic_gate: gate, context_scope: contextScope(context.policyState) });
   return findings.map((finding) => judged.risk === "high"
@@ -793,11 +794,11 @@ export function buildJudgeEnvelope(input: {
   };
 }
 
-async function callJudge(prompt: JudgeEnvelope, config: PluginConfig): Promise<JudgeResult | null> {
+async function callJudge(prompt: JudgeEnvelope, config: PluginConfig, sharedDeadlineMs?: number): Promise<JudgeResult | null> {
   const apiKey = resolveSemanticApiKey(config.semantic.apiKeyEnv);
   if (!apiKey) return null;
 
-  const deadline = Date.now() + semanticBudgetMs(config);
+  const deadline = Math.min(Date.now() + semanticBudgetMs(config), sharedDeadlineMs ?? Infinity);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
@@ -811,7 +812,11 @@ async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey
   const baseUrl = config.semantic.baseUrl.replace(/\/+$/, "");
   const url = `${baseUrl}/chat/completions`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<null>((resolve) => {
+    timeout = setTimeout(() => { controller.abort(); resolve(null); }, timeoutMs);
+  });
+  const request = (async (): Promise<JudgeResult | null> => {
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -849,13 +854,25 @@ async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey
     return parseJudgeResponse(content);
   } catch {
     return null;
-  } finally {
-    clearTimeout(timeout);
   }
+  })();
+  // Bound response-body reads and transports which ignore AbortSignal as well.
+  try { return await Promise.race([request, timedOut]); }
+  finally { clearTimeout(timeout); }
 }
 
-function semanticBudgetMs(config: PluginConfig): number {
-  return Math.min(2000, Math.max(500, config.semantic.timeoutMs));
+export function semanticBudgetMs(config: PluginConfig): number {
+  return Math.min(2000, Math.max(1, config.semantic.timeoutMs));
+}
+
+async function withinDeadline<T>(operation: Promise<T>, deadlineMs: number | undefined, fallback: T): Promise<T> {
+  if (deadlineMs === undefined) return operation;
+  const remaining = deadlineMs - Date.now();
+  if (remaining <= 0) return fallback;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([operation, new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), remaining); })]);
+  } finally { clearTimeout(timer); }
 }
 
 function markSemanticCacheHit(findings: DetectionFinding[], cacheKey: string): DetectionFinding[] {

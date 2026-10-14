@@ -1,0 +1,100 @@
+{
+  "schema_version": "agentsentry.local-benchmark-publication.v1",
+  "publication_date": "2026-10-13",
+  "historical_runs": true,
+  "rerun_on_security_branch": false,
+  "selection_sha256": "679cf45d9a186a5acc472151ba1b22a4a49c3029931b491d5611690d9fb9fad1",
+  "files": [
+    {
+      "source_relative": "reports/native_agentdojo/native_deepseek_v4_pro_no_defense_expanded_v1_140.public.json",
+      "source_sha256": "58f26073565511eda78a419566ff6a86038d26d0f789257c7085c05d6d71f0b5",
+      "published": "agentdojo/no_defense.public.json",
+      "published_sha256": "58f26073565511eda78a419566ff6a86038d26d0f789257c7085c05d6d71f0b5",
+      "projection": "original public aggregate, unchanged"
+    },
+    {
+      "source_relative": "outputs/deeptrap-deepseek-v4-flash-no-defense-final/0011_qwen-deepseek-v4-flash.json",
+      "source_sha256": "0a813fe35fcd0d54c6160469d9f91961c899b69617fc481fadc693a58bf60b7d",
+      "published": "deeptrap/no_defense.scores.json",
+      "published_sha256": "6e99f6fca5d16febf904c8e487f5569ce0ead36326285e191c6a4974f6cdc02e",
+      "projection": "Numeric scores and original execution statuses retained; free-text grading notes, stderr, workspace paths, configurations and transcripts excluded."
+    },
+    {
+      "source_relative": "reports/native_agentdojo/native_deepseek_v4_pro_agentsentry_expanded_v1_140.public.json",
+      "source_sha256": "29ae3e4e59eb8d7092d3136feac457a59db83c3c817ab6a1af2b591356dd82a7",
+      "published": "agentdojo/risk_based.public.json",
+      "published_sha256": "29ae3e4e59eb8d7092d3136feac457a59db83c3c817ab6a1af2b591356dd82a7",
+      "projection": "original public aggregate, unchanged"
+    },
+    {
+      "source_relative": "outputs/deeptrap-deepseek-v4-flash-agentsentry-competition-final/0007_qwen-deepseek-v4-flash.json",
+      "source_sha256": "2a53e0921cc0cf80bcbf018f9e07617e74ad96d5b4be9b9ea90e81bed18d2c0c",
+      "published": "deeptrap/risk_based.scores.json",
+      "published_sha256": "e8ef466b218b94b037ab1466e33e58b723f467117e67d94c9dc826f6dd797adc",
+      "projection": "Numeric scores and original execution statuses retained; free-text grading notes, stderr, workspace paths, configurations and transcripts excluded."
+    },
+    {
+      "source_relative": "outputs/native_deepseek_v4_pro_evidence_gated_expanded_v1_140.public.json",
+      "source_sha256": "cfd8e32f4aa97dfd00dc1153656738c7513d33a4f170bfd287c0a7aecdbe7373",
+      "published": "agentdojo/evidence_gated.public.json",
+      "published_sha256": "cfd8e32f4aa97dfd00dc1153656738c7513d33a4f170bfd287c0a7aecdbe7373",
+      "projection": "original public aggregate, unchanged"
+    },
+    {
+      "source_relative": "outputs/deeptrap-deepseek-v4-flash-agentsentry-evidence-gated/0025_qwen-deepseek-v4-flash.revalidated.json",
+      "source_sha256": "7ebcd0f37823326e8220c69a70df3ba497bc9586b24d43da091089b240235544",
+      "published": "deeptrap/evidence_gated.scores.json",
+      "published_sha256": "c2dd80c0326eb440700e30b36e600595fd87a6177972c4d530d59cb793addbae",
+      "projection": "Numeric scores and original execution statuses retained; free-text grading notes, stderr, workspace paths, configurations and transcripts excluded."
+    },
+    {
+      "source_relative": "runtime/agentward-agentdojo-deepseek-v4-pro-expanded-v1-a6/agentdojo-native-20260818T002106Z-3080364c/result.public.json",
+      "source_sha256": "120a0712420529ccf5cea97250c181f1a9bdacb3635ed53b8112a077a887b967",
+      "published": "agentdojo/agentward.public.json",
+      "published_sha256": "120a0712420529ccf5cea97250c181f1a9bdacb3635ed53b8112a077a887b967",
+      "projection": "original public aggregate, unchanged"
+    },
+    {
+      "source_relative": "outputs/deeptrap-deepseek-v4-flash-agentward-env1-full1/deeptrap_agentward.full.revalidated.json",
+      "source_sha256": "f4527faab77576496bf6f689ea2afb7b464876d22ac39104aa016cbf4310a45a",
+      "published": "deeptrap/agentward.scores.json",
+      "published_sha256": "178bfb3832c67606f4d948627b6292b8c0761d476ed363e7a718bcc79d13b1b2",
+      "projection": "Numeric scores and original execution statuses retained; free-text grading notes, stderr, workspace paths, configurations and transcripts excluded."
+    },
+    {
+      "source_relative": "evaluation/native/native_expanded_v1_selection.json",
+      "source_sha256": "1048a0166f2ca3d70436f976727346c42c947caa8eacf71ba2409cef73ec4177",
+      "published": "agentdojo/selection.json",
+      "published_sha256": "1048a0166f2ca3d70436f976727346c42c947caa8eacf71ba2409cef73ec4177",
+      "projection": "original public evidence, unchanged"
+    },
+    {
+      "source_relative": "outputs/native_deepseek_v4_pro_evidence_gated_expanded_v1_140_provenance.json",
+      "source_sha256": "76ed38c80821e65d6f5490371a9b34e51a70587758346f4a95f68a194aa78be6",
+      "published": "agentdojo/evidence_gated.provenance.json",
+      "published_sha256": "76ed38c80821e65d6f5490371a9b34e51a70587758346f4a95f68a194aa78be6",
+      "projection": "original public evidence, unchanged"
+    },
+    {
+      "source_relative": "outputs/native_deepseek_v4_pro_evidence_gated_expanded_v1_140_three_layer.public.json",
+      "source_sha256": "bc8ec17cb769a0fda8f9545438f39c470ceb1abdb5a3c46ef1d7f9174cfe5f54",
+      "published": "agentdojo/evidence_gated.audit.public.json",
+      "published_sha256": "bc8ec17cb769a0fda8f9545438f39c470ceb1abdb5a3c46ef1d7f9174cfe5f54",
+      "projection": "original public evidence, unchanged"
+    },
+    {
+      "source_relative": "reports/native_agentdojo/native_deepseek_v4_pro_expanded_v1_three_layer_audit.public.json",
+      "source_sha256": "ec7c12e656bc072fdc12df16ae87cae97ba5b45eba3bf14d03e64757c3a2d26a",
+      "published": "agentdojo/risk_based.audit.public.json",
+      "published_sha256": "ec7c12e656bc072fdc12df16ae87cae97ba5b45eba3bf14d03e64757c3a2d26a",
+      "projection": "original public evidence, unchanged"
+    },
+    {
+      "source_relative": "reports/native_agentdojo/native_agentward_deepseek_v4_pro_expanded_v1_a6_three_layer.public.json",
+      "source_sha256": "0e5ab1d3b0a3d64607338697c0d2b02cc80fa5b4253c0c7db2d3b99ab96eec6c",
+      "published": "agentdojo/agentward.audit.public.json",
+      "published_sha256": "0e5ab1d3b0a3d64607338697c0d2b02cc80fa5b4253c0c7db2d3b99ab96eec6c",
+      "projection": "original public evidence, unchanged"
+    }
+  ]
+}

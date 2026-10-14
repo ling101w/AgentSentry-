@@ -1,7 +1,7 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 
 export type SafeHttpResponse = {
   status: number;
@@ -15,6 +15,8 @@ export type SafeHttpResponse = {
 
 export type SafeHttpOptions = {
   allowedHosts?: string[];
+  allowedPrivateCidrs?: string[];
+  allowedLoopbackOrigins?: string[];
   maxBytes?: number;
   maxRedirects?: number;
   timeoutMs?: number;
@@ -37,7 +39,7 @@ export async function safeHttpGet(input: URL | string, options: SafeHttpOptions 
   for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
     const allowedHosts = options.allowedHosts || [];
     validateHttpUrl(current, allowedHosts);
-    const resolved = await resolvePublicAddress(current.hostname, isHostAllowlisted(current, allowedHosts));
+    const resolved = await resolvePublicAddress(current, options);
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw new Error("HTTP request timed out");
     const response = await requestPinned(current, resolved, maxBytes, remainingMs);
@@ -57,7 +59,7 @@ export async function safeHttpPost(input: URL | string, body: unknown, options: 
   const url = typeof input === "string" ? new URL(input) : new URL(input.toString());
   const allowedHosts = options.allowedHosts || [];
   validateHttpUrl(url, allowedHosts);
-  const resolved = await resolvePublicAddress(url.hostname, isHostAllowlisted(url, allowedHosts));
+  const resolved = await resolvePublicAddress(url, options);
   const requestBody = typeof body === "string" ? body : JSON.stringify(body);
   const response = await requestPinned(url, resolved, maxBytes, timeoutMs, "POST", requestBody);
   return { ...response, finalUrl: url.toString(), redirects: 0 };
@@ -84,18 +86,61 @@ export function isForbiddenIpAddress(address: string): boolean {
   return false;
 }
 
-async function resolvePublicAddress(hostname: string, allowPrivate = false): Promise<ResolvedAddress> {
-  const host = stripIpv6Brackets(hostname);
+async function resolvePublicAddress(url: URL, options: SafeHttpOptions): Promise<ResolvedAddress> {
+  const host = stripIpv6Brackets(url.hostname);
   const literalFamily = isIP(host);
   const results = literalFamily
     ? [{ address: host, family: literalFamily }]
     : await dnsLookup(host, { all: true, verbatim: true });
   if (!results.length) throw new Error(`DNS returned no addresses for ${host}`);
-  const forbidden = allowPrivate ? null : results.find((item) => isForbiddenIpAddress(item.address));
+  const forbidden = results.find((item) => !isAddressAuthorized(item.address, url, options));
   if (forbidden) throw new Error(`SSRF protection blocked non-public address ${forbidden.address} for ${host}`);
   const selected = results[0];
   if (selected.family !== 4 && selected.family !== 6) throw new Error(`unsupported address family for ${host}`);
   return { address: selected.address, family: selected.family };
+}
+
+export function isAddressAuthorized(address: string, url: URL, options: SafeHttpOptions): boolean {
+  const host = stripIpv6Brackets(address);
+  const family = isIP(host);
+  const bytes = family === 6 ? ipv6Bytes(host) : null;
+  // Link-local, unspecified, metadata and reserved ranges are never unlocked by CIDRs.
+  const awsMetadataV6 = [0xfd, 0, 0x0e, 0xc2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0x54];
+  const embedsTailV4 = bytes && (
+    bytes.slice(0, 12).every((value) => value === 0)
+    || (bytes.slice(0, 10).every((value) => value === 0) && bytes[10] === 0xff && bytes[11] === 0xff)
+    || bytes.slice(0, 12).every((value, index) => value === [0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0][index])
+  );
+  const embeddedV4 = embedsTailV4 ? bytes!.slice(12).join(".")
+    : bytes && bytes[0] === 0x20 && bytes[1] === 2 ? bytes.slice(2, 6).join(".") : host;
+  if (embeddedV4 === "100.100.100.200" || embeddedV4 === "168.63.129.16" || bytes?.every((value, index) => value === awsMetadataV6[index])) return false;
+  if (!isForbiddenIpAddress(host)) return true;
+  const loopback = family === 4 ? host.startsWith("127.") : Boolean(bytes && bytes.slice(0, 15).every((value) => value === 0) && bytes[15] === 1);
+  if (loopback) {
+    return (options.allowedLoopbackOrigins || []).some((origin) => {
+      try {
+        const allowed = new URL(origin);
+        return allowed.origin === url.origin && !allowed.username && !allowed.password;
+      } catch { return false; }
+    });
+  }
+  const octets = host.split(".").map(Number);
+  const privateAddress = family === 4
+    ? octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168) || (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127)
+    : Boolean(bytes && (bytes[0] & 0xfe) === 0xfc);
+  if (!privateAddress) return false;
+  return (options.allowedPrivateCidrs || []).some((cidr) => {
+    const [network, prefix, extra] = cidr.trim().split("/");
+    const networkFamily = isIP(network);
+    if (extra !== undefined || networkFamily !== family || !/^\d+$/.test(prefix || "")) return false;
+    const mask = Number(prefix);
+    if (mask < 0 || mask > (family === 4 ? 32 : 128)) return false;
+    try {
+      const block = new BlockList();
+      block.addSubnet(network, mask, family === 4 ? "ipv4" : "ipv6");
+      return block.check(host, family === 4 ? "ipv4" : "ipv6");
+    } catch { return false; }
+  });
 }
 
 export function validateHttpUrl(url: URL, allowedHosts: string[]): void {

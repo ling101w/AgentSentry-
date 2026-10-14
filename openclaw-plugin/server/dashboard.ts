@@ -371,6 +371,11 @@ async function handleRequest(
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/audit/persistence") {
+    sendJson(req, res, { ok: true, persistence: store.persistenceStatus() });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/settings/dashboard") {
     sendJson(req, res, dashboardSettings(config, readDashboardConsoleState(store)));
     return;
@@ -5355,6 +5360,10 @@ async function executeHttpRequest(action: LabAction, config: PluginConfig): Prom
     allowedHosts: labLocalHttpUrl(parsed)
       ? Array.from(new Set([stripIpv6Brackets(parsed.hostname), ...config.policy.allowlistedApiHosts]))
       : config.policy.allowlistedApiHosts,
+    allowedPrivateCidrs: config.policy.allowedPrivateCidrs,
+    allowedLoopbackOrigins: labLocalHttpUrl(parsed)
+      ? [parsed.origin]
+      : config.policy.allowedLoopbackOrigins,
     maxBytes: 1024 * 1024,
     maxRedirects: 5,
     timeoutMs: 5000,

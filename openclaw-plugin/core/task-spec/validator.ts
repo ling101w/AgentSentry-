@@ -7,8 +7,10 @@ import type {
 import { posix } from "node:path";
 import { hostFromUrl, targetMatches } from "../security/url.ts";
 import { isLowRiskShellReadCommand } from "../policy/safe-ops.ts";
+import { authorizeCalendarArguments } from "./calendar.ts";
+import { hasEmptyConstraint } from "./constraints.ts";
 
-const SIDE_EFFECT_TOOLS = new Set(["write_file", "send_email", "call_api", "shell_exec", "memory_write"]);
+const SIDE_EFFECT_TOOLS = new Set(["write_file", "send_email", "call_api", "shell_exec", "memory_write", "calendar_write"]);
 
 export function authorizeCapability(
   spec: TaskSpec,
@@ -181,6 +183,7 @@ export function isSideEffectToolCall(request: CapabilityActionRequest): boolean 
 }
 
 function descriptorFor(request: CapabilityActionRequest): { action: TaskCapability["action"]; resource: TaskCapability["resourceType"]; method?: string } | null {
+  if (request.tool === "calendar_write") return { action:"write", resource:"calendar" };
   if (request.tool === "read_file") return { action: "read", resource: "file" };
   if (request.tool === "write_file") return { action: "write", resource: "file" };
   if (request.tool === "send_email") return { action: "send", resource: "email" };
@@ -207,6 +210,10 @@ function descriptorMatches(
 }
 
 function validateConstraints(capability: TaskCapability, request: CapabilityActionRequest, method?: string): CapabilityAuthorization {
+  if (hasEmptyConstraint(capability.constraints)) {
+    return mismatch("capability_constraint_conflict", capability, targetFor(request));
+  }
+  if (request.tool === "calendar_write") return authorizeCalendarArguments(capability, request);
   const target = targetFor(request);
   if (capability.constraints.allowedMethods?.length && method && !capability.constraints.allowedMethods.includes(method)) {
     return mismatch("method_outside_authorization", capability, target);

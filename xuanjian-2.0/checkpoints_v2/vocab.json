@@ -1,0 +1,41 @@
+{
+  "tool_vocab": [
+    "analyze_data",
+    "check_style",
+    "create_event",
+    "delete_file",
+    "filter_lines",
+    "format_result",
+    "generate_report",
+    "post_comment",
+    "read_calendar",
+    "read_code",
+    "read_email",
+    "read_file",
+    "read_log",
+    "read_memory",
+    "reply_user",
+    "run_linter",
+    "search_email",
+    "send_email",
+    "send_notification",
+    "summarize_text",
+    "translate_text",
+    "update_event",
+    "update_memory",
+    "upload_file",
+    "web_search",
+    "write_file",
+    "<<OOV>>"
+  ],
+  "task_vocab": [
+    "calendar_management",
+    "code_review",
+    "email_summary",
+    "file_processing",
+    "log_analysis",
+    "memory_management",
+    "web_search",
+    "<<OOV>>"
+  ]
+}

@@ -1,0 +1,4 @@
+# Preserve bytes so published artifact SHA-256 values survive every checkout.
+*.json -text
+*.csv -text
+*.png binary
