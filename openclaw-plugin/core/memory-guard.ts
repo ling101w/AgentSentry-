@@ -82,6 +82,13 @@ const AUTHORITATIVE_MEMORY_PATTERNS = [
   /(以后|未来|下次|永久|默认|优先).{0,80}(必须|总是|永远|策略|审批|确认|安全|监督|静默|无需|跳过)/i,
 ];
 
+const DEFERRED_APPROVAL_PATTERNS = [
+  /(?:遇到|出现|收到)(?:审批|批准)(?:提示|请求)?(?:(?!通过|获批|同意)[^。；;\n]){0,24}(?:先|直接)(?:继续|执行|完成)/gu,
+  /先(?:执行|继续|完成)[^。；;\n]{0,60}(?:审批|批准)[^。；;\n]{0,20}(?:稍后|后补|之后|回头)/gu,
+  /先(?:执行|继续|完成)[^。；;\n]{0,45}(?:稍后|后补|之后|回头)[^。；;\n]{0,12}(?:审批|批准)/gu,
+  /\b(?:execute|run|continue|complete)\b[^.;\n]{0,60}\bfirst\b[^.;\n]{0,60}\bapproval\b[^.;\n]{0,20}\b(?:later|afterwards?)\b/gi,
+];
+
 const MEMORY_SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----/,
   /\bgh[pousr]_[a-zA-Z0-9_]{20,}\b/,
@@ -304,6 +311,12 @@ function memoryStructuralFindings(
       preview: clampText(redactMemorySecrets(content), config.capture.previewChars),
     }));
   }
+  if (defersRequiredApproval(content)) {
+    findings.push(finding("State Integrity", "deterministic", "block", "memory defers required approval until after execution", 95, {
+      key, preview: clampText(content, config.capture.previewChars),
+      intervention_evidence: { evidence_class: "safety_boundary", causal_certainty: "observed", confidence: 1 },
+    }));
+  }
   if (isAuthoritativeMemory(content) && trustRankForPassport(passport) <= 2) {
     findings.push(finding("State Integrity", "deterministic", "block", "low-trust source cannot write authoritative future-behavior memory", 95, {
       key,
@@ -376,6 +389,15 @@ function trustRankForPassport(passport: MemoryPassport): number {
 function isAuthoritativeMemory(content: string): boolean {
   if (isNegatedSafetyBoundaryMemory(content)) return false;
   return AUTHORITATIVE_MEMORY_PATTERNS.some((pattern) => pattern.test(content));
+}
+
+function defersRequiredApproval(content: string): boolean {
+  return DEFERRED_APPROVAL_PATTERNS.some((pattern) => [...content.matchAll(pattern)].some((match) => {
+    const prefix = content.slice(Math.max(0, match.index - 45), match.index);
+    if (/(?:不要|不得|不能|禁止|切勿)(?:在|当)?\s*$/u.test(prefix) || /\b(?:do not|don't|never)\s+$/i.test(prefix)) return false;
+    if (/(?:审批|批准)(?:已)?通过后[^。；;\n]{0,12}$/u.test(prefix)) return false;
+    return true;
+  }));
 }
 
 function isNegatedSafetyBoundaryMemory(content: string): boolean {

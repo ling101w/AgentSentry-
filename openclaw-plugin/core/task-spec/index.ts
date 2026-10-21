@@ -7,7 +7,7 @@ export {
   type AuthorizationMessageKind,
   type AuthorizationState,
 } from "./session-state.ts";
-export { refineTaskSpecWithLLM, type TaskSpecRefinementResult } from "./semantic-refinement.ts";
+export { refineTaskSpecWithLLM, clearTaskSpecRefinementCache, type TaskSpecRefinementResult } from "./semantic-refinement.ts";
 export type {
   CapabilityAction,
   CapabilityActionRequest,

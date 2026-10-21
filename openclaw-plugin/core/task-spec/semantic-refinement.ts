@@ -7,11 +7,13 @@ import { clampText, safeStringify } from "../redact.ts";
 import { hostFromUrl } from "../policy/value-utils.ts";
 import { finding } from "../trust.ts";
 import { intersectOptional } from "./constraints.ts";
+import { conditionalFileInstruction, explicitFileRead, explicitFileWrite, fileInstructionSegments, fileWriteTargets } from "./file-instructions.ts";
 import {
   DEFAULT_CAPABILITY_TTL_TURNS,
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_CALLS,
   analysisOnly,
+  authoritativeTaskText,
   extractPaths,
   negatedAction,
   normalizeTaskText,
@@ -56,6 +58,8 @@ export type TaskSpecRefinementResult = {
 
 const CANONICAL_TOOLS = [
   "calendar_write",
+  "email_read",
+  "remote_file_create",
   "read_webpage",
   "call_api",
   "read_file",
@@ -68,23 +72,34 @@ const CANONICAL_TOOLS = [
 
 const MAX_REFINEMENT_BODY_CHARS = 256 * 1024;
 const MAX_REFINEMENT_OUTPUT_CHARS = 64 * 1024;
+const REFINEMENT_CACHE_TTL_MS = 60_000;
+const REFINEMENT_CACHE_MAX = 128;
+const refinementCache = new Map<string, { expiresAt: number; value: SemanticTaskSpecRefinement }>();
+const refinementInflight = new Map<string, Promise<SemanticTaskSpecRefinement | null>>();
+
+export function clearTaskSpecRefinementCache(): void {
+  refinementCache.clear();
+  refinementInflight.clear();
+}
 
 export async function refineTaskSpecWithLLM(
   taskSpec: TaskSpec,
   config: PluginConfig,
 ): Promise<TaskSpecRefinementResult> {
   if (!shouldRefineTaskSpec(taskSpec, config)) return { taskSpec, findings: [], applied: false };
-  const refinement = await callTaskSpecRefiner(taskSpec, config);
+  const snapshot = structuredClone(taskSpec);
+  const settings = structuredClone(config);
+  const refinement = await callTaskSpecRefiner(snapshot, settings);
   if (!refinement) return { taskSpec, findings: [], applied: false };
 
-  const { taskSpec: refined, accepted, rejected } = applyRefinement(taskSpec, refinement);
+  const { taskSpec: refined, accepted, rejected } = applyRefinement(snapshot, refinement);
   const findings: DetectionFinding[] = [];
   if (accepted.length) {
     findings.push(finding(
       "Intent Authorization",
       "semantic",
       "pass",
-      "LLM 结构化解析收窄了既有授权边界（只减不增），已收敛为 TaskSpec",
+      "LLM 结构化解析已通过原始用户指令核验，并收敛为 TaskSpec",
       0,
       {
         accepted_capabilities: accepted.map(publicCapabilityEvidence),
@@ -123,16 +138,55 @@ function shouldRefineTaskSpec(taskSpec: TaskSpec, config: PluginConfig): boolean
 async function callTaskSpecRefiner(taskSpec: TaskSpec, config: PluginConfig): Promise<SemanticTaskSpecRefinement | null> {
   const apiKey = resolveRefinementApiKey(config.semantic.apiKeyEnv);
   if (!apiKey) return null;
+  // Cache only a model proposal. Re-validate it against the caller's complete
+  // snapshot on every use; never cache a committed capability or decision.
+  // Repeated refinement appends audit wording to explicitSpan. The original
+  // task and all grant/constraint fields remain in the key; audit wording
+  // alone must not force another provider request on every prompt rebuild.
+  const material = { ...taskSpec, capabilities: taskSpec.capabilities.map((capability) => ({
+    ...capability, evidence: { ...capability.evidence, explicitSpan: undefined },
+  })) };
+  const key = createHash("sha256").update(JSON.stringify({ taskSpec: material, semantic: config.semantic, credential: createHash("sha256").update(apiKey).digest("hex") })).digest("hex");
+  if (config.semantic.cacheEnabled) {
+    const cached = refinementCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return structuredClone(cached.value);
+    if (cached) refinementCache.delete(key);
+    const inflight = refinementInflight.get(key);
+    if (inflight) return structuredClone(await inflight);
+  }
+  const request = requestRefinement(taskSpec, config, apiKey);
+  if (config.semantic.cacheEnabled) refinementInflight.set(key, request);
+  try {
+    const value = await request;
+    if (value && config.semantic.cacheEnabled && refinementInflight.get(key) === request) {
+      refinementCache.set(key, { expiresAt: Date.now() + REFINEMENT_CACHE_TTL_MS, value: structuredClone(value) });
+      while (refinementCache.size > REFINEMENT_CACHE_MAX) refinementCache.delete(refinementCache.keys().next().value!);
+    }
+    return value;
+  } finally {
+    if (refinementInflight.get(key) === request) refinementInflight.delete(key);
+  }
+}
+
+async function requestRefinement(taskSpec: TaskSpec, config: PluginConfig, apiKey: string): Promise<SemanticTaskSpecRefinement | null> {
+  const deadline = Date.now() + Math.min(10000, Math.max(700, config.semantic.timeoutMs));
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const refinement = await callTaskSpecRefinerOnce(taskSpec, config, apiKey);
-    if (refinement) return refinement;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    const result = await callTaskSpecRefinerOnce(taskSpec, config, apiKey, remaining);
+    if (result.value) return result.value;
+    if (!result.retryable) break;
   }
   return null;
 }
 
-async function callTaskSpecRefinerOnce(taskSpec: TaskSpec, config: PluginConfig, apiKey: string): Promise<SemanticTaskSpecRefinement | null> {
+async function callTaskSpecRefinerOnce(taskSpec: TaskSpec, config: PluginConfig, apiKey: string, remainingMs: number): Promise<{ value: SemanticTaskSpecRefinement | null; retryable: boolean }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.min(10000, Math.max(700, config.semantic.timeoutMs)));
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<{ value: null; retryable: false }>((resolve) => {
+    timeout = setTimeout(() => { controller.abort(); resolve({ value: null, retryable: false }); }, remainingMs);
+  });
+  const request = (async () => {
   try {
     const response = await fetch(`${config.semantic.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
@@ -144,6 +198,7 @@ async function callTaskSpecRefinerOnce(taskSpec: TaskSpec, config: PluginConfig,
       body: JSON.stringify({
         model: config.semantic.model,
         temperature: 0,
+        ...(config.semantic.thinking === "disabled" ? { thinking: { type: "disabled" } } : {}),
         response_format: { type: "json_object" },
         messages: [
           {
@@ -163,17 +218,19 @@ async function callTaskSpecRefinerOnce(taskSpec: TaskSpec, config: PluginConfig,
         ],
       }),
     });
-    if (!response.ok) return null;
+    if (!response.ok) return { value: null, retryable: response.status >= 500 };
     const raw = await response.text();
-    if (raw.length > MAX_REFINEMENT_BODY_CHARS) return null;
+    if (raw.length > MAX_REFINEMENT_BODY_CHARS) return { value: null, retryable: false };
     const parsed = JSON.parse(raw) as unknown;
     const content = extractAssistantContent(parsed);
-    return parseRefinement(content);
+    const value = parseRefinement(content);
+    return { value, retryable: !value };
   } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
+    return { value: null, retryable: !controller.signal.aborted };
   }
+  })();
+  try { return await Promise.race([request, timedOut]); }
+  finally { clearTimeout(timeout); }
 }
 
 function refinementEnvelope(taskSpec: TaskSpec): Record<string, unknown> {
@@ -295,7 +352,7 @@ function applyRefinement(
   taskSpec: TaskSpec,
   refinement: SemanticTaskSpecRefinement,
 ): { taskSpec: TaskSpec; accepted: TaskCapability[]; rejected: Array<Record<string, unknown>> } {
-  const stripped = stripNonAuthoritativeText(taskSpec.task);
+  const stripped = authoritativeTaskText(taskSpec.task);
   const hash = createHash("sha256").update(taskSpec.task.normalize("NFKC"), "utf8").digest("hex");
   const accepted: TaskCapability[] = [];
   const rejected: Array<Record<string, unknown>> = [];
@@ -436,11 +493,23 @@ function validateSemanticCapability(candidate: SemanticCapability, taskSpec: Tas
   if (candidate.confidence < 0.72) return "low_confidence";
   if (candidate.action === "execute" || candidate.resourceType === "shell") return "llm_cannot_grant_shell_execution";
   if (candidate.effect !== "read_only" && candidate.targets.length > 4) return "side_effect_scope_too_broad";
+  const authoritativeText = candidate.resourceType === "file"
+    ? splitClauses(normalizeTaskText(taskSpec.task)).map((clause) => clause.text).join("\n")
+    : strippedTask;
+  if (candidate.resourceType === "email" && candidate.action === "read"
+    && (candidate.effect !== "persistent_change" || candidate.targets.length !== 1
+      || candidate.targets[0] !== "mailbox:unread" || !findCoveringCapability(taskSpec.capabilities, candidate))) {
+    return "mailbox_read_not_covered_by_deterministic_authorization";
+  }
   for (const target of candidate.targets) {
     if (!targetIsConcrete(target)) return "target_not_concrete";
-    if (!targetMentionedByUser(target, strippedTask)) return "target_not_present_in_authoritative_user_text";
+    const boundedMailbox = candidate.resourceType === "email" && candidate.action === "read"
+      && candidate.effect === "persistent_change" && target === "mailbox:unread"
+      && Boolean(findCoveringCapability(taskSpec.capabilities, candidate));
+    if (!boundedMailbox && !targetMentionedByUser(target, authoritativeText)) return "target_not_present_in_authoritative_user_text";
   }
-  if (candidate.resourceType === "email" && !candidate.targets.every((target) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target))) {
+  if (candidate.resourceType === "file" && !fileCapabilityVerified(candidate, taskSpec)) return "file_action_or_destination_not_authorized";
+  if (candidate.resourceType === "email" && candidate.action === "send" && !candidate.targets.every((target) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(target))) {
     return "invalid_email_target";
   }
   if (candidate.resourceType === "api") {
@@ -529,7 +598,9 @@ function constructGapFillCapability(
  * so the source survives editor encoding round-trips.
  */
 function gapFillClauseVerified(candidate: SemanticCapability, taskSpec: TaskSpec, strippedTask: string): boolean {
-  const span = candidate.evidenceSpan.trim();
+  // Models often cite the entire sentence, including its terminating punctuation.
+  // splitClauses removes those delimiters; normalize the citation the same way.
+  const span = normalizeTaskText(candidate.evidenceSpan).replace(/[。！？!?；;.]+$/u, "").trim();
   if (!span || !strippedTask.trim()) return false;
   // The LLM sees the raw task text, so anchor the span there first; fall back
   // to the NFKC-normalized form for spans the model already normalized.
@@ -557,6 +628,20 @@ function gapFillClauseVerified(candidate: SemanticCapability, taskSpec: TaskSpec
     return true;
   }
   return false;
+}
+
+function fileCapabilityVerified(candidate: SemanticCapability, taskSpec: TaskSpec): boolean {
+  const write = candidate.action === "write" && candidate.effect === "persistent_change";
+  const read = candidate.action === "read" && candidate.effect === "read_only";
+  if (!write && !read) return false;
+  return splitClauses(normalizeTaskText(taskSpec.task)).some((clause) =>
+    fileInstructionSegments(clause.text).some((instruction) => {
+      if (analysisOnly(instruction) || conditionalFileInstruction(instruction) || negatedAction(instruction, candidate.action)) return false;
+      const targets = write && explicitFileWrite(instruction) ? fileWriteTargets(instruction)
+        : read && explicitFileRead(instruction) ? extractPaths(instruction) : [];
+      return candidate.targets.every((target) => targets.includes(target));
+    }),
+  );
 }
 
 /**
@@ -607,7 +692,8 @@ function targetIsConcrete(target: string): boolean {
 
 function capabilityTools(capability: TaskCapability): string[] {
   if (capability.resourceType === "calendar") return ["calendar_write"];
-  if (capability.resourceType === "email") return ["send_email"];
+  if (capability.resourceType === "remote_file") return ["remote_file_create"];
+  if (capability.resourceType === "email") return capability.action === "read" ? ["email_read"] : ["send_email"];
   if (capability.resourceType === "file") return capability.action === "read" ? ["read_file"] : ["write_file"];
   if (capability.resourceType === "api") return capability.action === "read" ? ["read_webpage", "call_api"] : ["call_api"];
   if (capability.resourceType === "memory") return capability.action === "read" ? ["memory_read"] : ["memory_write"];

@@ -1,0 +1,102 @@
+{
+  "evidence_level": "synthetic_development_probe",
+  "base_commit": "598b70615f288bbd1eb72f4667c8c02500bd3e53",
+  "working_tree_dirty": true,
+  "model": "deepseek-v4.1-flash",
+  "provider": "user-supplied compatible gateway",
+  "paired_configuration_probe": {
+    "unique_cases": 1,
+    "repetitions_per_setting": 3,
+    "cache_enabled": false,
+    "auto_elapsed_ms": [
+      3404,
+      3517,
+      2979
+    ],
+    "disabled_elapsed_ms": [
+      2246,
+      1680,
+      1390
+    ],
+    "auto_median_ms": 3404,
+    "disabled_median_ms": 1680,
+    "median_reduction_fraction": 0.5065,
+    "decisions_passed": true,
+    "auto_reasoning_tokens": [
+      250,
+      271,
+      223
+    ],
+    "disabled_reasoning_tokens": [
+      0,
+      0,
+      0
+    ]
+  },
+  "cache_probe": {
+    "unique_cases": 1,
+    "repetitions": 3,
+    "refinement_ms": [
+      2055,
+      1,
+      0
+    ],
+    "provider_requests": [
+      1,
+      0,
+      0
+    ],
+    "decisions_passed": true
+  },
+  "disabled_thinking_regression": {
+    "unique_cases": 6,
+    "passed": 6,
+    "refinement_ms": [
+      2578,
+      1944,
+      1705,
+      1967,
+      1938,
+      1825
+    ]
+  },
+  "public_read_probes": [
+    {
+      "decision": "allow",
+      "elapsed_ms": 109,
+      "model_requests": 0,
+      "routes": {
+        "toolJudgeRouted": false,
+        "memoryJudgeRouted": false,
+        "ambiguousJudgeRouted": false
+      }
+    },
+    {
+      "decision": "allow",
+      "elapsed_ms": 3,
+      "model_requests": 0,
+      "routes": {
+        "toolJudgeRouted": false,
+        "memoryJudgeRouted": false,
+        "ambiguousJudgeRouted": false
+      }
+    }
+  ],
+  "full_mode_action_judge": {
+    "decision": "allow",
+    "routes": {
+      "toolJudgeRouted": true,
+      "memoryJudgeRouted": false,
+      "ambiguousJudgeRouted": false
+    },
+    "semantic_findings": 0,
+    "requests": [
+      {
+        "elapsed_ms": 2010,
+        "error": "AbortError",
+        "message": "This operation was aborted"
+      }
+    ]
+  },
+  "limitations": "Sequential synthetic smoke, not a randomized or statistically powered benchmark. No tools execute; no production FPR, user task Utility or production P95 is estimated. Full action Judge still exceeded its 2-second budget."
+}

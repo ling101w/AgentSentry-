@@ -71,6 +71,9 @@ vi.mock("../../core/system-monitor.ts", async (importOriginal) => {
 });
 
 import plugin from "../../index.ts";
+import { supervisionService } from "../../core/supervision-service.ts";
+import { SupervisionService } from "../../core/supervision-service.ts";
+import * as taskSpecService from "../../core/task-spec/index.ts";
 
 type Hook = (event: any, context: any) => unknown;
 type Service = { id: string; start(): unknown; stop(): unknown };
@@ -156,6 +159,96 @@ async function flushRecords(): Promise<void> {
 }
 
 describe("OpenClaw plugin hooks", () => {
+  it("does not publish a completed extraction over a newer user request", async () => {
+    const harness = createHarness();
+    const context = { sessionKey: "hooks:stale-extraction", workspaceDir: harness.stateDir };
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(taskSpecService, "refineTaskSpecWithLLM").mockImplementationOnce(async (spec) => {
+      enter();
+      await waiting;
+      return {
+        taskSpec: spec, applied: true,
+        findings: [{ layer: "Intent Authorization", finding_type: "semantic", verdict: "pass", reason: "old extraction", score: 0, evidence: {} }],
+      };
+    });
+    const prompt = invoke(harness, "before_prompt_build", { messages: [{ role: "user", content: "Send report.md to ops@example.com." }] }, context);
+    await entered;
+    await invoke(harness, "before_message_write", { message: { role: "user", content: "Read README.md. Do not send email." } }, context);
+    release();
+    await prompt;
+    const state = [...plugin.sessions.values()].find((item) => item.sourceSessionKey === context.sessionKey)!.policyState;
+    expect(state.taskSpec.allowed_tools).not.toContain("send_email");
+    expect(state.taskSpec.denied_tools).toContain("send_email");
+  });
+
+  it("serializes concurrent calls in one session and retains both pending records", async () => {
+    const harness = createHarness();
+    const context = { sessionKey: "hooks:concurrent", workspaceDir: harness.stateDir };
+    await invoke(harness, "before_message_write", { message: { role: "user", content: "Read README.md and docs/report.md." } }, context);
+    const evaluator = new SupervisionService();
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const calls = vi.spyOn(supervisionService, "evaluate").mockImplementation(async (request) => {
+      const value = await evaluator.evaluate(request);
+      if (request.context?.toolCallId === "concurrent-A") { enter(); await waiting; }
+      return value;
+    });
+    const first = invoke(harness, "before_tool_call", { toolName: "read_file", toolCallId: "concurrent-A", params: { path: "README.md" } }, context);
+    await entered;
+    const second = invoke(harness, "before_tool_call", { toolName: "read_file", toolCallId: "concurrent-B", params: { path: "README.md" } }, context);
+    await invoke(harness, "before_tool_call", { toolName: "read_file", toolCallId: "different-session", params: { path: "README.md" } }, { ...context, sessionKey: "hooks:independent" });
+    expect(calls).toHaveBeenCalledTimes(2);
+    release();
+    expect(await first).toBeUndefined();
+    expect(await second).toBeUndefined();
+    const session = [...plugin.sessions.values()].find((item) => item.sourceSessionKey === context.sessionKey)!;
+    expect(session.policyState.semanticActionGraph.pendingCalls.size).toBe(2);
+    expect(session.policyState.history).toHaveLength(2);
+  });
+
+  it.each(["replacement", "in-place"])("blocks an uncommitted decision after %s config changes while waiting", async (mode) => {
+    const harness = createHarness();
+    const evaluator = new SupervisionService();
+    vi.spyOn(supervisionService, "evaluate").mockImplementation(async (request) => {
+      const result = await evaluator.evaluate(request);
+      if (mode === "replacement") plugin.config = Object.assign(Object.create(Object.getPrototypeOf(plugin.config)), structuredClone(plugin.config));
+      else plugin.config!.enforcement.mode = "observe";
+      return result;
+    });
+    const result = await invoke(harness, "before_tool_call", { toolName: "read_file", toolCallId: `config-${mode}`, params: { path: "README.md" } }, { sessionKey: `hooks:config-${mode}`, workspaceDir: harness.stateDir });
+    expect(result).toMatchObject({ block: true, blockReason: expect.stringContaining("configuration changed") });
+    expect([...plugin.sessions.values()][0].policyState.history).toHaveLength(0);
+  });
+
+  it("returns consistent deterministic decisions through Hook, Sidecar, and Lab", async () => {
+    const harness = createHarness({ dashboard: { enabled: true, port: 0 } });
+    await harness.service.start();
+    const task = "Read README.md.";
+    const context = { sessionKey: "hooks:entry-parity", workspaceDir: harness.stateDir };
+    await invoke(harness, "before_message_write", { message: { role: "user", content: task } }, context);
+    await invoke(harness, "before_tool_call", { toolName: "read_file", toolCallId: "parity", params: { path: "README.md" } }, context);
+    await flushRecords();
+    const hook = readRecords(harness).find((record) => record.type === "tool_decision")!.payload;
+    const post = async (path: string, body: Record<string, unknown>) => {
+      const response = await fetch(`${plugin.dashboard!.url}${path}`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${new URL(plugin.dashboard!.accessUrl).searchParams.get("access_token")}` },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    const sidecar = await post("/api/sidecar/evaluate", { sessionKey: "sidecar-parity", task, toolName: "read_file", params: { path: "README.md" }, workspaceDir: harness.stateDir });
+    const lab = await post("/api/lab/command", { clientId: "lab-parity", command: task, scenario: "manual", actions: [{ toolName: "read_file", params: { path: "README.md" } }] });
+    for (const entry of [sidecar, lab.decisions[0]]) {
+      expect(entry).toMatchObject({ decision: hook.decision, normalized_tool: hook.normalized_tool, risk_score: hook.risk_score });
+    }
+  });
+
   it("returns deterministic blocks without waiting for Judge or shadow scoring", async () => {
     const harness = createHarness({ semantic: { enabled: true, mode: "full", apiKeyEnv: "AGENTSENTRY_HOOK_BUDGET_KEY" }, graphLearning: { enabled: true } });
     await harness.service.start();

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginConfig } from "../../config.ts";
 import {
   authorizeCapability,
+  clearTaskSpecRefinementCache,
   createAuthorizationState,
   deriveTaskSpecV2,
   refineTaskSpecWithLLM,
@@ -12,6 +13,7 @@ import { semanticGateForTaskSpec } from "../../core/semantic.ts";
 const TASK_SPEC_JUDGE_ENV = "AGENTSENTRY_TASK_SPEC_TEST_KEY";
 
 afterEach(() => {
+  clearTaskSpecRefinementCache();
   delete process.env[TASK_SPEC_JUDGE_ENV];
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

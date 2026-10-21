@@ -31,7 +31,7 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 export async function safeHttpGet(input: URL | string, options: SafeHttpOptions = {}): Promise<SafeHttpResponse> {
   const maxBytes = positiveInt(options.maxBytes, DEFAULT_MAX_BYTES);
-  const maxRedirects = positiveInt(options.maxRedirects, DEFAULT_MAX_REDIRECTS);
+  const maxRedirects = options.maxRedirects === 0 ? 0 : positiveInt(options.maxRedirects, DEFAULT_MAX_REDIRECTS);
   const timeoutMs = positiveInt(options.timeoutMs, DEFAULT_TIMEOUT_MS);
   const deadline = Date.now() + timeoutMs;
   let current = typeof input === "string" ? new URL(input) : new URL(input.toString());

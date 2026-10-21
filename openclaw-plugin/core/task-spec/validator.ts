@@ -9,8 +9,11 @@ import { hostFromUrl, targetMatches } from "../security/url.ts";
 import { isLowRiskShellReadCommand } from "../policy/safe-ops.ts";
 import { authorizeCalendarArguments } from "./calendar.ts";
 import { hasEmptyConstraint } from "./constraints.ts";
+import { resolveToolManifest } from "../tool-manifest.ts";
+import { isLabeledValue } from "../policy/value-utils.ts";
+import { authorizeNamedServiceArguments } from "../named-services.ts";
 
-const SIDE_EFFECT_TOOLS = new Set(["write_file", "send_email", "call_api", "shell_exec", "memory_write", "calendar_write"]);
+const SIDE_EFFECT_TOOLS = new Set(["write_file", "send_email", "call_api", "shell_exec", "memory_write", "calendar_write", "email_read", "remote_file_create"]);
 
 export function authorizeCapability(
   spec: TaskSpec,
@@ -123,8 +126,7 @@ function matchesProposalTarget(actual: string, allowed: string, tool: string): b
  * counter maintained by the session state.
  */
 function checkUsageBudget(capability: TaskCapability, request: CapabilityActionRequest): CapabilityAuthorization | null {
-  const usage = capability.usage;
-  if (!usage) return null;
+  const usage = capability.usage || { calls: 0, bytesWritten: 0 };
   const maxCalls = capability.constraints.maxCalls ?? Number.POSITIVE_INFINITY;
   if (usage.calls >= maxCalls) {
     return {
@@ -135,10 +137,9 @@ function checkUsageBudget(capability: TaskCapability, request: CapabilityActionR
       actualTarget: targetFor(request),
     };
   }
-  if (request.tool === "write_file") {
+  if (request.tool === "write_file" || request.tool === "remote_file_create") {
     const maxBytes = capability.constraints.maxBytes ?? Number.POSITIVE_INFINITY;
-    const content = readFirst(request.args, ["content", "text", "body", "data"]);
-    if (usage.bytesWritten + content.length > maxBytes) {
+    if (usage.bytesWritten + writeBytes(request) > maxBytes) {
       return {
         action: "ask",
         authorized: false,
@@ -160,8 +161,8 @@ export function recordCapabilityUse(spec: TaskSpec, request: CapabilityActionReq
     if (!descriptorMatches(capability, descriptor)) return capability;
     if (!validateConstraints(capability, request, descriptor.method).authorized) return capability;
     const usage = capability.usage || { calls: 0, bytesWritten: 0, expiresAfterTurn: capability.expiresAfterTurn };
-    const content = request.tool === "write_file"
-      ? readFirst(request.args, ["content", "text", "body", "data"]).length
+    const content = request.tool === "write_file" || request.tool === "remote_file_create"
+      ? writeBytes(request)
       : 0;
     updated = true;
     return {
@@ -176,6 +177,15 @@ export function recordCapabilityUse(spec: TaskSpec, request: CapabilityActionReq
   return updated ? { ...spec, capabilities } : spec;
 }
 
+function writeBytes(request: CapabilityActionRequest): number {
+  for (const key of ["content", "text", "body", "data"]) {
+    let value = request.args[key];
+    for (let depth = 0; depth < 64 && isLabeledValue(value); depth += 1) value = value.value;
+    if (typeof value === "string") return Buffer.byteLength(value, "utf8");
+  }
+  return 0;
+}
+
 export function isSideEffectToolCall(request: CapabilityActionRequest): boolean {
   if (!SIDE_EFFECT_TOOLS.has(request.tool)) return false;
   if (request.tool !== "call_api") return true;
@@ -186,7 +196,9 @@ function descriptorFor(request: CapabilityActionRequest): { action: TaskCapabili
   if (request.tool === "calendar_write") return { action:"write", resource:"calendar" };
   if (request.tool === "read_file") return { action: "read", resource: "file" };
   if (request.tool === "write_file") return { action: "write", resource: "file" };
+  if (request.tool === "remote_file_create") return { action: "write", resource: "remote_file" };
   if (request.tool === "send_email") return { action: "send", resource: "email" };
+  if (request.tool === "email_read") return { action: "read", resource: "email" };
   if (request.tool === "read_webpage") return { action: "read", resource: "api", method: "GET" };
   if (request.tool === "call_api") {
     const method = requestMethod(request);
@@ -213,7 +225,13 @@ function validateConstraints(capability: TaskCapability, request: CapabilityActi
   if (hasEmptyConstraint(capability.constraints)) {
     return mismatch("capability_constraint_conflict", capability, targetFor(request));
   }
+  if (capability.constraints.namedService) return authorizeNamedServiceArguments(capability, request);
   if (request.tool === "calendar_write") return authorizeCalendarArguments(capability, request);
+  if (request.tool === "remote_file_create") return authorizeRemoteFileCreation(capability, request);
+  if (request.tool === "email_read" && (capability.effect !== "persistent_change"
+    || capability.targets.length !== 1 || capability.targets[0] !== "mailbox:unread" || Object.keys(request.args).length)) {
+    return mismatch("mailbox_operation_outside_authorization", capability, targetFor(request));
+  }
   const target = targetFor(request);
   if (capability.constraints.allowedMethods?.length && method && !capability.constraints.allowedMethods.includes(method)) {
     return mismatch("method_outside_authorization", capability, target);
@@ -268,6 +286,25 @@ function validateConstraints(capability: TaskCapability, request: CapabilityActi
   }
 
   return { action: "allow", authorized: true, reason: "explicit_capability_match", capability };
+}
+
+function authorizeRemoteFileCreation(capability: TaskCapability, request: CapabilityActionRequest): CapabilityAuthorization {
+  const manifest = resolveToolManifest(request.originalTool || request.tool)?.manifest;
+  const name = typeof request.args.filename === "string" ? request.args.filename : "";
+  if (!manifest || manifest.toolId !== "remote_file_create" || manifest.accessScope !== "caller_bound"
+    || manifest.purposeBinding !== "task_bound" || !manifest.requiresExplicitAuthorization || manifest.canExfiltrate
+    || manifest.dataSubjects?.length !== 1 || manifest.dataSubjects[0] !== "caller"
+    || manifest.targetFields?.length !== 1 || manifest.targetFields[0] !== "filename"
+    || !manifest.sideEffects.includes("file_write") || !manifest.sideEffects.includes("persistent_state")
+    || manifest.sideEffects.some((effect) => !["file_write", "network_write", "persistent_state"].includes(effect))) {
+    return mismatch("remote_file_contract_missing", capability, name);
+  }
+  if (Object.keys(request.args).some((key) => !["filename", "content"].includes(key))
+    || typeof request.args.content !== "string") return mismatch("remote_file_unrecognized_argument", capability, name);
+  if (!name || /[\\/\x00-\x1f]/.test(name) || name.includes("..") || name.startsWith(".")
+    || !capability.targets.includes(name) || !capability.constraints.allowedPaths?.includes(name)
+    || !capability.bound?.paths?.includes(name)) return mismatch("remote_filename_outside_authorization", capability, name);
+  return { action: "allow", authorized: true, reason: "explicit_remote_file_creation_match", capability };
 }
 
 function constraintMismatchReason(capability: TaskCapability, request: CapabilityActionRequest, method?: string): string {
@@ -338,6 +375,7 @@ function hasPayload(args: Record<string, unknown>): boolean {
 function targetFor(request: CapabilityActionRequest): string {
   if (request.tool === "send_email") return readFirst(request.args, ["recipient", "to", "target", "email"]);
   if (request.tool === "read_file" || request.tool === "write_file") return readFirst(request.args, ["path", "file", "filename", "target"]);
+  if (request.tool === "remote_file_create") return readFirst(request.args, ["filename"]);
   if (request.tool === "read_webpage" || request.tool === "call_api") return readFirst(request.args, ["url", "href", "endpoint", "target"]);
   if (request.tool === "shell_exec") return readFirst(request.args, ["command", "cmd", "script", "input"]);
   return request.tool;

@@ -298,7 +298,10 @@ describe("policy state transitions", () => {
       findings: [finding({ layer: "State Integrity", verdict: "block", reason: "memory integrity changed" })],
     };
 
-    for (let index = 0; index < 82; index += 1) updateAfterDecision(state, decision);
+    for (let index = 0; index < 82; index += 1) {
+      const fresh = decideAction(base.action, state, config, []);
+      updateAfterDecision(state, { ...decision, effects: fresh.effects });
+    }
 
     expect(state.history).toHaveLength(80);
     expect(state.aggregateRisk.prompt_injection).toBe(65);

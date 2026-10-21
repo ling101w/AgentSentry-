@@ -34,6 +34,8 @@ export interface ToolSecurityManifest {
   targetFields?: string[];
   /** Fields that identify the person, account, device, or record being read. */
   subjectFields?: string[];
+  /** Text selectors sent only to a caller-bound, read-only provider. */
+  queryFields?: string[];
   dataClassification?: ToolDataClassification;
   /**
    * Declares whose data a tool normally exposes. This is metadata supplied at
@@ -398,7 +400,7 @@ function validateManifest(manifest: ToolSecurityManifest): void {
   if (manifest.sensitiveInputHandling !== undefined && !SENSITIVE_INPUT_HANDLING.has(manifest.sensitiveInputHandling)) {
     throw new TypeError("tool manifest contains an invalid sensitive input handling declaration");
   }
-  for (const fieldList of [manifest.credentialFields, manifest.targetFields, manifest.subjectFields]) {
+  for (const fieldList of [manifest.credentialFields, manifest.targetFields, manifest.subjectFields, manifest.queryFields]) {
     if (fieldList !== undefined && (!Array.isArray(fieldList) || fieldList.some((field) => typeof field !== "string" || !field.trim()))) {
       throw new TypeError("tool manifest field declarations must be non-empty strings");
     }

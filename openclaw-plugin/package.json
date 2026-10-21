@@ -14,7 +14,7 @@
     "test:integration": "vitest run tests/integration",
     "test:fuzz": "vitest run tests/fuzz",
     "test:coverage": "vitest run --coverage",
-    "test:policy": "npm run build && node ./scripts/policy-smoke.mjs && node ./scripts/agentdojo-policy-bridge.mjs --self-test",
+    "test:policy": "npm run build && node ./scripts/policy-smoke.mjs && node ./scripts/agentdojo-policy-bridge.mjs --self-test && node ./scripts/authorization-regression.mjs",
     "test:security": "npm run build && node ./scripts/security-smoke.mjs",
     "test:property": "npm run build && node ./scripts/property-fuzz.mjs",
     "ci": "npm run typecheck && npm run lint && npm run test:coverage && npm run test:policy && npm run test:security && npm run test:property",

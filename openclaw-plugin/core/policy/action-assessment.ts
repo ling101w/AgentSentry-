@@ -73,6 +73,12 @@ export function assessActionWithSensitiveAssets(action: PolicyActionInput, sensi
     persistence = true;
     reasons.push("calendar changes persistent shared state");
   }
+  if (action.tool === "remote_file_create") {
+    actionClass = "write";
+    externalSink = true;
+    persistence = true;
+    reasons.push("remote file creation changes provider state");
+  }
 
   if (action.tool === "send_email") {
     externalSink = true;
@@ -84,7 +90,7 @@ export function assessActionWithSensitiveAssets(action: PolicyActionInput, sensi
     externalSink = !host || !isLocalHost(host);
     if (externalSink) reasons.push(host ? `network call targets external host ${host}` : "network call target is missing or invalid");
   }
-  if ((FILE_PATH_TOOLS.has(action.tool) && isSensitivePathWithAssets(path, sensitiveAssets)) || hasSensitiveValue(argsText)) {
+  if (((FILE_PATH_TOOLS.has(action.tool) || action.tool === "remote_file_create") && isSensitivePathWithAssets(path, sensitiveAssets)) || hasSensitiveValue(argsText)) {
     sensitive = true;
     reasons.push("arguments reference sensitive asset");
   }
@@ -137,6 +143,7 @@ export function shouldHardBlockTaskMismatch(
 
 export function isTrustSensitiveSink(action: PolicyActionInput, assessment: ActionAssessment): boolean {
   if (action.tool === "calendar_write") return true;
+  if (action.tool === "remote_file_create") return true;
   if (action.tool === "send_email") return true;
   if (action.tool === "shell_exec") return assessment.highRisk;
   if (action.tool === "memory_write") return true;
@@ -147,6 +154,7 @@ export function isTrustSensitiveSink(action: PolicyActionInput, assessment: Acti
 
 export function sinkForAction(action: PolicyActionInput, assessment: ActionAssessment): TaintSink | null {
   if (action.tool === "calendar_write") return "call_api";
+  if (action.tool === "remote_file_create") return "call_api";
   if (action.tool === "send_email") return "send_email";
   if (action.tool === "call_api" && assessment.externalSink) return "call_api";
   if (action.tool === "shell_exec" && assessment.highRisk) return "shell_exec";
@@ -200,10 +208,13 @@ function isSensitivePathWithAssets(path: string, sensitiveAssets: string[]): boo
   if (!normalized) return false;
   if (isSafeSystemReadPath(normalized)) return false;
   if (SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(normalized))) return true;
-  if (isDocumentationPath(normalized)) return false;
+  const documentation = isDocumentationPath(normalized);
   return sensitiveAssets.some((asset) => {
     const item = asset.trim().replace(/\\/g, "/").toLowerCase();
     if (!item) return false;
+    // Generic vocabulary can name a documentation topic. Explicit filenames
+    // and administrator-defined assets keep their normal protection in docs.
+    if (documentation && ["api_key", "token", "password"].includes(item)) return false;
     if (normalized === item || normalized.endsWith(`/${item}`)) return true;
     const escaped = item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(^|[/_.-])${escaped}($|[/_.-])`, "i").test(normalized);
@@ -226,7 +237,7 @@ function isSystemMutationPath(path: string): boolean {
   return SYSTEM_MUTATION_PATH_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-function isDocumentationPath(path: string): boolean {
+export function isDocumentationPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").toLowerCase();
   if (!/\.(?:md|markdown|txt|rst|adoc)$/i.test(normalized)) return false;
   return /(^|\/)(docs?|examples?|samples?)(\/|$)/i.test(normalized)

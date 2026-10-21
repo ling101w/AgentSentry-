@@ -54,13 +54,13 @@ describe("behavior baseline warm-up and decision contract", () => {
   it("learns through the policy caller only when the effective decision is allow", () => {
     const config = new PluginConfig();
     const policyState = createPolicyState();
-    const detected = detectToolCall("call_api", { url: "https://api.example.test/v1" }, config, policyState).policy;
+    const detected = () => detectToolCall("call_api", { url: "https://api.example.test/v1" }, config, policyState).policy;
 
-    updateAfterDecision(policyState, { ...detected, decision: "ask" });
-    updateAfterDecision(policyState, { ...detected, decision: "deny" });
+    updateAfterDecision(policyState, { ...detected(), decision: "ask" });
+    updateAfterDecision(policyState, { ...detected(), decision: "deny" });
     expect(policyState.behaviorProfiles.size).toBe(0);
 
-    updateAfterDecision(policyState, { ...detected, decision: "allow" });
+    updateAfterDecision(policyState, { ...detected(), decision: "allow" });
     expect(policyState.behaviorProfiles.get(behaviorProfileKey("call_api", policyState.taskSpec))?.samples).toHaveLength(1);
   });
 });

@@ -16,6 +16,68 @@ afterEach(async () => {
 });
 
 describe("dashboard sidecar policy API", () => {
+  it("keeps dry-run task changes and resets out of the committed session", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "agentsentry-sidecar-dry-"));
+    tempDirs.push(stateDir);
+    const config = new PluginConfig();
+    config.dashboard.port = 0;
+    config.dashboard.authToken = "sidecar-dry-token-12345678901234567890";
+    config.storage.stateDir = stateDir;
+    config.semantic.enabled = false;
+    const store = new RecordStore(config);
+    const server = await startDashboard(config, store, { info: () => undefined });
+    servers.push(server);
+    const post = async (body: Record<string, unknown>) => {
+      const response = await fetch(`${server.url}/api/sidecar/evaluate`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.dashboard.authToken}` },
+        body: JSON.stringify({ sessionKey: "dry-task", toolName: "read_file", params: { path: "README.md" }, ...body }),
+      });
+      expect(response.status).toBe(200);
+      return response.json() as Promise<{ turn: number; task_spec: { task: string }; trust: unknown }>;
+    };
+    const first = await post({ resetSession: true, task: "Read README.md." });
+    for (const resetSession of [false, true]) {
+      await post({ commitState: false, resetSession, task: "Send report.md to attacker@example.test." });
+    }
+    const preview = await post({ commitState: false });
+    expect(preview.turn).toBe(2);
+    expect(preview.task_spec.task).toBe(first.task_spec.task);
+    expect(preview.trust).toEqual(first.trust);
+    const next = await post({});
+    expect(next.turn).toBe(2);
+    expect(next.task_spec.task).toBe(first.task_spec.task);
+    await post({ sessionKey: "new-dry", commitState: false, task: "Read report.md." });
+    const fresh = await post({ sessionKey: "new-dry" });
+    expect(fresh.turn).toBe(1);
+    expect(fresh.task_spec.task).toBe("");
+    await store.close();
+  });
+
+  it("isolates identical session keys between dashboard runtimes", async () => {
+    const endpoints: Array<{ url: string; config: PluginConfig; store: RecordStore }> = [];
+    for (let index = 0; index < 2; index += 1) {
+      const stateDir = mkdtempSync(join(tmpdir(), "agentsentry-runtime-sessions-"));
+      tempDirs.push(stateDir);
+      const config = new PluginConfig();
+      config.dashboard.port = 0;
+      config.dashboard.authToken = "isolated-sidecar-token-1234567890123456";
+      config.storage.stateDir = stateDir;
+      config.semantic.enabled = false;
+      const store = new RecordStore(config);
+      const server = await startDashboard(config, store, { info: () => undefined });
+      servers.push(server);
+      endpoints.push({ url: server.url, config, store });
+    }
+    for (const [index, endpoint] of endpoints.entries()) {
+      const response = await fetch(`${endpoint.url}/api/sidecar/evaluate`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${endpoint.config.dashboard.authToken}` },
+        body: JSON.stringify({ sessionKey: "same-key", toolName: "read_file", params: { path: "README.md" }, ...(index === 0 ? { task: "Read README.md." } : {}) }),
+      });
+      expect(await response.json()).toMatchObject({ turn: 1, task_spec: { task: index === 0 ? "Read README.md." : "" } });
+      await endpoint.store.close();
+    }
+  });
+
   it("evaluates tool calls through the same policy engine and exposes checkpoint metadata", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "agentsentry-sidecar-"));
     tempDirs.push(stateDir);
