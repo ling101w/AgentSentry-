@@ -82,7 +82,10 @@ export function updateAfterDecision(state: PolicyState, decision: PolicyDecision
   }
   if (decision.decision === "allow") {
     updateBehaviorProfile(state, decision.action);
-    if (decision.action.tool === "calendar_write") state.taskSpec = recordCapabilityUse(state.taskSpec, decision.action);
+    if (["calendar_write", "email_read", "write_file", "remote_file_create"].includes(decision.action.tool)) {
+      state.taskSpec = recordCapabilityUse(state.taskSpec, decision.action);
+      state.authorizationState.taskSpec = state.taskSpec;
+    }
   }
   state.aggregateRisk = mergeRiskVectors(state.aggregateRisk, decision.risk_vector);
   mergeFindingTrust(state, decision.findings);

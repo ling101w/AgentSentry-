@@ -32,7 +32,21 @@ Default reports omit per-case expected labels and decisions. The `--include-case
 
 The committed benign file currently contains six reviewed seed fixtures. It is a schema and pipeline starting point, not the planned 200-case realistic-business evaluation and not evidence of a production FPR.
 
+`regression/authorization_write_cases.jsonl` adds 16 explicit file-operation requests and 14 paired authorization boundaries for development. `openclaw-plugin/scripts/authorization-regression.mjs` checks these alongside the six seeds with Judge disabled and no tool execution. It reports deny and ask separately and runs in `test:policy`; its curated counts are not a production FPR or a task-completion estimate. Before/after evidence and the separate opt-in provider probe are documented in `reports/authorization-optimization-20261017/`.
+
+`regression/authorization_quoted_targets.jsonl` adds eight ordinary quoted-address/URL/query requests and ten matching boundaries. The current combined development check has 30 benign and 24 boundary cases; the profiles reuse the same inputs. See `reports/semantic-latency-optimization-20261017/` for the expanded before/after comparison and provider/cache latency probes.
+
 Metrics distinguish trials from unique cases. Repeated-seed Wilson intervals use conservative case-level outcomes, and harness errors are excluded from security-rate denominators and reported explicitly.
+
+## Reused local business workflows
+
+`benign/reused_business_workflows.jsonl` freezes 210 source-labelled allow workflows and three ask controls from existing local data. This workflow format has an evaluator-owned `label` and `provenance`, with a `steps` array of exact five-field detector envelopes. It is a development set, not the six-row seed file, a sealed holdout, or an independently reviewed production-FPR sample.
+
+`benign/reuse_inventory.json` pins the source hashes and transformations. `scripts/build_benign_reuse.py` imports the local sources and deduplicates exact input sequences; contradictory expectations are excluded for adjudication. `scripts/run_benign_reuse.py` replays without tools or models and reports ask/deny separately, with Utility unset. `--native-reference` executes 40 official workspace reference paths inside AgentDojo memory; its oracle-supplied answers prevent treating that score as autonomous agent Utility. Full results and limitations are in `reports/benign-reuse-20261017/`.
+
+The second pass in `reports/benign-reduction-20261017/` retains the same case/input hashes. It covers lexical read queries, bounded output directories, literal read commands, compound calendar operands, and provider file creation. Competition improves from 141/210 to 151/210 automatic allows, with ask/deny reported separately; complete official reference execution improves from 19/40 to 24/40. The same 43 historical API mappings still lack a trusted endpoint binding. These remain development measurements with Judge disabled.
+
+The next pass in `reports/named-service-authorization-20261017/` adds trusted named health-service bindings. On the same frozen inputs, 10 mapped health GETs recover: competition reaches 161 allow / 0 ask / 49 deny. Another 33 historical API mappings carry business arguments incompatible with a health endpoint and remain blocked. `mapping-audit.json` records the overwritten operations; these results do not measure original MCP task completion. Future imports preserve unsupported MCP names/arguments instead of substituting a health call. The 32 controls and 24/40 complete official reference workflows are unchanged.
 
 ## Native AgentDojo
 

@@ -227,7 +227,7 @@ async function runSelfTest() {
   };
   const started = await handleRequest({ op: "start", session_id: sessionId, payload: basePayload });
   assert.equal(started.profile, "competition");
-  assert.equal(started.manifest_mapping_version, "1.1.0");
+  assert.equal(started.manifest_mapping_version, "1.3.0");
 
   const readDecision = await handleRequest({
     op: "before_tool",

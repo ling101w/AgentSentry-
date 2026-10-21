@@ -1,10 +1,12 @@
 import { PluginConfig } from "../../config.ts";
+import { authorizeNamedServiceArguments, withNamedServiceCapabilities } from "../named-services.ts";
+import { canonicalServiceEndpoint } from "../named-service-config.ts";
 import { agentCommunicationFindings } from "../agent-trust.ts";
 import type { DetectionFinding } from "../detect.ts";
 import { dynamicSecurityFindingsFor } from "../dynamic-security.ts";
 import { decisionFromRisk, mergeDecision } from "../judge/decision-merge.ts";
 import { normalizeMemoryKey } from "../memory-ifc.ts";
-import { assessAction, assessActionWithSensitiveAssets, isSensitivePath, isTrustSensitiveSink, shouldHardBlockTaskMismatch, sinkForAction, type ActionAssessment } from "./action-assessment.ts";
+import { assessAction, assessActionWithSensitiveAssets, isDocumentationPath, isSensitivePath, isTrustSensitiveSink, shouldHardBlockTaskMismatch, sinkForAction, type ActionAssessment } from "./action-assessment.ts";
 import { applyInterventionGate } from "./intervention-gate.ts";
 import { evaluateAbacDataFlow } from "./abac.ts";
 import { behaviorAnomalyFindingsFor } from "./behavior-baseline.ts";
@@ -51,14 +53,20 @@ export function evaluateMutable(
   const riskScoringEnabled = config.detection.enabled;
   let risk = riskScoringEnabled ? baseToolRisk(action.tool) : 0;
 
-  const taskSpec = state.taskSpec;
+  const taskSpec = withNamedServiceCapabilities(state.taskSpec, config, state.authorizationState.activeTask);
+  state.taskSpec = taskSpec;
   const assessment = assessPolicyAction(action, config);
-  const extractedAuthorization = authorizeCapability(taskSpec, action, { taskMode: taskSpec.task_mode });
+  const serviceTarget = ["call_api", "read_webpage"].includes(action.tool)
+    ? canonicalServiceEndpoint(readFirstString(action.args, ["url", "uri", "href", "endpoint", "target"])) : undefined;
+  const serviceCapability = serviceTarget ? taskSpec.capabilities.find((capability) => capability.constraints.namedService?.endpoint === serviceTarget) : undefined;
+  const serviceAuthorization = serviceCapability ? authorizeNamedServiceArguments(serviceCapability, action) : undefined;
+  const serviceViolation = serviceAuthorization && !serviceAuthorization.authorized;
+  const extractedAuthorization = serviceViolation ? serviceAuthorization : authorizeCapability(taskSpec, action, { taskMode: taskSpec.task_mode });
   // Capability contracts can prove that a call is a caller-bound, read-only
   // query. Treat that as a scoped authorization so downstream risk, graph and
   // dynamic-security stages do not repeatedly reinterpret an already proven
   // safe read as an unknown high-impact action.
-  const implicitManifestRead = !extractedAuthorization.authorized && manifestAllowsImplicitRead(action, taskSpec);
+  const implicitManifestRead = !serviceViolation && !extractedAuthorization.authorized && manifestAllowsImplicitRead(action, taskSpec);
   const capabilityAuthorization: CapabilityAuthorization = implicitManifestRead
     ? { action: "allow", authorized: true, reason: "manifest_bound_read" }
     : extractedAuthorization;
@@ -325,6 +333,11 @@ function capabilityAuthorizationReason(reason: string, tool: string): string {
     host_outside_authorization: "网络主机不在用户明确授权主机范围内",
     method_outside_authorization: "HTTP 方法不在用户明确授权方法范围内",
     command_outside_authorization: "Shell 命令不在用户明确授权命令范围内",
+    named_service_unrecognized_argument: "健康检查夹带了该接口不接受的业务参数，请为原业务操作使用对应工具",
+    named_service_target_mismatch: "健康检查地址与可信服务配置不一致",
+    named_service_method_mismatch: "该健康检查只授权 GET 请求",
+    named_service_tool_contract_mismatch: "当前工具的执行契约不支持自动授权健康检查",
+    named_service_contract_mismatch: "健康检查授权与可信服务配置不一致",
     unknown_tool_capability: `${tool} 没有已注册的能力模型，需要确认`,
   };
   return messages[reason] || `${tool} 能力授权校验未通过：${reason}`;
@@ -452,6 +465,10 @@ function deterministicViolations(
     if (!taskSpec.allowed_tools.includes("write_file") && effectiveAssessment.highRisk) {
       violations.push("task intent does not allow file write");
     }
+  }
+
+  if (action.tool === "remote_file_create" && assessment.sensitive) {
+    violations.push("remote file creation contains or references sensitive data");
   }
 
   if (action.tool === "read_file") {
@@ -759,6 +776,11 @@ function taskSpecBoundaryFindings(action: AgentSentryAction, state: PolicyState,
 
   const family = taskSpec.task_family || "unknown";
   const mode = taskSpec.task_mode || "unknown";
+  // Judge the exact action against its verified grant. An initially unknown
+  // task can retain low aggregate confidence after a valid gap-fill; that
+  // aggregate must not re-request approval for an already bound operation.
+  if (mode !== "data_only" && mode !== "chatter"
+    && hasStrongUserAuthorization(authorizeCapability(taskSpec, action, { taskMode: mode === "unknown" ? undefined : mode }))) return [];
   const confidence = Number.isFinite(taskSpec.task_confidence) ? (taskSpec.task_confidence || 0) : 0;
   const reasons: string[] = [];
 
@@ -1029,9 +1051,31 @@ function taintRisk(action: AgentSentryAction, state: PolicyState, config: Plugin
   const assessment = assessPolicyAction(action, config);
   const argsText = safeStringify(action.args).toLowerCase();
   const blockedTaint = config.policy.taintFeedback ? taintFlowForAction(action, assessment, state) : null;
-  if (!isManifestBoundReadRequestForAction(action) && action.tool !== "memory_write" && config.policy.sensitiveAssets.some((asset) => asset && argsText.includes(asset.toLowerCase()))) risk += 45;
+  if (!isManifestBoundReadRequestForAction(action) && action.tool !== "memory_write"
+    && config.policy.sensitiveAssets.some((asset) => asset && argsText.includes(asset.toLowerCase()))
+    && !isLexicalReadReference(action, assessment)) risk += 45;
   if (blockedTaint) risk += Math.min(45, Math.max(20, Math.trunc(blockedTaint.confidence / 2)));
   return Math.min(risk, 80);
+}
+
+function isLexicalReadReference(action: AgentSentryAction, assessment: ActionAssessment): boolean {
+  // Credential values still count, including in an otherwise harmless query.
+  if (assessment.sensitive) return false;
+  if (action.tool === "read_file") {
+    return isDocumentationPath(readFirstString(action.args, ["path", "file", "filename", "target"]))
+      && Object.keys(action.args).every((key) => ["path", "file", "filename", "target", "reason"].includes(key));
+  }
+  const manifest = (resolveToolManifest(action.originalTool) || resolveToolManifest(action.tool))?.manifest;
+  if (!manifest || manifest.accessScope !== "caller_bound" || manifest.sensitiveInputHandling !== "none"
+    || manifest.canExfiltrate || manifest.acceptsSensitiveData
+    || !manifest.dataSubjects?.length || manifest.dataSubjects.some((subject) => subject !== "caller")
+    || !["public", "internal", "user_private"].includes(manifest.dataClassification || "unknown")
+    || manifest.sideEffects.some((effect) => !["none", "file_read", "network_read"].includes(effect))) return false;
+  const fields = manifest.queryFields || [];
+  const keys = Object.keys(action.args);
+  return keys.length > 0 && keys.every((key) => fields.includes(key)
+    && typeof action.args[key] === "string" && String(action.args[key]).length <= 500
+    && !/\b(?:password|secret|token|api[_-]?key)\s*[:=]\s*\S+/i.test(String(action.args[key])));
 }
 
 function isManifestBoundReadRequestForAction(action: AgentSentryAction): boolean {

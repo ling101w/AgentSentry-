@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { join } from "node:path";
 import type { PluginConfig } from "../../config.ts";
 import { safeHttpGet } from "../../core/ssrf-http.ts";
+import { namedServiceRequestError, trustedNamedServices } from "../../core/named-services.ts";
 import { memoryConsensusFindings, memoryGuardScanRead, memoryGuardScanWrite, normalizeEnvelope, publicPassport, type MemoryEnvelope, type MemoryGuardAction, type MemorySourceClass } from "../../core/memory-guard.ts";
 import { auditRuntimeEventsSince, ebpfLogCheckpoint } from "../../core/system-monitor.ts";
 
@@ -257,6 +258,11 @@ async function executeHttpRequest(action: LabAction, config: PluginConfig): Prom
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return { ok: false, error: `unsupported URL protocol ${parsed.protocol}` };
   }
+  const namedService = trustedNamedServices(config).find((service) => service.endpoint === parsed.toString());
+  if (namedService) {
+    const issue = namedServiceRequestError(namedService.endpoint, action.params);
+    if (issue) return { ok: false, error: issue };
+  }
   const response = await safeHttpGet(parsed, {
     allowedHosts: labLocalHttpUrl(parsed)
       ? Array.from(new Set([stripIpv6Brackets(parsed.hostname), ...config.policy.allowlistedApiHosts]))
@@ -266,7 +272,7 @@ async function executeHttpRequest(action: LabAction, config: PluginConfig): Prom
       ? [parsed.origin]
       : config.policy.allowedLoopbackOrigins,
     maxBytes: 1024 * 1024,
-    maxRedirects: 5,
+    maxRedirects: namedService ? 0 : 5,
     timeoutMs: 5000,
   });
   const contentType = Array.isArray(response.headers["content-type"])

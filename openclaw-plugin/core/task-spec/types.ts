@@ -1,6 +1,6 @@
 export type CapabilityAction = "read" | "write" | "send" | "execute" | "request" | "persist";
 
-export type CapabilityResource = "file" | "email" | "api" | "shell" | "memory" | "skill" | "calendar";
+export type CapabilityResource = "file" | "remote_file" | "email" | "api" | "shell" | "memory" | "skill" | "calendar";
 
 export type CapabilityEffect = "read_only" | "external_side_effect" | "persistent_change";
 
@@ -19,6 +19,7 @@ export interface TaskCapability {
     maxBytes?: number;
     maxCalls?: number;
     calendar?: import("./calendar.ts").CalendarBinding;
+    namedService?: { id: string; endpoint: string; purpose: "health_read" };
   };
   evidence: {
     sourceMessageHash: string;

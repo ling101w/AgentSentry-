@@ -142,6 +142,15 @@
             "enum": ["off", "risk-tiered", "full"],
             "description": "Semantic judge scheduling mode. full reviews every enabled surface; risk-tiered reviews only security-relevant calls."
           },
+          "cacheEnabled": {
+            "type": "boolean",
+            "description": "Reuse bounded semantic proposals for identical task and provider inputs."
+          },
+          "thinking": {
+            "type": "string",
+            "enum": ["auto", "disabled"],
+            "description": "Optional provider setting. disabled sends thinking.type=disabled; use only with a compatible endpoint."
+          },
           "judgeToolCalls": {
             "type": "boolean",
             "description": "Use one semantic judge call only when deterministic enforcement returns ambiguous."
@@ -172,7 +181,7 @@
           },
           "timeoutMs": {
             "type": "number",
-            "description": "Semantic judge budget in milliseconds; runtime clamps this to 500-2000 ms. Default: 1500."
+            "description": "Semantic time budget in milliseconds. Action Judge caps the shared budget at 2000 ms; task extraction uses a total budget of 700-10000 ms. Default: 1500."
           },
           "maxInputChars": {
             "type": "number",
@@ -259,6 +268,22 @@
             "type": "array",
             "items": { "type": "string" },
             "description": "Path/name markers treated as sensitive assets."
+          },
+          "namedServices": {
+            "type": "array",
+            "maxItems": 32,
+            "description": "Administrator bindings for named health services. Explicit user health checks permit only GET to the exact endpoint, without payload or extra arguments.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "names", "purpose", "endpoint"],
+              "properties": {
+                "id": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{1,79}$" },
+                "names": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "type": "string", "minLength": 2, "maxLength": 80 } },
+                "purpose": { "const": "health_read" },
+                "endpoint": { "type": "string", "maxLength": 2048 }
+              }
+            }
           }
         }
       },

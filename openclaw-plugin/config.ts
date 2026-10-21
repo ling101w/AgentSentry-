@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { parseNamedServiceBindings, type NamedServiceBinding } from "./core/named-service-config.ts";
 
 export type EnforcementMode = "observe" | "approval" | "block";
 export type InterventionMode = "risk-based" | "evidence-gated";
@@ -133,6 +134,7 @@ export class PluginConfig {
   semantic: {
     enabled: boolean;
     cacheEnabled: boolean;
+    thinking: "auto" | "disabled";
     mode: SemanticJudgeMode;
     judgeToolCalls: boolean;
     judgeMessages: boolean;
@@ -163,6 +165,7 @@ export class PluginConfig {
     allowedLoopbackOrigins: string[];
     allowedWriteRoots: string[];
     sensitiveAssets: string[];
+    namedServices: NamedServiceBinding[];
   };
   runtimeIsolation: {
     requireKernelObserverForHighRisk: boolean;
@@ -261,6 +264,7 @@ export class PluginConfig {
     this.semantic = {
       enabled: false,
       cacheEnabled: true,
+      thinking: "auto",
       mode: "risk-tiered",
       judgeToolCalls: true,
       judgeMessages: false,
@@ -291,6 +295,7 @@ export class PluginConfig {
       allowedLoopbackOrigins: [],
       allowedWriteRoots: [],
       sensitiveAssets: ["secret.txt", "api_key", "token", "password", "system_prompt.txt", ".env", "id_rsa"],
+      namedServices: [],
     };
     this.runtimeIsolation = {
       requireKernelObserverForHighRisk: false,
@@ -419,6 +424,7 @@ export class PluginConfig {
     if (semantic) {
       config.semantic.enabled = readBoolean(semantic.enabled, config.semantic.enabled);
       config.semantic.cacheEnabled = readBoolean(semantic.cacheEnabled, config.semantic.cacheEnabled);
+      if (semantic.thinking === "auto" || semantic.thinking === "disabled") config.semantic.thinking = semantic.thinking;
       const mode = readString(semantic.mode, config.semantic.mode);
       if (mode === "off" || mode === "risk-tiered" || mode === "full") {
         config.semantic.mode = mode;
@@ -456,6 +462,7 @@ export class PluginConfig {
       config.policy.allowedLoopbackOrigins = readStringArray(policy.allowedLoopbackOrigins, config.policy.allowedLoopbackOrigins);
       config.policy.allowedWriteRoots = readStringArray(policy.allowedWriteRoots, config.policy.allowedWriteRoots);
       config.policy.sensitiveAssets = readStringArray(policy.sensitiveAssets, config.policy.sensitiveAssets);
+      config.policy.namedServices = parseNamedServiceBindings(policy.namedServices) ?? config.policy.namedServices;
     }
 
     const runtimeIsolation = objectAt(obj, "runtimeIsolation");

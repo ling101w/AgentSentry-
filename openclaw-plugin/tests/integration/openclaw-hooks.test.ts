@@ -73,6 +73,7 @@ vi.mock("../../core/system-monitor.ts", async (importOriginal) => {
 import plugin from "../../index.ts";
 import { supervisionService } from "../../core/supervision-service.ts";
 import { SupervisionService } from "../../core/supervision-service.ts";
+import * as taskSpecService from "../../core/task-spec/index.ts";
 
 type Hook = (event: any, context: any) => unknown;
 type Service = { id: string; start(): unknown; stop(): unknown };
@@ -158,6 +159,31 @@ async function flushRecords(): Promise<void> {
 }
 
 describe("OpenClaw plugin hooks", () => {
+  it("does not publish a completed extraction over a newer user request", async () => {
+    const harness = createHarness();
+    const context = { sessionKey: "hooks:stale-extraction", workspaceDir: harness.stateDir };
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(taskSpecService, "refineTaskSpecWithLLM").mockImplementationOnce(async (spec) => {
+      enter();
+      await waiting;
+      return {
+        taskSpec: spec, applied: true,
+        findings: [{ layer: "Intent Authorization", finding_type: "semantic", verdict: "pass", reason: "old extraction", score: 0, evidence: {} }],
+      };
+    });
+    const prompt = invoke(harness, "before_prompt_build", { messages: [{ role: "user", content: "Send report.md to ops@example.com." }] }, context);
+    await entered;
+    await invoke(harness, "before_message_write", { message: { role: "user", content: "Read README.md. Do not send email." } }, context);
+    release();
+    await prompt;
+    const state = [...plugin.sessions.values()].find((item) => item.sourceSessionKey === context.sessionKey)!.policyState;
+    expect(state.taskSpec.allowed_tools).not.toContain("send_email");
+    expect(state.taskSpec.denied_tools).toContain("send_email");
+  });
+
   it("serializes concurrent calls in one session and retains both pending records", async () => {
     const harness = createHarness();
     const context = { sessionKey: "hooks:concurrent", workspaceDir: harness.stateDir };

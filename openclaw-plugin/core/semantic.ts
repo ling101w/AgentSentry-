@@ -2,6 +2,8 @@ import type { PluginConfig } from "../config.ts";
 import type { DetectionFinding } from "./detect.ts";
 import { clampText, redactObject, safeStringify } from "./redact.ts";
 import type { PolicyState } from "./policy.ts";
+import { normalizeAction } from "./policy.ts";
+import { authorizeCapability } from "./task-spec/validator.ts";
 import { semanticActionGraphJudgeProjection } from "./semantic-action-graph.ts";
 import { hostFromUrl, isLocalHost } from "./policy/value-utils.ts";
 import { isLowRiskShellReadCommand } from "./policy/safe-ops.ts";
@@ -403,11 +405,42 @@ export function semanticGateForToolCall(
     reasons.push("external-origin tool combines intake with material side effects");
   }
 
+  if (reasons.length > 0 && reasons.every((reason) => reason === "external or non-allowlisted network target"
+    || reason === "external-origin tool combines intake with material side effects")
+    && explicitlyScopedPublicRead(toolName, params, state)) {
+    return gate(false, "low", "exact user-authorized public read handled by deterministic policy");
+  }
+
   if (reasons.some((reason) => /shell|sensitive|persistent|security-sensitive|memory|replay/.test(reason))) {
     return gate(true, "high", ...reasons);
   }
   if (reasons.length) return gate(true, "medium", ...reasons);
   return gate(false, "low", "low-risk tool call handled by deterministic policy");
+}
+
+function explicitlyScopedPublicRead(toolName: string, params: Record<string, unknown>, state: PolicyState | undefined): boolean {
+  if (!state || state.contaminated || state.provenanceBlocked || state.exposures.length || hasPriorSensitiveData(state)) return false;
+  if (Object.values(state.aggregateRisk).some((value) => value > 0)) return false;
+  const allowedKeys = new Set(["url", "uri", "href", "endpoint", "target", "method", "http_method", "reason"]);
+  if (Object.keys(params).some((key) => !allowedKeys.has(key))) return false;
+  const targets = ["url", "uri", "href", "endpoint", "target"].filter((key) => key in params).map((key) => params[key]);
+  if (targets.some((target) => typeof target !== "string" || !target.trim()) || new Set(targets).size !== 1) return false;
+  const methods = [params.method, params.http_method].filter((value) => value !== undefined).map((value) => String(value).toUpperCase());
+  if (new Set(methods).size > 1) return false;
+  const action = normalizeAction(toolName, params);
+  if (action.tool !== "call_api" && action.tool !== "read_webpage") return false;
+  const method = String(params.method || params.http_method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD") return false;
+  const envelope = resolveToolManifest(toolName);
+  if (envelope?.issuer !== "builtin" || !["call_api", "read_webpage"].includes(envelope.manifest.toolId)) return false;
+  // The built-in HTTP tool supports both reads and writes; its exact, bound
+  // GET/HEAD request supplies the narrower method-specific contract here.
+  if (envelope.manifest.sideEffects.some((effect) => !["network_read", "network_write", "none"].includes(effect))) return false;
+  const authorization = authorizeCapability(state.taskSpec, action, { taskMode: state.taskSpec.task_mode });
+  const evidence = authorization.capability?.evidence;
+  return authorization.authorized && Boolean(evidence && evidence.source === "user"
+    && evidence.explicitAuthorization && !evidence.negated && !evidence.insideQuotation
+    && evidence.targetIsConcrete && evidence.confidence >= 0.82);
 }
 
 function hasPriorSensitiveData(state: PolicyState | undefined): boolean {
@@ -828,6 +861,7 @@ async function callJudgeOnce(prompt: JudgeEnvelope, config: PluginConfig, apiKey
       body: JSON.stringify({
         model: config.semantic.model,
         temperature: 0,
+        ...(config.semantic.thinking === "disabled" ? { thinking: { type: "disabled" } } : {}),
         response_format: { type: "json_object" },
         messages: [
           {

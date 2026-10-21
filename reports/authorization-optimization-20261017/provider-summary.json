@@ -1,0 +1,58 @@
+{
+  "evidence_level": "synthetic_provider_smoke",
+  "base_commit": "598b70615f288bbd1eb72f4667c8c02500bd3e53",
+  "working_tree_dirty": true,
+  "provider": "user-supplied OpenAI-compatible endpoint",
+  "results": [
+    {
+      "model": "deepseek-v4.1-flash",
+      "cases": 6,
+      "passed": 6,
+      "extraction_elapsed_ms": [
+        5148,
+        3111,
+        4396,
+        3781,
+        3838,
+        3940
+      ],
+      "extraction_median_ms": 3889.0,
+      "delivery": {
+        "before": "deny",
+        "after": "allow"
+      },
+      "action_judge_budget_ms": 2000,
+      "action_judge_semantic_findings": 0,
+      "action_judge_requests": [
+        {
+          "elapsed_ms": 2018,
+          "error": "AbortError",
+          "message": "This operation was aborted"
+        }
+      ]
+    },
+    {
+      "model": "glm-5.3-flash",
+      "cases": 1,
+      "passed": 1,
+      "extraction_elapsed_ms": [
+        4025
+      ],
+      "extraction_median_ms": 4025,
+      "delivery": {
+        "before": "deny",
+        "after": "allow"
+      },
+      "action_judge_budget_ms": 2000,
+      "action_judge_semantic_findings": 0,
+      "action_judge_requests": [
+        {
+          "elapsed_ms": 2027,
+          "error": "AbortError",
+          "message": "This operation was aborted"
+        }
+      ]
+    }
+  ],
+  "limitations": "Only synthetic requests. No tool execution or production FPR/Utility estimate. Model correctness and parser changes are not isolated causal effects. Both action Judge attempts timed out; allow was the deterministic decision."
+}

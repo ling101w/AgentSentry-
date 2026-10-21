@@ -4,8 +4,10 @@ import { PluginConfig } from "../../config.ts";
 import { intersectOptional } from "../../core/task-spec/constraints.ts";
 import { authorizeCapability, createAuthorizationState, deriveTaskSpecV2, refineTaskSpecWithLLM, updateAuthorizationState } from "../../core/task-spec/index.ts";
 import type { TaskCapability } from "../../core/task-spec/types.ts";
+import { clearTaskSpecRefinementCache } from "../../core/task-spec/index.ts";
 
 afterEach(() => {
+  clearTaskSpecRefinementCache();
   delete process.env.AGENTSENTRY_CONSTRAINT_TEST_KEY;
   vi.unstubAllGlobals();
 });

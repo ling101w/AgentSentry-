@@ -222,8 +222,13 @@ const plugin = {
         ],
         plugin.config!,
       );
-      const taskSpecRefinement = await refineTaskSpecWithLLM(state.policyState.taskSpec, plugin.config!);
-      if (taskSpecRefinement.findings.length) {
+      const refinementRevision = state.policyState.sessionRevision;
+      const refinementConfig = plugin.config!;
+      const refinementSettings = structuredClone(refinementConfig);
+      const taskSpecRefinement = await refineTaskSpecWithLLM(state.policyState.taskSpec, refinementSettings);
+      const refinementIsCurrent = state.policyState.sessionRevision === refinementRevision
+        && plugin.config === refinementConfig && isDeepStrictEqual(structuredClone(refinementConfig), refinementSettings);
+      if (refinementIsCurrent && taskSpecRefinement.findings.length) {
         state.policyState.taskSpec = taskSpecRefinement.taskSpec;
         state.policyState.authorizationState.taskSpec = taskSpecRefinement.taskSpec;
         updateAfterMessage(state.policyState, taskSpecRefinement.findings);

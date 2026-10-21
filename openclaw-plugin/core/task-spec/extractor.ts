@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { intersectOptional } from "./constraints.ts";
 import { calendarCreationCapabilities, calendarTaskBoundCapabilities } from "./calendar.ts";
+import { CHINESE_FILE_WRITE_VERBS, conditionalFileInstruction, explicitFileRead, explicitFileWrite, extractPaths, fileInstructionSegments, fileWriteDirectoryTargets, fileWriteTargets, remoteFileCreateTarget } from "./file-instructions.ts";
+export { extractPaths } from "./file-instructions.ts";
 import type {
   CapabilityAction,
   CapabilityEffect,
@@ -21,13 +23,16 @@ const CANONICAL_TOOLS = [
   "memory_write",
   "shell_exec",
   "calendar_write",
+  "email_read",
+  "remote_file_create",
 ];
 
 const ACTION_DENIALS: Array<[string, RegExp]> = [
   ["send_email", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:发送|发邮件|发给|邮件|外发)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:send|email|mail|forward)\b/i],
-  ["write_file", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:写入|保存|修改|创建)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:write|save|edit|create)\b/i],
+  ["write_file", new RegExp(`(?:不要|别|不得|禁止|不能|无需).{0,18}(?:${CHINESE_FILE_WRITE_VERBS})|\\b(?:do not|don't|never|must not|no)\\b.{0,24}\\b(?:write|save|edit|create|update|append|overwrite)\\b`, "i")],
+  ["remote_file_create", new RegExp(`(?:不要|别|不得|禁止|不能|无需).{0,18}(?:${CHINESE_FILE_WRITE_VERBS})|\\b(?:do not|don't|never|must not|no)\\b.{0,24}\\b(?:write|save|edit|create|update|append|overwrite)\\b`, "i")],
   ["shell_exec", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:执行|运行|命令|终端)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:execute|run|shell|command)\b/i],
-  ["memory_write", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:记住|记忆|长期保存|持久)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:remember|persist|memory)\b/i],
+  ["memory_write", /(?:不要|别|不得|禁止|不能|无需).{0,18}(?:记住|记忆|经验库|长期保存|持久)|\b(?:do not|don't|never|must not|no)\b.{0,24}\b(?:remember|persist|memory)\b/i],
 ];
 
 /** (P1) Default per-capability TTL: a grant lives for the whole task turn
@@ -159,6 +164,11 @@ export function stripNonAuthoritativeText(text: string): string {
   return chars.join("");
 }
 
+/** Authoritative instructions plus literal operands of those instructions. */
+export function authoritativeTaskText(text: string): string {
+  return splitClauses(normalizeTaskText(text)).map((clause) => clause.text).join("\n");
+}
+
 function candidatesForClause(clause: string): Candidate[] {
   const candidates: Candidate[] = [];
   // (P0-3) Read-only system inspection stays a capability (bounded by the
@@ -194,28 +204,31 @@ function candidatesForClause(clause: string): Candidate[] {
     });
   }
 
-  if (paths.length && explicitWrite(clause) && !negatedAction(clause, "write")) {
-    candidates.push({
-      action: "write",
-      resourceType: "file",
-      effect: "persistent_change",
-      targets: paths,
-      allowedPaths: paths,
-      bound: { paths },
-      confidence: 0.96,
-    });
-  }
-
-  if (paths.length && explicitRead(clause) && !negatedAction(clause, "read")) {
-    candidates.push({
-      action: "read",
-      resourceType: "file",
-      effect: "read_only",
-      targets: paths,
-      allowedPaths: paths,
-      bound: { paths },
-      confidence: 0.96,
-    });
+  for (const instruction of fileInstructionSegments(clause)) {
+    if (analysisOnly(instruction) || conditionalFileInstruction(instruction)) continue;
+    const exactWritePaths = fileWriteTargets(instruction);
+    const writePaths = explicitFileWrite(instruction) && !negatedAction(instruction, "write")
+      ? (exactWritePaths.length ? exactWritePaths : fileWriteDirectoryTargets(instruction)) : [];
+    if (writePaths.length) {
+      candidates.push({
+        action: "write", resourceType: "file", effect: "persistent_change",
+        targets: writePaths, allowedPaths: writePaths, bound: { paths: writePaths }, confidence: 0.96,
+      });
+    }
+    const remoteName = !negatedAction(instruction, "write") ? remoteFileCreateTarget(instruction) : undefined;
+    if (remoteName) {
+      candidates.push({
+        action: "write", resourceType: "remote_file", effect: "persistent_change",
+        targets: [remoteName], allowedPaths: [remoteName], bound: { paths: [remoteName] }, confidence: 0.96,
+      });
+    }
+    const readPaths = extractPaths(instruction);
+    if (readPaths.length && explicitFileRead(instruction) && !negatedAction(instruction, "read")) {
+      candidates.push({
+        action: "read", resourceType: "file", effect: "read_only",
+        targets: readPaths, allowedPaths: readPaths, bound: { paths: readPaths }, confidence: 0.96,
+      });
+    }
   }
 
   if (urls.length && explicitNetworkRead(clause) && !negatedAction(clause, "read")) {
@@ -245,8 +258,9 @@ function candidatesForClause(clause: string): Candidate[] {
     });
   }
 
-  if (explicitShell(clause) && !negatedAction(clause, "execute")) {
-    const commands = extractInlineCommands(clause);
+  const literalReadCommands = extractLiteralReadCommands(clause);
+  if ((explicitShell(clause) || literalReadCommands.length) && !negatedAction(clause, "execute") && !analysisOnly(clause) && !conditionalFileInstruction(clause)) {
+    const commands = unique([...extractInlineCommands(clause), ...literalReadCommands]);
     const systemRead = /(?:系统版本|目录大小|磁盘|内存|cpu|uname|du\b|df\b|os-release)|\b(?:system version|disk usage|cpu info)\b/i.test(clause);
     if (commands.length || systemRead) {
       candidates.push({
@@ -260,7 +274,7 @@ function candidatesForClause(clause: string): Candidate[] {
     }
   }
 
-  if (explicitMemoryWrite(clause) && !negatedAction(clause, "persist")) {
+  if (explicitMemoryWrite(clause) && !negatedAction(clause, "persist") && !analysisOnly(clause) && !conditionalFileInstruction(clause)) {
     candidates.push({
       action: "persist",
       resourceType: "memory",
@@ -270,6 +284,9 @@ function candidatesForClause(clause: string): Candidate[] {
     });
   }
 
+  if (explicitUnreadMailboxRead(clause) && !negatedAction(clause, "read") && !analysisOnly(clause)) {
+    candidates.push({ action: "read", resourceType: "email", effect: "persistent_change", targets: ["mailbox:unread"], confidence: 0.97 });
+  }
   return dedupeCandidates(candidates);
 }
 
@@ -277,19 +294,8 @@ function explicitSend(text: string): boolean {
   const instruction = text.replace(/\b(?:e-?mail)\s+(?:address|addresses|account|accounts)\b/gi, "contact address");
   return /\b(?:please\s+)?(?:send|email|mail|forward)\b/i.test(instruction)
     || /(?:请|帮我|现在|直接)?(?:把|将).{0,80}(?:发送给|发送到|发送至|发给|邮件给)/i.test(text)
-    || /(?:请|帮我)?给\s*[^，,。；;]{1,80}(?:发|发送).{0,30}(?:邮件|报告|文件|消息)/i.test(text)
+    || /(?:请|帮我)?给\s*[^，,。；;]{1,80}(?:发|发送).{0,30}(?:邮件|报告|文件|消息|摘要|通知|进展|结果)/i.test(text)
     || /^\s*(?:(?:请|帮我|现在|直接)\s*)?(?:发送|发邮件|外发).{0,80}(?:给|到)/i.test(text);
-}
-
-function explicitWrite(text: string): boolean {
-  return /\b(?:please\s+)?(?:write|save|edit|create|update)\b/i.test(text)
-    || /(?:请|帮我|把|将).{0,60}(?:写入|写到|写进|保存到|另存为|修改|创建)/i.test(text)
-    || /(?:写入|写到|写进|保存到|另存为|修改|创建)\s*[^，,。；;]{1,120}$/i.test(text);
-}
-
-function explicitRead(text: string): boolean {
-  return /\b(?:please\s+)?(?:read|open|inspect|review|summarize)\b/i.test(text)
-    || /(?:请|帮我|查看|读取|打开|审查|总结).{0,80}(?:文件|文档|报告|代码|\.\w+)/i.test(text);
 }
 
 function explicitNetworkRead(text: string): boolean {
@@ -310,22 +316,29 @@ function explicitShell(text: string): boolean {
 
 function explicitMemoryWrite(text: string): boolean {
   return /\b(?:please\s+)?(?:remember|persist|store in (?:long[- ]term )?memory)\b/i.test(text)
-    || /(?:请|帮我)?(?:记住|写入长期记忆|保存为长期偏好|记录到经验库|记录经验)/i.test(text);
+    || /(?:请|帮我)?(?:记住|写入(?:长期)?(?:记忆|经验库)|保存为长期偏好|(?:记录|保存)(?:到|进)(?:长期)?(?:记忆|经验库)|记录经验)/i.test(text);
+}
+
+function explicitUnreadMailboxRead(text: string): boolean {
+  // Reading unread messages also marks them as read. Grant only this bounded
+  // caller-mailbox operation, not delivery, deletion or another mailbox.
+  return /^\s*(?:please\s+)?(?:show|list|read|get)(?:\s+me)?(?:\s+(?:all|my|the))*\s+unread\s+e-?mails?(?:\s+(?:in|from)\s+(?:my|the)\s+inbox)?[.!\s]*$/i.test(text)
+    || /^\s*(?:(?:请|帮我)\s*)?(?:显示|列出|查看|读取)(?:我(?:的)?)?(?:所有|全部)?未读邮件(?:列表|内容)?\s*$/u.test(text);
 }
 
 export function analysisOnly(text: string): boolean {
-  if (!/^\s*(?:分析|解释|讨论|总结|翻译|引用|analy[sz]e|explain|discuss|summari[sz]e|translate|quote)/i.test(text)) return false;
+  if (!/^\s*(?:(?:请|帮我|麻烦)\s*)?(?:仅|只)?(?:分析|解释|讨论|总结|翻译|引用|analy[sz]e|explain|discuss|summari[sz]e|translate|quote)/i.test(text)) return false;
   return !/(?:并|然后|接着|随后|and then|then).{0,80}(?:把|将|给|发送|发邮件|保存|写入|执行|运行|记住|send|email|write|save|execute|run|remember)/i.test(text);
 }
 
 export function negatedAction(text: string, action: CapabilityAction): boolean {
   const actionPatterns: Record<CapabilityAction, string> = {
-    read: "读取|打开|查看|访问|总结|read|open|visit|summari[sz]e",
-    write: "写入|写到|写进|保存|修改|创建|write|save|edit|create",
+    read: "读取|打开|查看|访问|检查|显示|列出|总结|read|open|visit|check|show|list|summari[sz]e",
+    write: `${CHINESE_FILE_WRITE_VERBS}|write|save|edit|create|update|append|overwrite`,
     send: "发送|发邮件|发给|邮件|外发|send|email|mail|forward",
     execute: "执行|运行|命令|execute|run|command",
     request: "调用|请求|上报|上传|提交|call|request|post|upload|submit",
-    persist: "记住|记忆|持久|remember|memory|persist",
+    persist: "记住|记忆|经验库|持久|remember|memory|persist",
   };
   const pattern = actionPatterns[action];
   return new RegExp(`(?:不要|别|不得|禁止|不能|无需|仅分析|只分析|只总结|仅总结).{0,40}(?:${pattern})`, "i").test(text)
@@ -334,16 +347,20 @@ export function negatedAction(text: string, action: CapabilityAction): boolean {
 
 export function splitClauses(text: string): Clause[] {
   const ranges = nonAuthoritativeRanges(text);
+  const urlRanges = [...text.matchAll(URL_TOKEN)].map((match) => [match.index, match.index + match[0].length]);
   const clauses: Clause[] = [];
   const separator = /[\n。！？!?；;]|(?:，|,)\s*(?:但|但是|不过|however\b|but\b)/gi;
   let start = 0;
   for (const match of text.matchAll(separator)) {
     const end = match.index ?? start;
-    const clauseText = maskRanges(text, start, end, ranges);
+    // A query separator belongs to its URL. Punctuation inside a quotation
+    // belongs to the masked block, rather than starting an authoritative clause.
+    if ([...ranges, ...urlRanges].some(([from, to]) => end >= from && end < to)) continue;
+    const clauseText = maskOperandClause(text, start, end, ranges);
     clauses.push({ text: clauseText, start, end, dataOnly: !clauseText.trim() });
     start = end + match[0].length;
   }
-  const clauseText = maskRanges(text, start, text.length, ranges);
+  const clauseText = maskOperandClause(text, start, text.length, ranges);
   clauses.push({ text: clauseText, start, end: text.length, dataOnly: !clauseText.trim() });
   return clauses;
 }
@@ -426,6 +443,33 @@ function maskRanges(text: string, start: number, end: number, ranges: Array<[num
   return chars.join("");
 }
 
+function maskOperandClause(text: string, start: number, end: number, ranges: Array<[number, number]>): string {
+  const masked = maskRanges(text, start, end, ranges);
+  if (analysisOnly(masked) || conditionalFileInstruction(masked)) return masked;
+  const fileIntent = explicitFileWrite(masked) || explicitFileRead(masked);
+  const emailIntent = explicitSend(masked) && !negatedAction(masked, "send");
+  const networkIntent = explicitNetworkRead(masked) || explicitNetworkRequest(masked) || /(?:访问|打开|读取|查看|检查)/.test(masked);
+  if (!fileIntent && !emailIntent && !networkIntent) return masked;
+  const chars = masked.split("");
+  for (const [rangeStart, rangeEnd] of ranges) {
+    if (rangeStart < start || rangeEnd > end) continue;
+    const literal = text.slice(rangeStart, rangeEnd);
+    if (!QUOTE_PAIRS.some(([open, close]) => open !== "```" && literal.startsWith(open) && literal.endsWith(close))) continue;
+    const operand = literal.slice(1, -1).trim();
+    const paths = extractPaths(operand);
+    const emails = extractEmails(operand);
+    const urls = extractUrls(operand);
+    // Restore a whole path/address/URL only when its instruction is outside
+    // the quotation. Instructions inside quotations remain non-authoritative.
+    const file = fileIntent && paths.length === 1 && paths[0] === operand;
+    const email = emailIntent && emails.length === 1 && emails[0] === operand;
+    const url = networkIntent && urls.length === 1 && urls[0] === operand;
+    if (!file && !email && !url) continue;
+    for (let index = rangeStart + 1; index < rangeEnd - 1; index += 1) chars[index - start] = text[index];
+  }
+  return chars.join("");
+}
+
 function mergeRanges(ranges: Array<[number, number]>): Array<[number, number]> {
   const sorted = [...ranges].sort((left, right) => left[0] - right[0]);
   const merged: Array<[number, number]> = [];
@@ -441,6 +485,8 @@ function extractEmails(text: string): string[] {
   return unique(text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []);
 }
 
+const URL_TOKEN = /\b(?:https?:\/\/|mock:\/\/)[^\s\uFF0C\u3001\u3002\uFF1B\uFF01\uFF1F;,)>\]}>"']+/gi;
+
 function extractUrls(text: string): string[] {
   // (P0-2) Full-width U+FF0C (comma), U+3001 (enumeration comma), U+3002
   // (period), U+FF1B (semicolon), U+FF01 (exclamation) and U+FF1F (question)
@@ -449,12 +495,7 @@ function extractUrls(text: string): string[] {
   // ASCII separators matter just as much. The class is written with \uXXXX
   // escapes so the source stays pure ASCII and immune to editor encoding
   // corruption; cleanTarget trims residual trailing punctuation.
-  return unique((text.match(/\b(?:https?:\/\/|mock:\/\/)[^\s\uFF0C\u3001\u3002\uFF1B\uFF01\uFF1F;,)>\]}>"']+/gi) || []).map(cleanTarget));
-}
-
-export function extractPaths(text: string): string[] {
-  const paths = text.match(/(?:[A-Za-z]:[\\/]|~[\\/]|\.\.\/?|\.\/|\/)?[A-Za-z0-9_.@-]+(?:[\\/][A-Za-z0-9_.@* -]+)*\.(?:md|txt|json|jsonl|ya?ml|toml|ini|env|py|ts|tsx|js|jsx|css|html|csv|pdf|docx?|xlsx?|log)|(?:^|[\s("'`])\.env(?:\.[A-Za-z0-9_-]+)?/gi) || [];
-  return unique(paths.map((item) => item.trim().replace(/^[\s("'`]+|[\s，,。；;）)\]}>"'`]+$/g, "")));
+  return unique([...text.matchAll(URL_TOKEN)].map((match) => cleanTarget(match[0])));
 }
 
 function extractInlineCommands(text: string): string[] {
@@ -470,6 +511,13 @@ function extractInlineCommands(text: string): string[] {
     if (match) commands.push(match[0].trim());
   }
   return unique(commands);
+}
+
+function extractLiteralReadCommands(text: string): string[] {
+  // These commands take no operands and cannot mutate state. Bind the exact
+  // command the user named, rather than granting the whole system-read group.
+  const pattern = /(?:执行|运行|\b(?:run|execute)\s+(?:the\s+)?)(?:命令\s*|command\s+)?\s*(pwd|whoami|id|hostname|date|uptime)(?=\s|[。；;,.!?]|$)/gi;
+  return unique([...text.matchAll(pattern)].map((match) => match[1].toLowerCase()));
 }
 
 function  mergeCapabilities(capabilities: TaskCapability[]): TaskCapability[] {
@@ -556,7 +604,8 @@ function compactConstraints(candidate: Candidate): TaskCapability["constraints"]
   // or exfiltrate unbounded payloads within a single grant.
   if (candidate.effect !== "read_only") {
     output.maxCalls = DEFAULT_MAX_CALLS;
-    if (candidate.resourceType === "file") output.maxBytes = DEFAULT_MAX_BYTES;
+    if (candidate.resourceType === "file" || candidate.resourceType === "remote_file") output.maxBytes = DEFAULT_MAX_BYTES;
+    if (candidate.resourceType === "remote_file") output.maxCalls = 1;
   }
   return output;
 }
@@ -565,7 +614,9 @@ function capabilityTools(capability: TaskCapability): string[] {
   if (capability.resourceType === "calendar" && capability.action === "write") return ["calendar_write"];
   if (capability.resourceType === "file" && capability.action === "read") return ["read_file"];
   if (capability.resourceType === "file" && capability.action === "write") return ["write_file"];
+  if (capability.resourceType === "remote_file" && capability.action === "write") return ["remote_file_create"];
   if (capability.resourceType === "email" && capability.action === "send") return ["send_email"];
+  if (capability.resourceType === "email" && capability.action === "read") return ["email_read"];
   if (capability.resourceType === "api" && capability.action === "read") return ["read_webpage", "call_api"];
   if (capability.resourceType === "api" && capability.action === "request") return ["call_api"];
   if (capability.resourceType === "shell" && capability.action === "execute") return ["shell_exec"];

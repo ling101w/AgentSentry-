@@ -1,0 +1,75 @@
+{
+  "sources": [
+    {
+      "path": "reports/benchmark_risk_tiered/benchmark_eval_results.risk_tiered.json",
+      "sha256": "241ef544ca7f31c7c7de1c7514db67cec41743a54253fa8b6a7e92447ef6817e",
+      "source_labeled_normal": 79
+    },
+    {
+      "path": "reports/benchmark_risk_tiered/tool_attack_benchmark_results.risk_tiered.json",
+      "sha256": "7edef8f18953a4d0756af6f6574c2282f10e65d7161b20e3f17bf3dbe6394fe4",
+      "source_labeled_normal": 50
+    },
+    {
+      "path": "reports/plugin_comparison/custom_realistic_100/xuanjian_custom_realistic_100_cases.csv",
+      "sha256": "c72818bafec14e4d3d07d5c51efa3da6539212606f483c92c9b3eb304141dad5",
+      "source_labeled_normal": 68,
+      "expectations": {
+        "allow": 65,
+        "ask": 3
+      }
+    }
+  ],
+  "official_suites": [
+    {
+      "suite": "workspace",
+      "version": "0.1.35",
+      "benchmark_version": "v1.2.2",
+      "benign_tasks": 40,
+      "tools": 24,
+      "native_adapter_available": true
+    },
+    {
+      "suite": "banking",
+      "version": "0.1.35",
+      "benchmark_version": "v1.2.2",
+      "benign_tasks": 16,
+      "tools": 11,
+      "native_adapter_available": false
+    },
+    {
+      "suite": "slack",
+      "version": "0.1.35",
+      "benchmark_version": "v1.2.2",
+      "benign_tasks": 21,
+      "tools": 11,
+      "native_adapter_available": false
+    },
+    {
+      "suite": "travel",
+      "version": "0.1.35",
+      "benchmark_version": "v1.2.2",
+      "benign_tasks": 20,
+      "tools": 28,
+      "native_adapter_available": false
+    }
+  ],
+  "source_workflows": 237,
+  "empty_workflows": [],
+  "exact_duplicates_removed": 24,
+  "conflicts": [],
+  "unique_workflows": 213,
+  "expected_counts": {
+    "allow": 210,
+    "ask": 3
+  },
+  "evidence_level": "reused_development_fixtures",
+  "cases_sha256": "1e98ff2a6cf1a1adcd003bb0fa9bf167ebb282e2b4c9c16c445525f5e91b6b16",
+  "deduplication": "Exact five-field workflow input hash; source-labelled variants are not statistically independent.",
+  "label_isolation": "case ids, provenance and labels remain evaluator-owned; only five-field step payloads reach policy",
+  "transformations": [
+    "Reconstruct legacy manual Lab action parameters using existing labActionsFromCommand",
+    "Remove evaluator-authored benchmark/benign-baseline reason hints from tool args",
+    "Preserve business prompt text and source expectations; ask-labelled cases remain review controls"
+  ]
+}

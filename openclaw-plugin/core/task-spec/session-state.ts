@@ -11,6 +11,8 @@ const CANONICAL_TOOLS = [
   "memory_read",
   "memory_write",
   "shell_exec",
+  "email_read",
+  "remote_file_create",
 ];
 const AUTHORIZATION_IDLE_TURNS = 12;
 

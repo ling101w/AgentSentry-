@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "mapping_version": "1.1.0",
+  "mapping_version": "1.3.0",
   "agentdojo": {
     "package_version": "0.1.35",
     "benchmark_version": "v1.2.2",
@@ -30,7 +30,12 @@
       "acceptsSensitiveData": false,
       "canExfiltrate": false,
       "requiresExplicitAuthorization": false,
-      "defaultTrust": "external"
+      "defaultTrust": "external",
+      "accessScope": "caller_bound",
+      "sensitiveInputHandling": "none",
+      "queryFields": ["query"],
+      "dataClassification": "user_private",
+      "dataSubjects": ["caller"]
     },
     {
       "toolId": "send_email",
@@ -44,7 +49,7 @@
     },
     {
       "toolId": "write_file",
-      "aliases": ["write", "create", "edit", "replace", "patch", "create_file", "delete_file", "append_to_file"],
+      "aliases": ["write", "create", "edit", "replace", "patch", "delete_file", "append_to_file"],
       "dataOrigins": ["user", "workspace"],
       "sideEffects": ["file_write", "persistent_state"],
       "acceptsSensitiveData": true,
@@ -53,9 +58,34 @@
       "defaultTrust": "workspace"
     },
     {
+      "toolId": "remote_file_create",
+      "aliases": ["create_file"],
+      "dataOrigins": ["user", "workspace"],
+      "sideEffects": ["file_write", "network_write", "persistent_state"],
+      "acceptsSensitiveData": true,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external",
+      "accessScope": "caller_bound",
+      "sensitiveInputHandling": "business_payload",
+      "dataClassification": "user_private",
+      "dataSubjects": ["caller"],
+      "purposeBinding": "task_bound",
+      "targetFields": ["filename"]
+    },
+    {
+      "toolId": "email_read",
+      "aliases": ["get_unread_emails"],
+      "dataOrigins": ["email"],
+      "sideEffects": ["persistent_state"],
+      "acceptsSensitiveData": false,
+      "canExfiltrate": false,
+      "requiresExplicitAuthorization": true,
+      "defaultTrust": "external"
+    },
+    {
       "toolId": "call_api",
       "aliases": [
-        "get_unread_emails",
         "delete_email",
         "share_file"
       ],

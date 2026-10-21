@@ -23,15 +23,20 @@ export function calendarCreationCapabilities(task: string, authoritative: string
   if (/\b(?:do not|don't|never|must not)\b[^.!?\n]{0,80}\b(?:create|schedule|add)\b/i.test(authoritative)) return [];
   // Multiple creation clauses need independent binding, not a Cartesian grant.
   if ((authoritative.match(/\b(?:create|schedule|add)\b[^.!?\n]{0,100}\b(?:event|meeting)\b/gi) || []).length !== 1) return [];
-  const title = task.match(/\b(?:titled|named|called)\s+(['"])([^'"\r\n]{1,160})\1/i)?.[2]
-    || task.match(/\bevent\s+(['"])([^'"\r\n]{1,160})\1/i)?.[2];
+  // A preceding task can also mention a title or description. Only the
+  // creation instruction supplies those operands; the date may precede it
+  // in an availability question ("Am I free on ...? If so, create ...").
+  const creationOffset = authoritative.search(/\b(?:create|schedule|add)\b[^.!?\n]{0,100}\b(?:event|meeting)\b/i);
+  const creationText = task.slice(creationOffset);
+  const title = creationText.match(/\b(?:titled|named|called)\s+(['"])([^'"\r\n]{1,160})\1/i)?.[2]
+    || creationText.match(/\bevent\s+(['"])([^'"\r\n]{1,160})\1/i)?.[2];
   const days = [...new Set(task.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [])];
   const startTimes = [...new Set([...authoritative.matchAll(/\bat\s+((?:[01]?\d|2[0-3]):[0-5]\d)\b/gi)].map(m => m[1].padStart(5, "0")))];
-  const duration = authoritative.match(/\b(one|two|three|\d+)\s*(?:-|\s)?\s*(hours?|minutes?)\b/i);
+  const duration = authoritative.slice(creationOffset).match(/\b(one|two|three|\d+)\s*(?:-|\s)?\s*(hours?|minutes?)\b/i);
   const amount = duration ? ({one:1,two:2,three:3}[duration[1].toLowerCase()] || Number(duration[1])) : 0;
   const durationMinutes = duration ? amount * (/hour/i.test(duration[2]) ? 60 : 1) : 0;
-  const description = task.match(/\bdescription\s+(?:should be\s+)?(['"])([^'"\r\n]*)\1/i)?.[2]
-    || task.match(/\bdescription\s+([^\r\n]+?)(?=\.\s+(?:Her|His|Their|The)\b|$)/i)?.[1];
+  const description = creationText.match(/\bdescription\s+(?:should be\s+)?(['"])([^'"\r\n]*)\1/i)?.[2]
+    || creationText.match(/\bdescription\s+([^\r\n]+?)(?=\.\s+(?:Her|His|Their|The)\b|$)/i)?.[1];
   if (!title || days.length !== 1 || !startTimes.length || !durationMinutes || durationMinutes > 1440 || !description) return [];
   // Require verbatim user addresses; lookup-derived recipients are not silently
   // approved when the user only supplied a person name.

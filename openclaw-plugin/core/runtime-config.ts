@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writ
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { applySecurityProfile, isSecurityProfileName, PluginConfig } from "../config.ts";
+import { parseNamedServiceBindings } from "./named-service-config.ts";
 
 const MAX_RUNTIME_CONFIG_BYTES = 1024 * 1024;
 const INVALID_VALUE = Symbol("invalid-runtime-config-value");
@@ -11,6 +12,7 @@ let knownConfigLeafPaths: readonly string[] | undefined;
 const ENUM_VALUES: Readonly<Record<string, readonly string[]>> = {
   profile: ["observe", "balanced", "competition", "high-security"],
   "semantic.mode": ["off", "risk-tiered", "full"],
+  "semantic.thinking": ["auto", "disabled"],
   "runtimeIsolation.unavailableAction": ["require_approval", "block"],
   "enforcement.mode": ["observe", "approval", "block"],
   "intervention.mode": ["risk-based", "evidence-gated"],
@@ -127,6 +129,7 @@ function setAtPath(obj: unknown, path: string, value: unknown): boolean {
 }
 
 function normalizeValue(path: string, existing: unknown, next: unknown): unknown | typeof INVALID_VALUE {
+  if (path === "policy.namedServices") return parseNamedServiceBindings(next) ?? INVALID_VALUE;
   if (path === "multiAgentSecurity.agents") {
     return isAgentIdentityList(next) ? structuredClone(next) : INVALID_VALUE;
   }

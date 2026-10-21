@@ -13,6 +13,7 @@
 | `core/policy/results.ts` | 工具结果生命周期、标签、provenance 继承和 IFC 分支 |
 | `core/policy/state.ts` | 初始状态、版本检查、effects 提交和 checkpoint |
 | `core/policy/updates.ts` | 消息、任务、裁决、运行反馈和审批对当前状态的更新 |
+| `core/task-spec/file-instructions.ts` | 文件操作句式、路径对象与写入目标绑定，供确定性提取和 LLM 建议核验共同使用 |
 | `core/policy/support.ts` | 上述模块共同使用的输入验证、provenance 与信任辅助函数 |
 | `core/session-queue.ts` | 按会话串行执行异步请求 |
 | `server/policy-sessions.ts` | 每个 RecordStore 独立的会话、草稿提交和 Lab 客户端续接 |
@@ -40,6 +41,18 @@
 Hook 通过会话队列组织工具预检，并在提交前检查配置是否在等待期间变化。配置变化时阻断本次预检并要求重试。Sidecar 与 Lab 使用请求的配置快照；后续请求读取新的配置。
 
 监督服务保留适配器原有的 Judge 路由：Hook 使用 `full`，Sidecar、Lab 和控制台试算默认使用 `ambiguous`。它们共享编排与提交逻辑，具体路由范围仍是显式适配选项。
+
+风险分级模式下，具备具体用户授权且无风险记录的内置 HTTP GET/HEAD 可由确定性策略完成裁决。完整审查模式仍调用 Judge。`semantic.thinking="disabled"` 仅向兼容 provider 请求关闭扩展思考，默认 `auto`；动作 Judge 的共享超时保持 2 秒上限。
+
+任务提取缓存只保存模型建议，按任务/授权快照、配置和凭据隔离，TTL 60 秒、最多 128 条；每次命中重新验证建议。并发的相同提取共享一次请求，全部重试和响应体读取共用一个提取预算。提示构建入口在等待后检查会话版本和配置，拒绝发布旧提取结果。
+
+AgentDojo workspace manifest 1.3.0 保留 `get_unread_emails` 的受限 `email_read`，其“标为已读”按持久化副作用处理。授权限定自身未读邮箱且不接受额外参数，不能扩展为发送、删除或其他邮箱读取；调用预算随授权会话保留。`create_file` 独立映射到 `remote_file_create` / `remote_file`，只允许用户指定名称的单次云盘新建，不套用本机路径根，也不授予删除、追加或共享。云盘写入保留外部持久化 sink，契约和参数需要同时匹配。
+
+注册的只读自身数据工具可以用 `queryFields` 声明文本查询字段，减少 password 等主题词的重复风险加分；这项元数据不授予新动作，实际凭据、未声明参数和结果标签继续检查。文件目录级授权只来自用户明确点名的输出目录，实际写入仍做真实路径、敏感路径和持久化检查。文件写入次数及 UTF-8 字节预算随会话更新，首次写入也不能超额。
+
+正常工作流的冻结回归入口为 `scripts/run_benign_reuse.py`，参考路径执行与纯策略回放分开记录；第二轮结果见 `reports/benign-reduction-20261017/`。
+
+`core/named-service-config.ts` 验证 `policy.namedServices` 的管理员配置，`core/named-services.ts` 将权威用户文字中的服务名称和健康检查用途绑定到精确 GET endpoint。启用且在本地监听的控制台提供自身健康端点绑定，地址取当前配置。能力仅加入本次策略评估快照，不写回会话授权，避免配置撤销后复用旧目标。工具契约、参数别名和业务字段同时检查，通用只读豁免不能覆盖服务约束；现有 host、污点和频率规则继续生效。Lab HTTP 执行对这类端点禁用重定向。固定集合及旧 API 映射的逐项核对见 `reports/named-service-authorization-20261017/`。
 
 ## 会话草稿
 
